@@ -32,6 +32,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -50,26 +51,31 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.audio.IAudioHub
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
+import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.MutualPassData
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
 import com.rtbishop.look4sat.core.domain.utility.toDegrees
+import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.EmptyListCard
 import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.NextPassRow
@@ -79,10 +85,9 @@ import com.rtbishop.look4sat.core.presentation.TimerRow
 import com.rtbishop.look4sat.core.presentation.TopBar
 import com.rtbishop.look4sat.core.presentation.formatFrequency
 import com.rtbishop.look4sat.core.presentation.getDefaultPass
-import com.rtbishop.look4sat.core.presentation.isVerticalLayout
 import com.rtbishop.look4sat.core.presentation.layoutPadding
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 
 private enum class RadarPage(@StringRes val titleRes: Int) {
@@ -91,6 +96,20 @@ private enum class RadarPage(@StringRes val titleRes: Int) {
     Sstv(R.string.radar_tab_sstv),
     Logs(R.string.radar_tab_logs)
 }
+
+private val CLASSIC_VERTICAL_CHROME = 114.dp
+private const val LARGE_RADAR_SPLIT_RATIO = 0.75f
+
+internal data class RadarPaneWeights(val radar: Float, val pager: Float)
+
+/** Uses the measured content bounds so Android split-screen changes are detected immediately. */
+internal fun isSmallRadarWindow(maxWidth: Dp, maxHeight: Dp): Boolean =
+    maxWidth < 600.dp &&
+        (maxHeight - CLASSIC_VERTICAL_CHROME) / 2 < maxWidth * LARGE_RADAR_SPLIT_RATIO
+
+internal fun radarPaneWeights(isSmallWindow: Boolean, useLargeRadar: Boolean): RadarPaneWeights =
+    if (isSmallWindow && useLargeRadar) RadarPaneWeights(radar = 1.6f, pager = 0.6f)
+    else RadarPaneWeights(radar = 1f, pager = 1f)
 
 @Composable
 fun RadarDestination(navigateUp: () -> Unit, navigateToMap: () -> Unit) {
@@ -208,45 +227,50 @@ private fun RadarScreen(
                 time = it.time
             )
         }
-    Column(
+    var useLargeRadar by rememberSaveable { mutableStateOf(true) }
+    BoxWithConstraints(
         modifier = Modifier
             .layoutPadding()
             .padding(bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
-            .keepScreenOn(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .keepScreenOn()
     ) {
-        val isVertical = isVerticalLayout()
-        if (isVertical) {
-            TopBar {
-                IconCard(action = navigateUp, resId = R.drawable.ic_back)
-                TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
-                IconCard(action = navigateToMap, resId = R.drawable.ic_map)
-                IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
+        val isVertical = maxWidth < 600.dp
+        val isSmallWindow = isSmallRadarWindow(maxWidth, maxHeight)
+        val paneWeights = radarPaneWeights(isSmallWindow, useLargeRadar)
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (isVertical) {
+                TopBar {
+                    IconCard(action = navigateUp, resId = R.drawable.ic_back)
+                    TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
+                    IconCard(action = navigateToMap, resId = R.drawable.ic_map)
+                    IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
+                }
+                TopBar {
+                    NextPassRow(pass = upcomingPass, isUtc = uiState.isUtc)
+                    if (isSmallWindow) {
+                        CardButton(
+                            onClick = { useLargeRadar = !useLargeRadar },
+                            text = stringResource(
+                                if (useLargeRadar) R.string.radar_use_small
+                                else R.string.radar_use_large
+                            )
+                        )
+                    }
+                }
+            } else {
+                TopBar {
+                    IconCard(action = navigateUp, resId = R.drawable.ic_back)
+                    TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
+                    NextPassRow(pass = upcomingPass, modifier = Modifier.weight(1f), isUtc = uiState.isUtc)
+                    IconCard(action = navigateToMap, resId = R.drawable.ic_map)
+                    IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
+                }
             }
-            TopBar { NextPassRow(pass = upcomingPass, isUtc = uiState.isUtc) }
-        } else {
-            TopBar {
-                IconCard(action = navigateUp, resId = R.drawable.ic_back)
-                TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
-                NextPassRow(pass = upcomingPass, modifier = Modifier.weight(1f), isUtc = uiState.isUtc)
-                IconCard(action = navigateToMap, resId = R.drawable.ic_map)
-                IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
-            }
-        }
-        if (isVertical) {
-            RadarCard(uiState, trackB, trackBPosition, Modifier.weight(1f))
-            PagerCard(
-                uiState,
-                onAction,
-                audioHub,
-                connectRadios,
-                logViewModel,
-                requestMicPermission,
-                Modifier.weight(1f)
-            )
-        } else {
-            Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                RadarCard(uiState, trackB, trackBPosition, Modifier.weight(1f))
+            if (isVertical) {
+                RadarCard(uiState, trackB, trackBPosition, Modifier.weight(paneWeights.radar))
                 PagerCard(
                     uiState,
                     onAction,
@@ -254,8 +278,21 @@ private fun RadarScreen(
                     connectRadios,
                     logViewModel,
                     requestMicPermission,
-                    Modifier.weight(1f)
+                    Modifier.weight(paneWeights.pager)
                 )
+            } else {
+                Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    RadarCard(uiState, trackB, trackBPosition, Modifier.weight(1f))
+                    PagerCard(
+                        uiState,
+                        onAction,
+                        audioHub,
+                        connectRadios,
+                        logViewModel,
+                        requestMicPermission,
+                        Modifier.weight(1f)
+                    )
+                }
             }
         }
     }

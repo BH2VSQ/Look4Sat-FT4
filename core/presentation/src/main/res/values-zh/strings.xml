@@ -80,6 +80,8 @@
     <!-- Radar screen -->
     <string name="radar_back">后退</string>
     <string name="radar_notify">通知</string>
+    <string name="radar_use_large">大雷达</string>
+    <string name="radar_use_small">小雷达</string>
     <string name="radar_az_text">方位角</string>
     <string name="radar_el_text">仰角</string>
     <string name="radar_alt_text">高度</string>
