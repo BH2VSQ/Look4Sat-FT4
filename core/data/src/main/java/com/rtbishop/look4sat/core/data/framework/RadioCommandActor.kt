@@ -193,6 +193,12 @@ class SerialRadioController(
     private val delegate: IRadioController,
     private val actor: RadioCommandActor
 ) : IRadioController {
+    override val remoteState get() = delegate.remoteState
+    override val supportsAtomicPair get() = delegate.supportsAtomicPair
+    override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?) =
+        actor.execute { delegate.setTrackingFrequencies(rxHz, txHz) }
+    override suspend fun startCw(text: String, wpm: Int) =
+        actor.executePttOn { delegate.startCw(text, wpm) }
     override val isConnected: Boolean get() = delegate.isConnected
     override suspend fun connect() = actor.execute(CONNECT_TIMEOUT_MILLIS, delegate::connect)
     override suspend fun disconnect() = actor.execute(operation = delegate::disconnect)

@@ -22,6 +22,11 @@ import kotlinx.coroutines.withContext
 
 interface IRadioController {
 
+    val remoteState: kotlinx.coroutines.flow.StateFlow<RemoteRadioState>? get() = null
+    val supportsAtomicPair: Boolean get() = false
+    suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult = FrequencyPairResult.UNSUPPORTED
+    suspend fun startCw(text: String, wpm: Int): Boolean = false
+
     val isConnected: Boolean
 
     suspend fun connect(): Boolean

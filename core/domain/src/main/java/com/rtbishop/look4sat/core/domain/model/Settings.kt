@@ -164,6 +164,8 @@ data class RadioControlSettings(
         const val MODEL_ICOM_IC9700 = "Icom IC-9700"
         const val MODEL_ICOM_IC910 = "Icom IC-910/D/H"
         const val MODEL_ICOM_IC820 = "Icom IC-820"
+        const val MODEL_QUANSHENG_UVK1 = "Quansheng UV-K1 (L4S)"
+        const val MODEL_QUANSHENG_UVK5V3 = "Quansheng UV-K5 V3 (L4S)"
         const val TRANSPORT_BLUETOOTH = "BLUETOOTH"
         const val TRANSPORT_USB = "USB"
         const val TRANSPORT_TCP = "TCP"

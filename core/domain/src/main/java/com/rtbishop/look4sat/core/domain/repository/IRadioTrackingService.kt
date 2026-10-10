@@ -64,7 +64,13 @@ data class RadioTrackingState(
     val nominalRxFrequencyHz: Long? = null,
     val txDopplerCorrectionHz: Long? = null,
     val rxDopplerCorrectionHz: Long? = null,
-    val physicalConnectionCount: Int = 0
+    val physicalConnectionCount: Int = 0,
+    val remoteRadio: RemoteRadioState? = null,
+    val transmitOwner: RadioTransmitOwner = RadioTransmitOwner.NONE,
+    val targetTxFrequencyHz: Long? = null,
+    val targetRxFrequencyHz: Long? = null,
+    val cwMessagePosition: Int = 0,
+    val cwMessageLength: Int = 0
 )
 
 interface IRadioTrackingService {
@@ -79,4 +85,7 @@ interface IRadioTrackingService {
     fun adjustTxBaseFrequency(deltaHz: Long)
     fun setCtcssTone(toneHz: Double?)
     fun setMode(txMode: String, rxMode: String)
+    fun setVoicePtt(enabled: Boolean) = Unit
+    fun sendCw(text: String, wpm: Int) = Unit
+    fun cancelRemoteTransmit() = Unit
 }

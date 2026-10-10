@@ -1,0 +1,72 @@
+package com.rtbishop.look4sat.core.data.framework
+
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitState
+import com.rtbishop.look4sat.core.domain.repository.FrequencyPairResult
+import java.net.InetSocketAddress
+import java.net.Socket
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+
+/** Optional cross-language integration: tools/l4s/simulator.py runs the production C protocol core. */
+class L4sSimulatorTest {
+    @Test fun kotlinControllerInteroperatesWithProductionCStateMachine() = runBlocking {
+        val port=System.getenv("L4S_SIMULATOR_PORT")?.toIntOrNull()
+        assumeTrue("Set L4S_SIMULATOR_PORT to a running hardware-free C-core simulator",port!=null)
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+        val radio=L4sController(SocketTransport(checkNotNull(port)),scope)
+        try {
+            assertTrue(radio.connect())
+            assertTrue(radio.setSplitModes("FM","FM"))
+            assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100006,145900004))
+            assertEquals(435100010L,radio.remoteState.value.rxFrequencyHz)
+            assertEquals(145900000L,radio.remoteState.value.txFrequencyHz)
+            assertTrue(radio.configureTxCtcss(67.0))
+            assertTrue(radio.pttOn())
+            assertEquals(FrequencyPairResult.FAILED,radio.setTrackingFrequencies(435101000,145901000))
+            assertEquals(435100010L,radio.readWorkingFrequency())
+            assertEquals(145900000L,radio.readTxVfoFrequency())
+            assertTrue(radio.pttOff())
+            assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435101000,145901000))
+            assertTrue(radio.setSplitModes("CW","CW"))
+            assertTrue(radio.configureTxCtcss(null))
+            assertTrue(radio.startCw("CQ TEST",20))
+            val heldRevision=radio.remoteState.value.appliedRevision
+            withTimeout(5000) { radio.remoteState.first { it.cwState==CwTransmitState.DONE } }
+            assertEquals(2,radio.remoteState.value.txSource) // operation held until STOP, including chunk boundaries
+            assertTrue(radio.startCw("DE TEST",20))
+            withTimeout(5000) { radio.remoteState.first { it.cwState==CwTransmitState.DONE } }
+            assertEquals(heldRevision,radio.remoteState.value.appliedRevision)
+            assertTrue(radio.pttOff())
+        } finally {
+            radio.disconnect();scope.cancel()
+        }
+    }
+
+    private class SocketTransport(private val port:Int):RadioTransport {
+        private var socket:Socket?=null
+        override val isConnected get()=socket?.let { it.isConnected && !it.isClosed }==true
+        override suspend fun connect():Boolean {
+            socket=Socket().apply { connect(InetSocketAddress("127.0.0.1",this@SocketTransport.port),2000);tcpNoDelay=true }
+            return true
+        }
+        override suspend fun disconnect() { socket?.close();socket=null }
+        override suspend fun write(bytes:ByteArray):Boolean {
+            socket!!.getOutputStream().apply { write(bytes);flush() };return true
+        }
+        override suspend fun readAvailable(maxBytes:Int):ByteArray {
+            val input=socket!!.getInputStream()
+            val n=minOf(input.available(),maxBytes)
+            if(n==0)return byteArrayOf()
+            val p=ByteArray(n);val read=input.read(p)
+            return if(read>0)p.copyOf(read)else byteArrayOf()
+        }
+    }
+}

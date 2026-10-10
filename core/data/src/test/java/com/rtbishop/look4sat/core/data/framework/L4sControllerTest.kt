@@ -1,0 +1,184 @@
+package com.rtbishop.look4sat.core.data.framework
+
+import com.rtbishop.look4sat.core.domain.repository.FrequencyPairResult
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.*
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class L4sControllerTest {
+    @Test fun sharedFirmwareVectorsAndCrcMatchKotlinCodec() {
+        val text=checkNotNull(javaClass.getResourceAsStream("/l4s-v1-vectors.json")).bufferedReader().use { it.readText() }
+        Regex("\"body\":\"([0-9a-f]+)\",\"frame\":\"([0-9a-f]+)\"").findAll(text).forEach { match ->
+            val body=hex(match.groupValues[1]);val wire=hex(match.groupValues[2])
+            assertArrayEquals(wire,L4sProtocol.frame(body))
+            val decoder=L4sProtocol.Decoder()
+            val output=wire.flatMap { decoder.feed(byteArrayOf(it)) }
+            assertEquals(1,output.size);assertArrayEquals(body,output.single())
+        }
+        assertEquals(0x31c3,L4sProtocol.crc("123456789".toByteArray()))
+    }
+
+    @Test fun corruptNoiseFramesCannotProduceReplies() {
+        val body=L4sProtocol.body(0x8704,1,7,ByteArray(24))
+        val good=L4sProtocol.frame(body)
+        val bad=good.copyOf().also { it[9]=(it[9].toInt() xor 1).toByte() }
+        val decoded=L4sProtocol.Decoder().feed(byteArrayOf(0,1,0xab.toByte(),0xcd.toByte(),0xff.toByte(),0xff.toByte())+bad+good+good)
+        assertEquals(2,decoded.size)
+        decoded.forEach { assertArrayEquals(body,it) }
+    }
+
+    @Test fun handshakeConfiguresAtomicReadbackAndNoSsbtTransmit()=runTest {
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect())
+        assertEquals("mock-v1",radio.remoteState.value.firmware)
+        assertEquals(10,radio.remoteState.value.capabilities!!.frequencyStepHz)
+        assertFalse(radio.setSplitModes("USB","USB"))
+        assertTrue(radio.setSplitModes("FM","FM"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100006,145900004))
+        assertEquals(435100010L,radio.readWorkingFrequency())
+        assertEquals(145900000L,radio.readTxVfoFrequency())
+        val writes=transport.commands.count { it==L4sProtocol.PAIR }
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100007,145900003))
+        assertEquals(writes,transport.commands.count { it==L4sProtocol.PAIR })
+        radio.disconnect()
+        assertFalse(radio.isConnected)
+    }
+
+    @Test fun writeAckWithoutActualFrequencyIsRejected()=runTest {
+        val transport=ScriptedL4sTransport(ignorePair=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect())
+        assertEquals(FrequencyPairResult.FAILED,radio.setTrackingFrequencies(435100000,145900000))
+        assertFalse(radio.pttOn())
+        radio.disconnect()
+    }
+
+    @Test fun transmissionBlocksBothLegsAndStopForcesNewRevisionBeforeRekey()=runTest {
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect())
+        assertTrue(radio.setSplitModes("FM","FM"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100000,145900000))
+        assertTrue(radio.pttOn())
+        val writes=transport.commands.count { it==L4sProtocol.PAIR }
+        assertEquals(FrequencyPairResult.FAILED,radio.setTrackingFrequencies(435100100,145900100))
+        assertEquals(writes,transport.commands.count { it==L4sProtocol.PAIR })
+        assertTrue(radio.pttOff())
+        val revision=radio.remoteState.value.appliedRevision
+        assertTrue(radio.pttOn())
+        assertTrue(radio.remoteState.value.appliedRevision>revision)
+        radio.disconnect()
+    }
+
+    @Test fun queuedFrequencyReplyCannotArmTransmission()=runTest {
+        val transport=ScriptedL4sTransport(acceptPairOnly=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect())
+        assertTrue(radio.setSplitModes("FM","FM"))
+        assertEquals(FrequencyPairResult.FAILED,radio.setTrackingFrequencies(435100000,145900000))
+        assertFalse(radio.pttOn())
+        assertFalse(transport.commands.contains(L4sProtocol.PTT))
+        radio.disconnect()
+    }
+
+    @Test fun lostCwAcknowledgementRetriesSameSequenceWithoutDuplicateSend()=runTest {
+        val transport=ScriptedL4sTransport(dropFirstCwReply=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect())
+        assertTrue(radio.setSplitModes("CW","CW"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100000,145900000))
+        assertTrue(radio.startCw("CQ DE TEST",20))
+        assertEquals(1,transport.cwStarts)
+        assertFalse(radio.setWorkingFrequency(435100100))
+        assertTrue(radio.pttOff())
+        radio.disconnect()
+    }
+
+    @Test fun heartbeatClosureMarksConnectionLostAndNeverAutoRekeys()=runTest {
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect())
+        transport.closeSession=true
+        advanceTimeBy(600);runCurrent()
+        assertFalse(radio.isConnected)
+        assertTrue(radio.remoteState.value.error!!.contains("session"))
+        assertFalse(transport.commands.contains(L4sProtocol.PTT))
+        radio.disconnect()
+    }
+
+    private fun hex(value:String)=value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+}
+
+private class ScriptedL4sTransport(
+    private val ignorePair:Boolean=false,
+    private val acceptPairOnly:Boolean=false,
+    private var dropFirstCwReply:Boolean=false
+):RadioTransport {
+    override var isConnected=false
+    var closeSession=false
+    val commands=mutableListOf<Int>()
+    var cwStarts=0
+    private var session=0L
+    private var rx=145000000L
+    private var tx=0L
+    private var revision=0L
+    private var rxMode=0
+    private var txMode=0
+    private var txState=0
+    private var cwState=0
+    private var pairReady=false
+    private var modeReady=false
+    private var wire=byteArrayOf()
+    private val retries=mutableMapOf<Int,ByteArray>()
+    override suspend fun connect():Boolean { isConnected=true;return true }
+    override suspend fun disconnect() { isConnected=false;wire=byteArrayOf() }
+    override suspend fun write(bytes:ByteArray):Boolean {
+        val p=L4sProtocol.Decoder().feed(bytes).single()
+        val command=L4sProtocol.u16(p,0);val seq=L4sProtocol.u16(p,6)
+        commands+=command
+        retries[seq]?.let { wire+=it;return true }
+        var result=0
+        var data:ByteArray
+        if(command==L4sProtocol.HELLO) {
+            data=ByteArray(42)
+            "L4S1".toByteArray().copyInto(data);data[4]=3
+            L4sProtocol.put32(data,5,15);L4sProtocol.put16(data,9,10)
+            data[11]=92;data[12]=10;data[13]=45;L4sProtocol.put16(data,14,1500)
+            L4sProtocol.put32(data,16,18000000);L4sProtocol.put32(data,20,1300000000)
+            "mock-v1".toByteArray().copyInto(data,24);data[40]=15;data[41]=9
+        } else {
+            when(command) {
+                L4sProtocol.OPEN -> session=L4sProtocol.u32(p,8)
+                L4sProtocol.KEEPALIVE -> if(closeSession) { session=0;txState=0;result=3 }
+                L4sProtocol.CLOSE -> { session=0;txState=0 }
+                L4sProtocol.MODE -> { rxMode=p[12].toInt();txMode=p[13].toInt();modeReady=true }
+                L4sProtocol.PAIR -> if(acceptPairOnly) result=L4sProtocol.ACCEPTED
+                else if(!ignorePair) {
+                    rx=L4sProtocol.u32(p,12);tx=L4sProtocol.u32(p,16);revision=L4sProtocol.u32(p,21);pairReady=true
+                }
+                L4sProtocol.PTT -> if(pairReady && modeReady) txState=1 else result=10
+                L4sProtocol.CW -> if(pairReady && modeReady) { txState=2;cwState=1;cwStarts++;result=1 } else result=10
+                L4sProtocol.STOP -> { txState=0;cwState=4;pairReady=false }
+            }
+            data=ByteArray(24)
+            L4sProtocol.put32(data,0,rx);L4sProtocol.put32(data,4,tx);L4sProtocol.put32(data,8,revision)
+            data[16]=rxMode.toByte();data[17]=txMode.toByte();data[18]=if(tx!=0L)1 else 0
+            data[19]=txState.toByte();data[20]=cwState.toByte()
+        }
+        val reply=L4sProtocol.body(command or 0x8000,seq,session,data).also { it[5]=result.toByte() }
+        val frame=L4sProtocol.frame(reply)
+        retries[seq]=frame
+        if(command==L4sProtocol.CW && dropFirstCwReply) dropFirstCwReply=false else wire+=frame
+        return true
+    }
+    override suspend fun readAvailable(maxBytes:Int):ByteArray {
+        val n=minOf(3,maxBytes,wire.size)
+        return wire.copyOfRange(0,n).also { wire=wire.copyOfRange(n,wire.size) }
+    }
+}

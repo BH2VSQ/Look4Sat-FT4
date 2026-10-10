@@ -1,0 +1,130 @@
+package com.rtbishop.look4sat.core.data.framework
+
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitState
+import com.rtbishop.look4sat.core.domain.repository.RemoteRadioCapabilities
+import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
+
+internal object L4sProtocol {
+    const val HELLO = 0x700
+    const val OPEN = 0x701
+    const val KEEPALIVE = 0x702
+    const val CLOSE = 0x703
+    const val STATUS = 0x704
+    const val PAIR = 0x705
+    const val MODE = 0x706
+    const val TONE = 0x707
+    const val PTT = 0x708
+    const val CW = 0x709
+    const val STOP = 0x70A
+    const val APPLIED = 0
+    const val ACCEPTED = 1
+    private const val MAX_BODY = 120
+    private val mask = intArrayOf(0x16,0x6c,0x14,0xe6,0x2e,0x91,0x0d,0x40,0x21,0x35,0xd5,0x40,0x13,0x03,0xe9,0x80)
+
+    data class Reply(val command: Int, val sequence: Int, val session: Long, val result: Int, val data: ByteArray)
+
+    fun u16(p: ByteArray, offset: Int): Int = (p[offset].toInt() and 255) or ((p[offset+1].toInt() and 255) shl 8)
+    fun u32(p: ByteArray, offset: Int): Long = u16(p,offset).toLong() or (u16(p,offset+2).toLong() shl 16)
+    fun put16(p: ByteArray, offset: Int, n: Int) { p[offset]=n.toByte();p[offset+1]=(n ushr 8).toByte() }
+    fun put32(p: ByteArray, offset: Int, n: Long) { put16(p,offset,n.toInt());put16(p,offset+2,(n ushr 16).toInt()) }
+    fun crc(p: ByteArray): Int {
+        var crc=0
+        p.forEach { value ->
+            crc=crc xor ((value.toInt() and 255) shl 8)
+            repeat(8) { crc=((crc shl 1) xor if(crc and 0x8000 != 0) 0x1021 else 0) and 0xffff }
+        }
+        return crc
+    }
+
+    fun body(command: Int, sequence: Int, session: Long, data: ByteArray = byteArrayOf()): ByteArray =
+        ByteArray(12+data.size).also { p ->
+            require(p.size <= MAX_BODY)
+            put16(p,0,command);put16(p,2,8+data.size);p[4]=1
+            put16(p,6,sequence);put32(p,8,session);data.copyInto(p,12)
+        }
+
+    fun frame(body: ByteArray): ByteArray {
+        require(body.size in 12..MAX_BODY)
+        val p=ByteArray(body.size+8)
+        p[0]=0xab.toByte();p[1]=0xcd.toByte();put16(p,2,body.size)
+        body.copyInto(p,4);put16(p,4+body.size,crc(body))
+        for(i in 0 until body.size+2) p[4+i]=(p[4+i].toInt() xor mask[i%16]).toByte()
+        p[p.lastIndex-1]=0xdc.toByte();p[p.lastIndex]=0xba.toByte()
+        return p
+    }
+
+    fun reply(body: ByteArray): Reply? {
+        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870a) return null
+        return Reply(u16(body,0) and 0x7fff,u16(body,6),u32(body,8),body[5].toInt() and 255,body.copyOfRange(12,body.size))
+    }
+
+    class Decoder {
+        private var buffer=byteArrayOf()
+        fun feed(chunk: ByteArray): List<ByteArray> {
+            buffer=(buffer+chunk).takeLast(4096).toByteArray()
+            val result=mutableListOf<ByteArray>()
+            while(buffer.size>=4) {
+                if(buffer[0]!=0xab.toByte() || buffer[1]!=0xcd.toByte()) { buffer=buffer.copyOfRange(1,buffer.size);continue }
+                val size=u16(buffer,2)
+                if(size !in 12..MAX_BODY) { buffer=buffer.copyOfRange(1,buffer.size);continue }
+                if(buffer.size<size+8) break
+                val plain=buffer.copyOfRange(4,size+6)
+                for(i in plain.indices) plain[i]=(plain[i].toInt() xor mask[i%16]).toByte()
+                val body=plain.copyOfRange(0,size)
+                if(buffer[size+6]!=0xdc.toByte() || buffer[size+7]!=0xba.toByte() || crc(body)!=u16(plain,size)) {
+                    buffer=buffer.copyOfRange(1,buffer.size);continue
+                }
+                result+=body;buffer=buffer.copyOfRange(size+8,buffer.size)
+            }
+            return result
+        }
+    }
+
+    fun capabilities(data: ByteArray): Pair<String, RemoteRadioCapabilities>? {
+        if(data.size!=42 || data.copyOfRange(0,4).toString(Charsets.US_ASCII)!="L4S1" || data[4]!=3.toByte()) return null
+        val bits=u32(data,5).toInt()
+        val caps=RemoteRadioCapabilities(
+            u16(data,9).toLong(),data[11].toInt() and 255,data[12].toInt() and 255,data[13].toInt() and 255,
+            u16(data,14),u32(data,16),u32(data,20),data[40].toInt() and 255,data[41].toInt() and 255,
+            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0
+        )
+        if(caps.frequencyStepHz!=10L || caps.maxCwText !in 1..92 || caps.minimumWpm !in 1..45 ||
+            caps.maximumWpm !in caps.minimumWpm..45 || caps.watchdogMillis!=1500 || !caps.atomicPair) return null
+        return data.copyOfRange(24,40).toString(Charsets.US_ASCII).trimEnd('\u0000') to caps
+    }
+
+    fun snapshot(reply: Reply, old: RemoteRadioState): RemoteRadioState? {
+        val p=reply.data
+        if(p.size!=24 || p[16].toInt() !in 0..3 || p[17].toInt() !in 0..3 ||
+            p[19].toInt() !in 0..3 || p[20].toInt() !in 0..5) return null
+        return old.copy(
+            session=reply.session, rxFrequencyHz=u32(p,0).takeIf { it>0 },txFrequencyHz=u32(p,4).takeIf { it>0 },
+            appliedRevision=u32(p,8),pendingRevision=u32(p,12),rxMode=modeName(p[16].toInt()),
+            txMode=modeName(p[17].toInt()),txEnabled=p[18]!=0.toByte(),txSource=p[19].toInt(),
+            cwState=CwTransmitState.entries[p[20].toInt()],cwPosition=p[21].toInt() and 255,
+            cwLength=p[22].toInt() and 255,error=(p[23].toInt() and 255).takeIf { it!=0 }?.let(::error)
+        )
+    }
+
+    fun modeNumber(mode: String): Int? = when(mode.uppercase(java.util.Locale.ROOT)) {
+        "FM", "NFM", "FM-N" -> 0
+        "AM" -> 1
+        "USB" -> 2
+        "CW" -> 3
+        else -> null
+    }
+    fun modeName(mode: Int): String = listOf("FM","AM","USB","CW")[mode]
+    fun error(code: Int): String = when(code) {
+        2 -> "Invalid L4S command length"
+        3 -> "L4S session closed or expired; reconnect"
+        4 -> "Radio is busy (use main screen, stop local TX/USB paddle mode)"
+        5 -> "Frequency, tone or CW speed outside radio limits"
+        6 -> "Unsupported radio mode or L4S command"
+        7 -> "Radio rejected TX (check TX lock, battery, busy channel and TOT)"
+        8 -> "Remote control cancelled by local operation"
+        9 -> "Stale L4S command or frequency revision"
+        10 -> "Apply frequencies and modes before transmitting"
+        11 -> "L4S watchdog/TOT stopped transmission"
+        else -> "L4S error $code"
+    }
+}
