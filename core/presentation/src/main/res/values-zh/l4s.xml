@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rc_l4s_hint">需要 L4S 固件。USB-C OTG 只传控制命令，语音使用手台麦克风。单台半双工，独立 RX/TX 频率。连接前关闭 USB 拨片／手键模式。整个发射期间保持两路频率不变，结束后恢复跟踪。</string>
+    <string name="rc_l4s_firmware">L4S 固件：%1$s</string>
+    <string name="rc_l4s_hold">按住 PTT（手台麦克风）</string>
+    <string name="rc_l4s_stop">停止发射</string>
+    <string name="rc_l4s_cw">CW 拍发</string>
+    <string name="rc_l4s_frozen">发射中：TX/RX 多普勒保持，结束后恢复</string>
+    <string name="rc_l4s_linear">线性转发器使用原生 CW，不支持 SSB 发射。</string>
+    <string name="rc_l4s_target">目标 TX %1$s · RX %2$s</string>
+    <string name="rc_l4s_applied">已应用 TX %1$s · RX %2$s</string>
+    <string name="rc_l4s_source">发射来源：%1$s</string>
+    <string name="rc_l4s_local">手台</string>
+    <string name="rc_l4s_off">未发射</string>
+    <string name="rc_l4s_message">CW 文本（A–Z、0–9、/ ? . , = -）</string>
+    <string name="rc_l4s_wpm">速度：%1$d WPM</string>
+    <string name="rc_l4s_send">发送</string>
+    <string name="rc_l4s_progress">CW %1$d/%2$d · %3$s</string>
+</resources>

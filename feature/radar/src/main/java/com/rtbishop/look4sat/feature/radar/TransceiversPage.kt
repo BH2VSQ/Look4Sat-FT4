@@ -547,6 +547,10 @@ private fun ExpandedRadioControl(
             }
         }
 
+        if (radioControl.remoteRadio != null) {
+            RemoteRadioControls(radioControl, onAction)
+        }
+
         // Control buttons
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (!radioControl.txPanel.isConnected && !radioControl.rxPanel.isConnected) {

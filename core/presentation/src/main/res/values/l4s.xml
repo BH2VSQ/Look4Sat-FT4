@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rc_l4s_hint">L4S firmware required. USB-C OTG carries control only; voice uses the handheld microphone. One half-duplex radio with independent RX/TX frequencies. Turn off USB paddle/handkey mode before connecting. Both frequencies stay fixed throughout TX and resume tracking after TX ends.</string>
+    <string name="rc_l4s_firmware">L4S firmware: %1$s</string>
+    <string name="rc_l4s_hold">Hold PTT (radio mic)</string>
+    <string name="rc_l4s_stop">Stop TX</string>
+    <string name="rc_l4s_cw">CW text</string>
+    <string name="rc_l4s_frozen">TX/RX Doppler held until transmission ends</string>
+    <string name="rc_l4s_linear">Linear transponders use native CW. SSB transmission is not supported.</string>
+    <string name="rc_l4s_target">Target TX %1$s · RX %2$s</string>
+    <string name="rc_l4s_applied">Applied TX %1$s · RX %2$s</string>
+    <string name="rc_l4s_source">TX source: %1$s</string>
+    <string name="rc_l4s_local">Handheld</string>
+    <string name="rc_l4s_off">Off</string>
+    <string name="rc_l4s_message">CW message (A–Z, 0–9, / ? . , = -)</string>
+    <string name="rc_l4s_wpm">Speed: %1$d WPM</string>
+    <string name="rc_l4s_send">Send</string>
+    <string name="rc_l4s_progress">CW %1$d/%2$d · %3$s</string>
+</resources>

@@ -1305,11 +1305,12 @@ fun RadioControlDialog(
 
     val modelDescriptor = radioModelDescriptor(radioModel.value)
     val isIcom = modelDescriptor.protocolFamily == RadioProtocolFamily.ICOM_CIV
+    val isL4s = modelDescriptor.protocolFamily == RadioProtocolFamily.L4S
     val isVox = catTransport.value == RadioControlSettings.TRANSPORT_VOX
     val supportsSatelliteMode = modelDescriptor.capabilities.satelliteMode &&
         !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
             tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-    val isSingleRadio = modelDescriptor.capabilities.singleRadioSplit && splitMode.value
+    val isSingleRadio = modelDescriptor.capabilities.singleRadioSplit && (splitMode.value || isL4s)
     val requiredStopBits = modelDescriptor.serialStopBits
 
     val baudRates = radioBaudRates(radioModel.value)
@@ -1467,7 +1468,9 @@ fun RadioControlDialog(
 
             Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                RadioControlSettings.SUPPORTED_TRANSPORTS.forEach { transport ->
+                RadioControlSettings.SUPPORTED_TRANSPORTS.filter {
+                    !isL4s || it == RadioControlSettings.TRANSPORT_USB
+                }.forEach { transport ->
                     FilterChip(
                         selected = catTransport.value == transport,
                         onClick = {
@@ -1534,6 +1537,16 @@ fun RadioControlDialog(
                             val currentAddress = parseCivAddress(civAddress.value)
                             val modelChanged = radioModel.value != model
                             radioModel.value = model
+                            if (radioModelDescriptor(model).protocolFamily == RadioProtocolFamily.L4S) {
+                                splitMode.value = true
+                                if (catTransport.value != RadioControlSettings.TRANSPORT_USB) {
+                                    txAddressByTransport[catTransport.value] = txAddress.value
+                                    txNameByTransport[catTransport.value] = txName.value
+                                    catTransport.value = RadioControlSettings.TRANSPORT_USB
+                                    txAddress.value = txAddressByTransport[RadioControlSettings.TRANSPORT_USB].orEmpty()
+                                    txName.value = txNameByTransport[RadioControlSettings.TRANSPORT_USB].orEmpty()
+                                }
+                            }
                             val newCapabilities = radioModelDescriptor(model).capabilities
                             if (!newCapabilities.singleRadioSplit) splitMode.value = false
                             if (!newCapabilities.satelliteMode) {
@@ -1592,7 +1605,10 @@ fun RadioControlDialog(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
             }
-            if (modelDescriptor.capabilities.singleRadioSplit) {
+            if (isL4s) {
+                Text(stringResource(R.string.rc_l4s_hint), style = MaterialTheme.typography.bodySmall)
+            }
+            if (modelDescriptor.capabilities.singleRadioSplit && !isL4s) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically,

@@ -41,7 +41,13 @@ data class RadioControlSubState(
     val txBaseFrequencyHz: Long? = null,
     val ctcssTone: Double? = null,
     val isTracking: Boolean = false,
-    val errorMessage: String? = null
+    val isReady: Boolean = false,
+    val errorMessage: String? = null,
+    val remoteRadio: com.rtbishop.look4sat.core.domain.repository.RemoteRadioState? = null,
+    val transmitOwner: com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner = com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner.NONE,
+    val pttState: com.rtbishop.look4sat.core.domain.repository.PttState = com.rtbishop.look4sat.core.domain.repository.PttState.OFF,
+    val targetTxHz: Long? = null,
+    val targetRxHz: Long? = null
 )
 
 data class TransceiverSubState(
@@ -118,6 +124,9 @@ sealed interface RadarAction {
     data object ToggleTracking : RadarAction
     data object ConnectRadios : RadarAction
     data object DisconnectRadios : RadarAction
+    data class VoicePtt(val pressed: Boolean) : RadarAction
+    data class SendCw(val text: String, val wpm: Int) : RadarAction
+    data object StopRemoteTx : RadarAction
 
     // SSTV actions
     data object SstvStartRecording : RadarAction

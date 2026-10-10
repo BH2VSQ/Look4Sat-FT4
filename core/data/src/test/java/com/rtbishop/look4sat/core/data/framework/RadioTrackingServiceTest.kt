@@ -34,6 +34,11 @@ import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import com.rtbishop.look4sat.core.domain.repository.PttState
 import com.rtbishop.look4sat.core.domain.repository.TrackingPhase
+import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
+import com.rtbishop.look4sat.core.domain.repository.RemoteRadioCapabilities
+import com.rtbishop.look4sat.core.domain.repository.FrequencyPairResult
+import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitState
 import com.rtbishop.look4sat.core.domain.time.ClockSample
 import com.rtbishop.look4sat.core.domain.time.ClockSnapshot
 import com.rtbishop.look4sat.core.domain.time.ClockSource
@@ -56,6 +61,69 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+
+    private fun remoteFixtureState() = MutableStateFlow(RemoteRadioState(
+        connected = true, rxFrequencyHz = 435100000L, txFrequencyHz = 145900000L,
+        capabilities = RemoteRadioCapabilities(10,92,10,45,1500,18000000,1300000000,15,9,true,true,true,true,false,false)
+    ))
+
+    @Test fun l4sVoiceHoldsBothLegsAndImmediatelyResumesWithFreshTime() = runTest {
+        val remote = remoteFixtureState()
+        val tx = FakeRadioController(remote = remote)
+        val baseTime = System.currentTimeMillis()
+        val fixture = Fixture(backgroundScope,tx,FakeRadioController(),
+            nowProvider = { baseTime + testScheduler.currentTime },
+            radioModel = RadioControlSettings.MODEL_QUANSHENG_UVK1, splitMode = true,
+            transport = RadioControlSettings.TRANSPORT_USB)
+        fixture.transponder = fixture.transponder.copy(uplinkMode = "FM", downlinkMode = "FM")
+        fixture.satelliteRepo.positionAt = { time -> fixture.position.copy(distanceRate = if(time>baseTime+500) 3.0 else 1.0) }
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        fixture.service.setVoicePtt(true);runCurrent()
+        assertEquals(RadioTransmitOwner.VOICE,fixture.service.state.value.transmitOwner)
+        assertEquals(PttState.ON,fixture.service.state.value.pttState)
+        val writes = tx.operations.count { it.startsWith("pair:") || it.contains("frequency:") }
+        assertTrue(runCatching { fixture.service.beginTransmit(fixture.request(501)) }.isFailure)
+        advanceTimeBy(1100);runCurrent()
+        assertEquals(writes,tx.operations.count { it.startsWith("pair:") || it.contains("frequency:") })
+        fixture.service.setVoicePtt(false);runCurrent()
+        assertEquals(PttState.OFF,fixture.service.state.value.pttState)
+        assertTrue(tx.operations.count { it.startsWith("pair:") || it.contains("frequency:") } > writes)
+        assertEquals(baseTime+testScheduler.currentTime,fixture.satelliteRepo.requestedTimes.last())
+        fixture.close()
+    }
+
+    @Test fun l4sCwGapsStillHoldBothFrequenciesUntilCancelled() = runTest {
+        val remote = remoteFixtureState()
+        val tx = FakeRadioController(remote = remote)
+        val fixture = Fixture(backgroundScope,tx,FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_QUANSHENG_UVK1, splitMode = true,
+            transport = RadioControlSettings.TRANSPORT_USB)
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        assertEquals("CW",fixture.service.state.value.txMode)
+        fixture.service.sendCw("CQ DE TEST",20);runCurrent()
+        assertEquals(RadioTransmitOwner.CW,fixture.service.state.value.transmitOwner)
+        val writes = tx.operations.count { it.startsWith("pair:") || it.contains("frequency:") }
+        remote.value = remote.value.copy(txSource = 0) // key-up gap, message still sending
+        advanceTimeBy(1100);runCurrent()
+        assertEquals(writes,tx.operations.count { it.startsWith("pair:") || it.contains("frequency:") })
+        fixture.service.cancelRemoteTransmit();runCurrent()
+        assertEquals(RadioTransmitOwner.NONE,fixture.service.state.value.transmitOwner)
+        assertEquals(PttState.OFF,fixture.service.state.value.pttState)
+        assertTrue(tx.operations.count { it.startsWith("pair:") || it.contains("frequency:") } > writes)
+        fixture.close()
+    }
+
+    @Test fun l4sTouchReleaseBeforeQueuedPressNeverKeysRadio() = runTest {
+        val tx = FakeRadioController(remote = remoteFixtureState())
+        val fixture = Fixture(backgroundScope,tx,FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_QUANSHENG_UVK1, splitMode = true,
+            transport = RadioControlSettings.TRANSPORT_USB)
+        fixture.transponder = fixture.transponder.copy(uplinkMode = "FM", downlinkMode = "FM")
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        fixture.service.setVoicePtt(true);fixture.service.setVoicePtt(false);runCurrent()
+        assertFalse(tx.operations.contains("ptt:on"))
+        fixture.close()
+    }
 
     @Test
     fun ic820RejectsTwoConnectionsToTheSameRadio() = runTest {
@@ -924,8 +992,23 @@ private class FixedClock(private val now: () -> Long) : IDisciplinedClock {
 private class FakeRadioController(
     private val pttOnSucceeds: Boolean = true,
     private val setModeSucceeds: Boolean = true,
-    private val ctcssStepDelayMillis: Long = 0L
+    private val ctcssStepDelayMillis: Long = 0L,
+    private val remote: MutableStateFlow<RemoteRadioState>? = null
 ) : IRadioController {
+    override val remoteState get() = remote
+    override val supportsAtomicPair get() = remote != null
+    override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult {
+        operations += "pair:$rxHz:$txHz"
+        if (remote?.value?.txSource != 0) return FrequencyPairResult.FAILED
+        frequencyHz = rxHz; txFrequencyHz = txHz ?: 0
+        remote.value = remote.value.copy(rxFrequencyHz = rxHz, txFrequencyHz = txHz, txEnabled = txHz != null)
+        return FrequencyPairResult.APPLIED
+    }
+    override suspend fun startCw(text: String, wpm: Int): Boolean {
+        operations += "cw:$text:$wpm"
+        remote?.value = remote.value.copy(txSource = 2, cwState = CwTransmitState.SENDING)
+        return true
+    }
     val operations = mutableListOf<String>()
     var frequencyHz = 0L
     var txFrequencyHz = 0L
@@ -1008,6 +1091,7 @@ private class FakeRadioController(
 
     override suspend fun setSplitModes(rxMode: String?, txMode: String?): Boolean {
         operations += "split-modes:$rxMode:$txMode"
+        remote?.value = remote.value.copy(rxMode = rxMode ?: "FM", txMode = txMode ?: "FM")
         return true
     }
 
@@ -1025,11 +1109,13 @@ private class FakeRadioController(
 
     override suspend fun pttOn(): Boolean {
         operations += "ptt:on"
+        if (pttOnSucceeds) remote?.value = remote.value.copy(txSource = 1)
         return pttOnSucceeds
     }
 
     override suspend fun pttOff(): Boolean {
         operations += "ptt:off"
+        remote?.value = remote.value.copy(txSource = 0, cwState = CwTransmitState.CANCELLED)
         return true
     }
 }

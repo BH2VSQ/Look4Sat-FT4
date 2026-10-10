@@ -38,6 +38,10 @@ import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import com.rtbishop.look4sat.core.domain.repository.RadioTrackingState
 import com.rtbishop.look4sat.core.domain.repository.PttState
 import com.rtbishop.look4sat.core.domain.repository.TrackingPhase
+import com.rtbishop.look4sat.core.domain.repository.FrequencyPairResult
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitState
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
+import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
 import com.rtbishop.look4sat.core.domain.time.IDisciplinedClock
 import com.rtbishop.look4sat.core.domain.utility.DialFollowPolicy
 import com.rtbishop.look4sat.core.domain.utility.DialFollowState
@@ -56,6 +60,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
@@ -83,6 +90,11 @@ class RadioTrackingService(
     private var rxController: IRadioController? = null
     private var connectedCatPttSupported = true
     private var trackingJob: Job? = null
+    private var remoteMonitorJob: Job? = null
+    private var manualJob: Job? = null
+    @Volatile private var manualOwner = RadioTransmitOwner.NONE
+    private val manualEpoch = AtomicLong()
+    private val tuningWake = Channel<Unit>(Channel.CONFLATED)
     private val connectionMutex = Mutex()
     private val transmitMutex = Mutex()
     private val tuningRevision = AtomicLong()
@@ -105,7 +117,7 @@ class RadioTrackingService(
         }
     }
     private val hasTransmitClaim: Boolean
-        get() = transmitPreparing || activeTxLease != null
+        get() = transmitPreparing || activeTxLease != null || manualOwner != RadioTransmitOwner.NONE
 
     // ── Connection ──────────────────────────────────────────────────────────
 
@@ -116,18 +128,24 @@ class RadioTrackingService(
         rxController?.disconnect()
         txController = null
         rxController = null
+        remoteMonitorJob?.cancel()
+        remoteMonitorJob = null
 
         val rcSettings = settingsRepo.radioControlSettings.value
         val txAddr     = rcSettings.txRadioAddress
         val rxAddr     = rcSettings.rxRadioAddress
         val profile    = radioProfile(rcSettings.radioModel, rcSettings.civAddress)
+        if (profile.isL4s && rcSettings.catTransport != RadioControlSettings.TRANSPORT_USB) {
+            _state.update { it.copy(errorMessage = "L4S radios require USB CDC/OTG") }
+            return
+        }
         connectedCatPttSupported = profile.capabilities.ptt
         if (profile.icomVariant == IcomCivVariant.IC820 && txAddr.isNotBlank() && txAddr == rxAddr) {
             _state.update { it.copy(errorMessage = "IC-820 needs separate TX/RX radios; for receive-only tracking configure RX only") }
             return
         }
         val isIcom     = profile.isIcom
-        val isSplit    = isIcom && profile.capabilities.singleRadioSplit && rcSettings.splitMode
+        val isSplit    = profile.capabilities.singleRadioSplit && (rcSettings.splitMode || profile.isL4s)
         val usesHamlib = rcSettings.catTransport == RadioControlSettings.TRANSPORT_TCP &&
             rcSettings.tcpProtocol == RadioControlSettings.TCP_PROTOCOL_HAMLIB
         val isSatelliteMode = isSplit && profile.supportsSatelliteMode &&
@@ -148,7 +166,9 @@ class RadioTrackingService(
                 rxConnected = false,
                 physicalConnectionCount = 0,
                 pttState = PttState.OFF,
-                lastCommandError = null
+                lastCommandError = null,
+                remoteRadio = null,
+                transmitOwner = RadioTransmitOwner.NONE
             )
         }
 
@@ -227,6 +247,27 @@ class RadioTrackingService(
             }
             Log.i(tag, "Dual-radio connected: txOk=$txOk rxOk=$rxOk")
         }
+        txController?.remoteState?.let { remoteFlow ->
+            remoteMonitorJob = appScope.launch {
+                remoteFlow.collect { remote ->
+                    _state.update { current -> current.copy(
+                        remoteRadio = remote,
+                        txConnected = remote.connected, rxConnected = remote.connected,
+                        physicalConnectionCount = if (remote.connected) 1 else 0,
+                        txFrequencyHz = remote.txFrequencyHz, rxFrequencyHz = remote.rxFrequencyHz,
+                        pttState = if (remote.txSource != 0) PttState.ON else if (current.pttState == PttState.ERROR) PttState.ERROR else PttState.OFF,
+                        lastCommandError = remote.error ?: current.lastCommandError,
+                        isActive = current.isActive && remote.connected,
+                        trackingPhase = if (!remote.connected && current.isActive) TrackingPhase.ERROR else current.trackingPhase,
+                        errorMessage = remote.error ?: current.errorMessage
+                    ) }
+                    if (!remote.connected && manualOwner != RadioTransmitOwner.NONE) {
+                        manualEpoch.incrementAndGet()
+                        transmitMutex.withLock { forcePttOffLocked(remote.error ?: "L4S disconnected") }
+                    }
+                }
+            }
+        }
         diagnose(
             "connect/result",
             "tx=${_state.value.txConnected} rx=${_state.value.rxConnected} " +
@@ -254,7 +295,9 @@ class RadioTrackingService(
                 profile.serialStopBits
             )
         } else null
-        val controller = injected ?: if (usesHamlib) {
+        val controller = injected ?: if (profile.isL4s) {
+            L4sController(checkNotNull(transport) { "L4S USB transport is unavailable" }, appScope)
+        } else if (usesHamlib) {
             HamlibRigctldController(
                 endpoint = address,
                 transport = checkNotNull(transport)
@@ -305,6 +348,8 @@ class RadioTrackingService(
         rxController?.disconnect()
         txController = null
         rxController = null
+        remoteMonitorJob?.cancel()
+        remoteMonitorJob = null
         _state.update {
             it.copy(
                 txConnected = false,
@@ -331,7 +376,7 @@ class RadioTrackingService(
         require(request.maximumPttMillis >= request.waveformDurationMillis) {
             "PTT watchdog is shorter than the waveform"
         }
-        check(activeTxLease == null) { "Another transmit lease is active" }
+        check(!hasTransmitClaim) { "Another transmit lease is active" }
         if (settingsRepo.radioControlSettings.value.catTransport == RadioControlSettings.TRANSPORT_VOX) {
             return@withLock beginVoxTransmit(request)
         }
@@ -457,6 +502,134 @@ class RadioTrackingService(
         }
     }
 
+    private fun controlUplinkMode(transponder: SatRadio): String? {
+        val mode = transponder.resolvedUplinkMode()
+        return if (radioProfile(settingsRepo.radioControlSettings.value.radioModel).isL4s &&
+            mode in setOf("USB", "LSB", "SSB", "CW")) "CW" else mode
+    }
+
+    private fun controlDownlinkMode(transponder: SatRadio, txMode: String?): String? =
+        if (radioProfile(settingsRepo.radioControlSettings.value.radioModel).isL4s && txMode == "CW") "CW"
+        else transponder.downlinkMode?.uppercase() ?: txMode?.let {
+            TransponderMapper.mapUplinkModeToDownlinkMode(it, transponder.isInverted)
+        }
+
+    private suspend fun prepareRemotePair(controller: IRadioController) {
+        val current = _state.value
+        check(current.isActive && current.trackingPhase == TrackingPhase.READY) { "Start satellite tracking first" }
+        val pass = checkNotNull(current.currentPass)
+        check(clock.nowMillis() < pass.losTime) { "Satellite pass reached LOS" }
+        val transponder = checkNotNull(current.selectedTransponder)
+        val base = checkNotNull(current.txBaseFrequencyHz ?: transponder.uplinkCenterFrequency()) { "No uplink frequency" }
+        val position = satelliteRepo.getPosition(pass.orbitalObject, settingsRepo.stationPosition.value, clock.nowMillis())
+        val offset = if (DopplerFrequencyCalculator.isLinearTransponder(transponder)) {
+            DopplerFrequencyCalculator.parseOffsetHz(settingsRepo.getSatelliteOffset(pass.catNum))
+        } else 0L
+        val nominalRx = checkNotNull(TransponderMapper.mapUplinkToDownlink(base, transponder)) + offset
+        val tx = position.getUplinkFreq(base)
+        val rx = position.getDownlinkFreq(nominalRx)
+        check(controller.setTrackingFrequencies(rx, tx) == FrequencyPairResult.APPLIED) {
+            controller.remoteState?.value?.error ?: "RX/TX pair was not applied before TX"
+        }
+        _state.update { it.copy(targetTxFrequencyHz = tx, targetRxFrequencyHz = rx) }
+    }
+
+    override fun setVoicePtt(enabled: Boolean) {
+        if (!enabled) { cancelRemoteTransmit(); return }
+        if (hasTransmitClaim || _state.value.pttState != PttState.OFF) {
+            failTrackingCommand("Another transmission is active"); return
+        }
+        val epoch = manualEpoch.incrementAndGet()
+        manualJob = appScope.launch {
+            try {
+                transmitMutex.withLock {
+                    check(manualEpoch.get() == epoch) { "PTT request cancelled" }
+                    check(!hasTransmitClaim && _state.value.pttState == PttState.OFF) { "Another transmission is active" }
+                    val controller = checkNotNull(txController) { "Radio is not connected" }
+                    check(controller.remoteState?.value?.capabilities?.voicePtt == true) { "Radio has no remote voice PTT" }
+                    check(_state.value.txMode.isFmMode()) { "Voice PTT requires FM; use CW text for linear satellites" }
+                    val generation = controller.pttSafetyGeneration()
+                    manualOwner = RadioTransmitOwner.VOICE
+                    _state.update { it.copy(transmitOwner = manualOwner, pttState = PttState.ARMING, lastCommandError = null) }
+                    prepareRemotePair(controller)
+                    check(manualEpoch.get() == epoch && controller.pttOnIfGeneration(generation)) {
+                        controller.remoteState?.value?.error ?: "PTT ON was not confirmed"
+                    }
+                    _state.update { it.copy(pttState = PttState.ON) }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                withContext(NonCancellable) {
+                    transmitMutex.withLock {
+                        if (manualOwner == RadioTransmitOwner.VOICE) forcePttOffLocked(error.message)
+                        else _state.update { it.copy(lastCommandError = error.message, errorMessage = error.message) }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun sendCw(text: String, wpm: Int) {
+        if (hasTransmitClaim || _state.value.pttState != PttState.OFF) {
+            failTrackingCommand("Another transmission is active"); return
+        }
+        val epoch = manualEpoch.incrementAndGet()
+        manualJob = appScope.launch {
+            var claimed = false
+            try {
+                val normalized = CwTransmitText.normalize(text)
+                val controller = checkNotNull(txController) { "Radio is not connected" }
+                val caps = checkNotNull(controller.remoteState?.value?.capabilities)
+                check(caps.cwText && wpm in caps.minimumWpm..caps.maximumWpm) { "CW speed outside firmware limits" }
+                transmitMutex.withLock {
+                    check(manualEpoch.get() == epoch && !hasTransmitClaim && _state.value.pttState == PttState.OFF) {
+                        "Another transmission is active or request cancelled"
+                    }
+                    check(_state.value.txMode == "CW") { "Select a CW/linear transponder for CW transmission" }
+                    manualOwner = RadioTransmitOwner.CW
+                    claimed = true
+                    _state.update { it.copy(transmitOwner = manualOwner, cwMessagePosition = 0,
+                        cwMessageLength = normalized.length, lastCommandError = null) }
+                    prepareRemotePair(controller)
+                }
+                var sent = 0
+                for (chunk in CwTransmitText.chunks(normalized, caps.maxCwText)) {
+                    transmitMutex.withLock {
+                        check(manualEpoch.get() == epoch && manualOwner == RadioTransmitOwner.CW)
+                        check(controller.startCw(chunk, wpm)) {
+                            controller.remoteState?.value?.error ?: "CW was not accepted"
+                        }
+                    }
+                    val terminal = withTimeoutOrNull((chunk.length * 30L * 1200L / wpm) + 10_000L) {
+                        controller.remoteState!!.first { !it.connected || it.cwState in
+                            setOf(CwTransmitState.DONE, CwTransmitState.CANCELLED, CwTransmitState.FAILED) }
+                    }
+                    check(terminal?.connected == true && terminal.cwState == CwTransmitState.DONE) {
+                        terminal?.error ?: "CW transmission cancelled or timed out"
+                    }
+                    sent += chunk.length
+                    _state.update { it.copy(cwMessagePosition = sent) }
+                }
+                _state.update { it.copy(cwMessagePosition = normalized.length) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { _state.update { it.copy(lastCommandError = error.message, errorMessage = error.message) } }
+            finally {
+                withContext(NonCancellable) {
+                    transmitMutex.withLock {
+                        if (claimed && manualOwner == RadioTransmitOwner.CW) forcePttOffLocked(null)
+                    }
+                }
+            }
+        }
+    }
+
+    override fun cancelRemoteTransmit() {
+        manualEpoch.incrementAndGet()
+        txController?.invalidatePendingPttOn()
+        manualJob?.cancel()
+        appScope.launch { emergencyPttOff() }
+    }
+
     private fun beginVoxTransmit(request: TxRequest): TxLease {
         val midpoint = request.waveformStartUtcMillis + request.waveformDurationMillis / 2L
         val lease = TxLease(
@@ -561,6 +734,8 @@ class RadioTrackingService(
     }
 
     override suspend fun emergencyPttOff() {
+        manualEpoch.incrementAndGet()
+        manualJob?.cancel()
         if (activeTxLease?.usesVox == true ||
             settingsRepo.radioControlSettings.value.catTransport == RadioControlSettings.TRANSPORT_VOX
         ) {
@@ -653,7 +828,10 @@ class RadioTrackingService(
     private suspend fun forcePttOffLocked(failure: String?, priorAcknowledged: Boolean? = null) {
         pttWatchdogJob?.cancel()
         pttWatchdogJob = null
-        val hadActiveLease = activeTxLease != null
+        val hadActiveLease = activeTxLease != null || manualOwner != RadioTransmitOwner.NONE
+        manualJob?.cancel()
+        manualJob = null
+        manualOwner = RadioTransmitOwner.NONE
         val controller = txController
         val acknowledged = priorAcknowledged ?: withContext(NonCancellable) {
             if (controller?.isConnected == true) {
@@ -674,6 +852,7 @@ class RadioTrackingService(
             it.copy(
                 pttState = if (error == null) PttState.OFF else PttState.ERROR,
                 txLeaseId = null,
+                transmitOwner = RadioTransmitOwner.NONE,
                 lastCommandError = error,
                 errorMessage = error ?: it.errorMessage
             )
@@ -683,6 +862,7 @@ class RadioTrackingService(
             "pttOff=$acknowledged dataRestored=$dataModeRestored",
             if (error == null) ControlDiagnosticSeverity.INFO else ControlDiagnosticSeverity.ERROR
         )
+        if (error == null && _state.value.isActive) tuningWake.trySend(Unit)
     }
 
     private suspend fun restoreDataModeLocked(): Boolean {
@@ -759,11 +939,8 @@ class RadioTrackingService(
 
         transmitMutex.withLock {
             // Initial setup: set band/mode/CTCSS on both radios
-            val txMode = transponder.resolvedUplinkMode()
-            val rxMode = transponder.downlinkMode?.uppercase()
-                ?: txMode?.let {
-                    TransponderMapper.mapUplinkModeToDownlinkMode(it, transponder.isInverted)
-                }
+            val txMode = controlUplinkMode(transponder)
+            val rxMode = controlDownlinkMode(transponder, txMode)
 
             Log.i(tag, "DualRadio start: txMode=$txMode rxMode=$rxMode")
 
@@ -818,12 +995,9 @@ class RadioTrackingService(
             ?: return failTrackingInitialization("TX radio is not connected")
         if (!radio.isConnected) return failTrackingInitialization("TX radio is not connected")
 
-        val txMode = transponder.resolvedUplinkMode()
+        val txMode = controlUplinkMode(transponder)
         val isSatelliteMode = _state.value.satelliteMode
-        val rxMode = transponder.downlinkMode?.uppercase()
-            ?: txMode?.let {
-                TransponderMapper.mapUplinkModeToDownlinkMode(it, transponder.isInverted)
-            }
+        val rxMode = controlDownlinkMode(transponder, txMode)
 
         transmitMutex.withLock {
             // Compute nominal base frequencies
@@ -940,7 +1114,8 @@ class RadioTrackingService(
                     val position = satelliteRepo.getPosition(pass.orbitalObject, settingsRepo.stationPosition.value, now)
                     val tx = txController
                     val rx = if (split) tx else rxController
-                    val frozen = hasTransmitClaim
+                    // Keep BOTH RX and TX fixed during all transmission, including CW gaps.
+                    val frozen = hasTransmitClaim || current.pttState != PttState.OFF
                     var base = current.txBaseFrequencyHz
                     var observedTx = current.txFrequencyHz
                     var observedRx = current.rxFrequencyHz
@@ -1000,10 +1175,18 @@ class RadioTrackingService(
                     // The FT4 lease preloads the slot-midpoint frequency. Hold both CAT legs
                     // until the waveform ends so no synthesizer step occurs under modulation.
                     if (!frozen && dialFollowState.activeLeg == null) {
-                        val txWriteAllowed = current.pttState != PttState.ON ||
-                            radioProfile(controlSettings.radioModel)
-                                .canSetTxFrequencyWhileTransmitting
+                        val txWriteAllowed = current.pttState == PttState.OFF
                         var wroteTx = false
+                        if (split && tx?.supportsAtomicPair == true && desiredRx != null) {
+                            when (tx.setTrackingFrequencies(desiredRx, desiredTx)) {
+                                FrequencyPairResult.APPLIED -> {
+                                    observedTx = tx.remoteState?.value?.txFrequencyHz
+                                    observedRx = tx.remoteState?.value?.rxFrequencyHz
+                                    lastSetTx = observedTx; lastSetRx = observedRx
+                                }
+                                else -> failTrackingCommand("Atomic RX/TX frequency pair was not applied")
+                            }
+                        } else {
                         if (txWriteAllowed && tx?.isConnected == true && desiredTx != null) {
                             val ok = if (split) tx.setTxVfoFrequency(desiredTx) else tx.setFrequency(desiredTx)
                             if (ok) { lastSetTx = desiredTx; observedTx = desiredTx; wroteTx = true }
@@ -1017,6 +1200,7 @@ class RadioTrackingService(
                             if (ok) { lastSetRx = desiredRx; observedRx = desiredRx }
                             else failTrackingCommand("RX frequency was not acknowledged")
                         }
+                        }
                     }
                     if (cycleRevision != tuningRevision.get()) return@withLock
                     _state.update {
@@ -1026,6 +1210,8 @@ class RadioTrackingService(
                             txBaseFrequencyHz = base,
                             txFrequencyHz = observedTx,
                             rxFrequencyHz = observedRx,
+                            targetTxFrequencyHz = desiredTx,
+                            targetRxFrequencyHz = desiredRx,
                             nominalTxFrequencyHz = base,
                             nominalRxFrequencyHz = nominalRx,
                             txDopplerCorrectionHz = dopplerCorrection(observedTx, base),
@@ -1041,7 +1227,7 @@ class RadioTrackingService(
                 currentCoroutineContext().ensureActive()
                 tuningRevision.incrementAndGet()
             }
-            delay(1000L)
+            withTimeoutOrNull(1000L) { tuningWake.receive() }
         }
     }
 
@@ -1058,13 +1244,10 @@ class RadioTrackingService(
 
     override fun setTransponder(transponder: SatRadio) {
         changeRadioSettings {
-            val txMode = transponder.resolvedUplinkMode()
+            val txMode = controlUplinkMode(transponder)
             val tx = txController
             val rx = rxController
-            val rxMode = transponder.downlinkMode?.uppercase()
-                ?: txMode?.let {
-                    TransponderMapper.mapUplinkModeToDownlinkMode(it, transponder.isInverted)
-                }
+            val rxMode = controlDownlinkMode(transponder, txMode)
             // Selecting a transponder is also local UI state. Allow it before a
             // radio is connected; startTracking will program the selected mode.
             if (tx?.isConnected != true && rx?.isConnected != true) {
@@ -1178,7 +1361,7 @@ class RadioTrackingService(
                 txBaseFrequencyHz = txCenter,
                 nominalTxFrequencyHz = txCenter,
                 nominalRxFrequencyHz = rxNominal,
-                txMode = transponder.resolvedUplinkMode(),
+                txMode = controlUplinkMode(transponder),
                 rxMode = rxMode
             )
         }

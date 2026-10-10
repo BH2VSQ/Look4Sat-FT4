@@ -252,8 +252,14 @@ class RadarViewModel(
                             txBaseFrequencyHz = svc.txBaseFrequencyHz,
                             ctcssTone = svc.ctcssTone,
                             isTracking = svc.isActive || svc.trackingPhase == TrackingPhase.INITIALIZING,
+                            isReady = svc.isActive && svc.trackingPhase == TrackingPhase.READY,
                             selectedTransponderUuid = svc.selectedTransponder?.uuid,
-                            errorMessage = svc.errorMessage
+                            errorMessage = svc.errorMessage,
+                            remoteRadio = svc.remoteRadio,
+                            transmitOwner = svc.transmitOwner,
+                            pttState = svc.pttState,
+                            targetTxHz = svc.targetTxFrequencyHz,
+                            targetRxHz = svc.targetRxFrequencyHz
                         )
                     )
                 }
@@ -297,6 +303,7 @@ class RadarViewModel(
     }
 
     override fun onCleared() {
+        trackingService.cancelRemoteTransmit()
         sensorsRepo.disableSensor()
         viewModelScope.launch { audioHub.stopAll() }
     }
@@ -332,6 +339,9 @@ class RadarViewModel(
             }
             RadarAction.ConnectRadios -> viewModelScope.launch { trackingService.connectRadios() }
             RadarAction.DisconnectRadios -> viewModelScope.launch { trackingService.disconnectRadios() }
+            is RadarAction.VoicePtt -> trackingService.setVoicePtt(action.pressed)
+            is RadarAction.SendCw -> trackingService.sendCw(action.text, action.wpm)
+            RadarAction.StopRemoteTx -> trackingService.cancelRemoteTransmit()
 
             // SSTV actions
             is RadarAction.SstvPermissionResult -> {
