@@ -31,6 +31,7 @@ class L4sController(
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
     private val tuningStepHz: () -> Long = {250L},
+    private val correctionStepHz:()->Long={10L},
     private val newSession: () -> Long = { (SecureRandom().nextInt().toLong() and 0xffffffffL).coerceAtLeast(1) }
 ) : IRadioController {
     private val state=MutableStateFlow(RemoteRadioState())
@@ -43,11 +44,10 @@ class L4sController(
     private var session=0L
     private var sequence=0
     private var revision=0L
-    private var desiredRx: Long?=null
-    private var desiredTx: Long?=null
+    private var rawTargets: com.rtbishop.look4sat.core.domain.repository.RawTrackingTargets?=null
     private var selectedRx=true
     private var armed=false
-    private var requestedPair: Pair<Long,Long?>?=null
+    private var requestedPair: com.rtbishop.look4sat.core.domain.repository.AppliedRadioFrequencies?=null
     private var toneTenths=0
     private var heartbeat: Job?=null
 
@@ -67,12 +67,12 @@ class L4sController(
             val hello=request(L4sProtocol.HELLO, wireSession=0) ?: return@withContext failedConnect()
             val (firmware,caps)=L4sProtocol.capabilities(hello.data) ?: return@withContext failedConnect()
             if(hello.result!=0) return@withContext failedConnect()
-            state.value=RemoteRadioState(firmware=firmware,capabilities=caps)
+            state.value=RemoteRadioState(firmware=firmware,capabilities=caps,transmitStateKnown=false)
             diagnose("l4s/hello","firmware=$firmware capabilities=${hello.data.size} bytes")
             if(!ok(request(L4sProtocol.OPEN))) return@withContext failedConnect()
             if(caps.satelliteProfiles && !ok(request(L4sProtocol.PROFILE,byteArrayOf(2)))) return@withContext failedConnect()
             if(!caps.satelliteProfiles && caps.nativeSettings && !ok(request(L4sProtocol.SETTINGS))) return@withContext failedConnect()
-            desiredRx=state.value.rxFrequencyHz; desiredTx=null; selectedRx=true
+            rawTargets=null; selectedRx=true
             isConnected=true;state.update { it.copy(connected=true,error=null) }
             diagnose("l4s/open","session opened; TX remains off")
             heartbeat=scope.launch(dispatcher) {
@@ -87,6 +87,7 @@ class L4sController(
                         }
                         if(isConnected && caps.nativeSettings && ++polls%2==0) {
                             if(caps.satelliteProfiles) request(L4sProtocol.PROFILE,byteArrayOf(2)) else request(L4sProtocol.SETTINGS)
+                            if(caps.transactionalProfileStore) request(L4sProtocol.PROFILE_STORE,byteArrayOf(0))
                         }
                     }
                 } catch(cancelled: CancellationException) { throw cancelled }
@@ -113,7 +114,7 @@ class L4sController(
             request(L4sProtocol.STOP)
             request(L4sProtocol.CLOSE)
         }
-        transport.disconnect();isConnected=false;armed=false;requestedPair=null
+        transport.disconnect();isConnected=false;armed=false;requestedPair=null;rawTargets=null
         state.update { it.copy(connected=false) }
     }
 
@@ -140,7 +141,7 @@ class L4sController(
                         return@withLock null
                     }
                 }
-                val response=withTimeoutOrNull(600) {
+                val response=withTimeoutOrNull(if(command==L4sProtocol.PROFILE_STORE)250L else 600L) {
                     var match: L4sProtocol.Reply?=null
                     while(match==null) {
                         val chunk=transport.readAvailable(1024)
@@ -158,13 +159,21 @@ class L4sController(
                 if(response!=null) {
                     if(command!=L4sProtocol.KEEPALIVE) diagnose("l4s/reply","cmd=$label seq=$seq result=${response.result} rxBytes=$receivedBytes")
                     if(command!=L4sProtocol.HELLO) {
+                        if(command==L4sProtocol.PROFILE_STORE && response.result<=1) {
+                            val store=L4sProtocol.storeStatus(response.data)
+                            if(store==null){state.update {it.copy(error="Malformed L4S profile store reply",transmitStateKnown=false)};return@withLock null}
+                            if(store.generation!=state.value.profileStore?.generation){armed=false;requestedPair=null}
+                            if(data.firstOrNull()==7.toByte()){armed=false;requestedPair=null}
+                            state.update {it.copy(profileStore=store)}
+                            return@withLock response
+                        }
                         val snapshot=when(command) {
                             L4sProtocol.PROFILE->L4sProtocol.profileSnapshot(response,state.value)
                             L4sProtocol.SETTINGS->L4sProtocol.settingsSnapshot(response,state.value)
                             else->L4sProtocol.snapshot(response,state.value)
                         }
-                        if(snapshot==null) { state.update { old -> old.copy(error="Malformed L4S state reply") };return@withLock null }
-                        if(snapshot.nativeProfileGeneration!=state.value.nativeProfileGeneration) {armed=false;requestedPair=null}
+                        if(snapshot==null) { state.update { old -> old.copy(error="Malformed L4S state reply",transmitStateKnown=false) };return@withLock null }
+                        if(snapshot.nativeProfileGeneration!=state.value.nativeProfileGeneration) {armed=false;requestedPair=null;rawTargets=null}
                         if (state.value.txSource!=0 && snapshot.txSource==0) { armed=false;requestedPair=null }
                         if(response.result==3) {
                             isConnected=false;armed=false;requestedPair=null
@@ -176,7 +185,7 @@ class L4sController(
                 }
             }
             val hint=if(command==L4sProtocol.HELLO) "; check L4S firmware, CDC/DTR and USB key mode" else ""
-            state.update { it.copy(error="L4S $label timed out (RX $receivedBytes bytes)$hint") }
+            state.update { it.copy(error="L4S $label timed out (RX $receivedBytes bytes)$hint",transmitStateKnown=false) }
             diagnose("l4s/timeout",state.value.error!!,ControlDiagnosticSeverity.ERROR)
             null
         }
@@ -218,11 +227,15 @@ class L4sController(
         decodeContextKey(com.rtbishop.look4sat.core.domain.repository.radioContextKey(transponderUuid)).copyInto(data,17)
         name.take(16).map { if(it in ' '..'~') it else '?' }.joinToString("").toByteArray(Charsets.US_ASCII).copyInto(data,33)
         val result=ok(request(L4sProtocol.PROFILE,data))
-        if(result) {armed=false;requestedPair=null}
+        if(result) {armed=false;requestedPair=null;rawTargets=null}
         result
     }
     override suspend fun updateTrackingBases(bases: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies): Boolean = withContext(dispatcher) {
         if(state.value.capabilities?.satelliteProfiles!=true) return@withContext true
+        if(state.value.capabilities?.transactionalProfileStore==true && state.value.profileStore?.correctionStepHz!=correctionStepHz()) {
+            val config=ByteArray(3);config[0]=7;L4sProtocol.put16(config,1,correctionStepHz().coerceIn(10,1000).toInt()/10*10)
+            if(!ok(request(L4sProtocol.PROFILE_STORE,config)))return@withContext false
+        }
         val step=com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(tuningStepHz())
         if(state.value.nativeBaseFrequencies==bases && state.value.nativeStepHz==step) return@withContext true
         val data=ByteArray(15);data[0]=1
@@ -234,33 +247,39 @@ class L4sController(
         if(ok(reply)) {armed=false;requestedPair=null}
         ok(reply)
     }
+    override suspend fun profileStoreCommand(data:ByteArray):ByteArray?=withContext(dispatcher) {
+        if(!isConnected || state.value.capabilities?.transactionalProfileStore!=true)return@withContext null
+        request(L4sProtocol.PROFILE_STORE,data)?.takeIf {it.result<=1}?.data
+    }
     override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult = withContext(dispatcher) {
         if(!isConnected) return@withContext FrequencyPairResult.FAILED
+        if(!state.value.transmitStateKnown || state.value.profileStore?.busy==true)return@withContext FrequencyPairResult.HELD
         if(state.value.txSource!=0 || state.value.cwState in setOf(
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.QUEUED,
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.SENDING)) {
             return@withContext FrequencyPairResult.HELD
         }
         val settings=state.value
-        val pair=com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(rxHz,settings.nativeRxCorrectionHz,tuningStepHz()) to
-            txHz?.let { com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(it,settings.nativeTxCorrectionHz,tuningStepHz()) }
-        desiredRx=pair.first;desiredTx=pair.second
+        val pair=com.rtbishop.look4sat.core.domain.repository.AppliedRadioFrequencies(
+            com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(rxHz,settings.nativeRxCorrectionHz,tuningStepHz()),
+            txHz?.let { com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(it,settings.nativeTxCorrectionHz,tuningStepHz()) })
+        rawTargets=com.rtbishop.look4sat.core.domain.repository.RawTrackingTargets(rxHz,txHz)
         val current=state.value
         if(requestedPair==pair && armed) {
-            if(current.rxFrequencyHz==pair.first && current.txFrequencyHz==pair.second && current.txEnabled==(pair.second!=null))
+            if(current.rxFrequencyHz==pair.rxHz && current.txFrequencyHz==pair.txHz && current.txEnabled==(pair.txHz!=null))
                 return@withContext FrequencyPairResult.APPLIED
         }
         revision=(maxOf(revision,current.appliedRevision,current.pendingRevision)+1) and 0xffffffffL
         if(revision==0L) revision=1
         val data=ByteArray(13)
-        L4sProtocol.put32(data,0,pair.first);L4sProtocol.put32(data,4,pair.second ?: 0)
-        data[8]=if(pair.second!=null) 1 else 0;L4sProtocol.put32(data,9,revision)
+        L4sProtocol.put32(data,0,pair.rxHz);L4sProtocol.put32(data,4,pair.txHz ?: 0)
+        data[8]=if(pair.txHz!=null) 1 else 0;L4sProtocol.put32(data,9,revision)
         val reply=request(L4sProtocol.PAIR,data)
         when(reply?.result) {
             L4sProtocol.APPLIED -> {
                 val verified=state.value
-                if(verified.appliedRevision!=revision || verified.rxFrequencyHz!=pair.first ||
-                    verified.txFrequencyHz!=pair.second || verified.txEnabled!=(pair.second!=null)) return@withContext FrequencyPairResult.FAILED
+                if(verified.appliedRevision!=revision || verified.rxFrequencyHz!=pair.rxHz ||
+                    verified.txFrequencyHz!=pair.txHz || verified.txEnabled!=(pair.txHz!=null)) return@withContext FrequencyPairResult.FAILED
                 requestedPair=pair;armed=true;FrequencyPairResult.APPLIED
             }
             4 -> if (state.value.txSource!=0) FrequencyPairResult.HELD else FrequencyPairResult.FAILED
@@ -272,9 +291,9 @@ class L4sController(
         setWorkingFrequency(frequencyHz)
     } else setTxVfoFrequency(frequencyHz)
     override suspend fun setWorkingFrequency(frequencyHz: Long) =
-        setTrackingFrequencies(frequencyHz,desiredTx)==FrequencyPairResult.APPLIED
+        setTrackingFrequencies(frequencyHz,rawTargets?.txHz)==FrequencyPairResult.APPLIED
     override suspend fun setTxVfoFrequency(frequencyHz: Long): Boolean =
-        desiredRx?.let { setTrackingFrequencies(it,frequencyHz)==FrequencyPairResult.APPLIED } ?: false
+        rawTargets?.rxHz?.let { setTrackingFrequencies(it,frequencyHz)==FrequencyPairResult.APPLIED } ?: false
     override suspend fun setVfo(vfoA: Boolean): Boolean { selectedRx=vfoA;return isConnected }
     override suspend fun setBand(frequencyHz: Long): Boolean = state.value.capabilities?.let {
         frequencyHz in it.minimumRxHz..it.maximumRxHz
@@ -320,12 +339,17 @@ class L4sController(
     }
 
     private suspend fun preparePair(): Boolean {
-        val rx=desiredRx ?: return false
-        if(desiredTx==null) return false
-        if(armed && requestedPair == (rx to desiredTx) && state.value.rxFrequencyHz==rx &&
-            state.value.txFrequencyHz==desiredTx && state.value.pendingRevision==0L) return true
-        if(!armed) requestedPair=null
-        return setTrackingFrequencies(rx,desiredTx)==FrequencyPairResult.APPLIED
+        val raw=rawTargets ?: return false
+        val rawTx=raw.txHz ?: return false
+        val current=state.value
+        if(!current.transmitStateKnown || current.nativeMenuOpen || current.profileStore?.busy==true)return false
+        val expected=com.rtbishop.look4sat.core.domain.repository.AppliedRadioFrequencies(
+            com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(raw.rxHz,current.nativeRxCorrectionHz,tuningStepHz()),
+            com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(rawTx,current.nativeTxCorrectionHz,tuningStepHz()))
+        // A completed CW chunk still owns the TX window: verify the applied pair without retuning.
+        if(armed && requestedPair==expected && current.rxFrequencyHz==expected.rxHz && current.txFrequencyHz==expected.txHz &&
+            current.txEnabled && current.pendingRevision==0L)return true
+        return setTrackingFrequencies(raw.rxHz,raw.txHz)==FrequencyPairResult.APPLIED
     }
 
     override suspend fun pttOn(): Boolean = withContext(dispatcher) {

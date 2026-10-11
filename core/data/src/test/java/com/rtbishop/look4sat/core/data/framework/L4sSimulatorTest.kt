@@ -25,6 +25,10 @@ class L4sSimulatorTest {
         try {
             assertTrue(radio.connect())
             assertTrue(radio.remoteState.value.capabilities!!.satelliteProfiles)
+            assertTrue(radio.remoteState.value.capabilities!!.transactionalProfileStore)
+            val store=checkNotNull(radio.profileStoreCommand(byteArrayOf(0)))
+            assertEquals(23,store.size);assertFalse(checkNotNull(L4sProtocol.storeStatus(store)).busy)
+            assertEquals(88,checkNotNull(radio.profileStoreCommand(byteArrayOf(1,0))).size)
             assertTrue(radio.selectSatelliteProfile("TEST SATELLITE","test-transponder"))
             assertTrue(radio.updateTrackingBases(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(435100000,145900000)))
             assertEquals(250L,radio.remoteState.value.nativeStepHz)

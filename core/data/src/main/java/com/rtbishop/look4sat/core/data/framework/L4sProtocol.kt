@@ -19,6 +19,7 @@ internal object L4sProtocol {
     const val CONTEXT = 0x70B
     const val SETTINGS = 0x70C
     const val PROFILE = 0x70D
+    const val PROFILE_STORE = 0x70E
     const val APPLIED = 0
     const val ACCEPTED = 1
     private const val MAX_BODY = 120
@@ -57,7 +58,7 @@ internal object L4sProtocol {
     }
 
     fun reply(body: ByteArray): Reply? {
-        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870d) return null
+        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870e) return null
         return Reply(u16(body,0) and 0x7fff,u16(body,6),u32(body,8),body[5].toInt() and 255,body.copyOfRange(12,body.size))
     }
 
@@ -89,7 +90,7 @@ internal object L4sProtocol {
         val caps=RemoteRadioCapabilities(
             u16(data,9).toLong(),data[11].toInt() and 255,data[12].toInt() and 255,data[13].toInt() and 255,
             u16(data,14),u32(data,16),u32(data,20),data[40].toInt() and 255,data[41].toInt() and 255,
-            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0,bits and 256!=0
+            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0,bits and 256!=0,bits and 512!=0
         )
         if(caps.frequencyStepHz!=10L || caps.maxCwText !in 1..92 || caps.minimumWpm !in 1..45 ||
             caps.maximumWpm !in caps.minimumWpm..45 || caps.watchdogMillis!=1500 || !caps.atomicPair) return null
@@ -101,6 +102,7 @@ internal object L4sProtocol {
         if(p.size!=24 || p[16].toInt() !in 0..3 || p[17].toInt() !in 0..3 ||
             p[19].toInt() !in 0..3 || p[20].toInt() !in 0..5) return null
         return old.copy(
+            transmitStateKnown=true,
             session=reply.session, rxFrequencyHz=u32(p,0).takeIf { it>0 },txFrequencyHz=u32(p,4).takeIf { it>0 },
             appliedRevision=u32(p,8),pendingRevision=u32(p,12),rxMode=modeName(p[16].toInt()),
             txMode=modeName(p[17].toInt()),txEnabled=p[18]!=0.toByte(),txSource=p[19].toInt(),
@@ -140,6 +142,13 @@ internal object L4sProtocol {
             com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(it,tx.takeIf { value->value>0 }) },
             nativeRxCorrectionHz=rxCorrection,nativeTxCorrectionHz=txCorrection,nativeSquelch=p[55].toInt(),
             nativeStepHz=step,nativeProfileGeneration=u32(p,74),nativeProfileCapacity=p[78].toInt() and 255)
+    }
+    fun storeStatus(data:ByteArray):com.rtbishop.look4sat.core.domain.repository.RadioProfileStoreStatus? {
+        if(data.size !in setOf(23,88) || data[0]!=1.toByte())return null
+        fun u(i:Int)=data[i].toInt() and 255
+        if(u(1)>11 || u(2)>100 || u(5)>56 || u(6)!=56 || u(16)>56 || u16(data,17) !in 10..1000 || u16(data,17)%10!=0)return null
+        return com.rtbishop.look4sat.core.domain.repository.RadioProfileStoreStatus(u(1),u(2),u(3),u(4) and 1!=0,
+            u(4) and 2!=0,u(4) and 4!=0,u(5),u(6),u32(data,8),u32(data,12),u(16),u16(data,17).toLong(),u(19),u(20),u(21),u(22),u(4) and 8!=0)
     }
 
     fun modeNumber(mode: String): Int? = when(mode.uppercase(java.util.Locale.ROOT)) {

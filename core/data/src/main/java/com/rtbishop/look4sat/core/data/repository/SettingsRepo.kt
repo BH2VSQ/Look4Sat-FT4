@@ -1141,11 +1141,29 @@ class SettingsRepo(
     private val keyRadioFmDeadband = "radioFmDialDeadbandHz"
     private val keyRadioSharedBusDelay = "radioSharedBusCommandDelayMillis"
     private val keyRadioL4sStep = "radioL4sDopplerStepHz"
+    private val keyRadioCorrectionStep = "radioL4sCorrectionEditStepHz"
 
     override fun getRemoteCwPresets(): List<String> = readRemoteCwPresets(preferences)
 
     override fun updateRemoteCwPreset(index: Int, text: String) {
         writeRemoteCwPreset(preferences,index,text)
+    }
+    override fun getRadioProfileMetadata():Map<String,com.rtbishop.look4sat.core.domain.repository.RadioProfileMetadata> = runCatching {
+        val json=JSONObject(preferences.getString("l4sProfileMetadata","{}") ?: "{}")
+        json.keys().asSequence().associateWith {key->val item=json.getJSONObject(key)
+            com.rtbishop.look4sat.core.domain.repository.RadioProfileMetadata(item.getString("name"),item.getString("uuid"),item.optString("description"))}
+    }.getOrDefault(emptyMap())
+    override fun setRadioProfileMetadata(values:Map<String,com.rtbishop.look4sat.core.domain.repository.RadioProfileMetadata>) {
+        val json=JSONObject();values.forEach {(key,item)->json.put(key,JSONObject().put("name",item.satelliteName).put("uuid",item.transponderUuid).put("description",item.description))}
+        preferences.edit {putString("l4sProfileMetadata",json.toString())}
+    }
+    override fun getRadioProfileAliases():Map<String,String> = runCatching {
+        val json=JSONObject(preferences.getString("l4sProfileAliases","{}") ?: "{}")
+        json.keys().asSequence().associateWith {json.getString(it)}
+    }.getOrDefault(emptyMap())
+    override fun setRadioProfileAliases(values:Map<String,String>) {
+        val json=JSONObject();values.forEach {(key,value)->json.put(key,value)}
+        preferences.edit {putString("l4sProfileAliases",json.toString())}
     }
 
     private val _radioControlSettings = MutableStateFlow(getRadioControlSettings())
@@ -1159,7 +1177,8 @@ class SettingsRepo(
             linearDialDeadbandHz = settings.linearDialDeadbandHz.coerceIn(1L, 10_000L),
             fmDialDeadbandHz = settings.fmDialDeadbandHz.coerceIn(10L, 100_000L),
             sharedBusCommandDelayMillis = settings.sharedBusCommandDelayMillis.coerceIn(0L, 2_000L),
-            l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(settings.l4sDopplerStepHz)
+            l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(settings.l4sDopplerStepHz),
+            l4sCorrectionEditStepHz = settings.l4sCorrectionEditStepHz.coerceIn(10,1000)/10*10
         )
         preferences.edit {
             putBoolean(keyRadioControlEnabled, normalized.enabled)
@@ -1179,6 +1198,7 @@ class SettingsRepo(
             putLong(keyRadioFmDeadband, normalized.fmDialDeadbandHz)
             putLong(keyRadioSharedBusDelay, normalized.sharedBusCommandDelayMillis)
             putLong(keyRadioL4sStep, normalized.l4sDopplerStepHz)
+            putLong(keyRadioCorrectionStep, normalized.l4sCorrectionEditStepHz)
         }
         _radioControlSettings.value = normalized
     }
@@ -1212,7 +1232,8 @@ class SettingsRepo(
             linearDialDeadbandHz = preferences.getLong(keyRadioLinearDeadband, 20L).coerceIn(1L, 10_000L),
             fmDialDeadbandHz = preferences.getLong(keyRadioFmDeadband, 200L).coerceIn(10L, 100_000L),
             sharedBusCommandDelayMillis = preferences.getLong(keyRadioSharedBusDelay, 0L).coerceIn(0L, 2_000L),
-            l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(preferences.getLong(keyRadioL4sStep,250L))
+            l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(preferences.getLong(keyRadioL4sStep,250L)),
+            l4sCorrectionEditStepHz = preferences.getLong(keyRadioCorrectionStep,10).coerceIn(10,1000)/10*10
         )
     }
     //endregion

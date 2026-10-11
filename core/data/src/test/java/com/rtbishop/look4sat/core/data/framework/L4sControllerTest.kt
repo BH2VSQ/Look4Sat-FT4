@@ -226,6 +226,20 @@ class L4sControllerTest {
         radio.disconnect()
     }
 
+    @Test fun singleLegSettersReuseOnlyRawTargetsAndNeverAccumulateCorrections()=runTest {
+        val transport=ScriptedL4sTransport(profiles=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) {7}
+        assertTrue(radio.connect());assertTrue(radio.selectSatelliteProfile("TEST","FM"))
+        assertFalse(radio.setTxVfoFrequency(145900000))
+        assertTrue(radio.setWorkingFrequency(435100000))
+        repeat(4){
+            assertTrue(radio.setTxVfoFrequency(145900000));assertEquals(435099500L,radio.remoteState.value.rxFrequencyHz)
+            assertTrue(radio.setWorkingFrequency(435100000));assertEquals(145900750L,radio.remoteState.value.txFrequencyHz)
+        }
+        assertTrue(radio.selectSatelliteProfile("OTHER","FM"))
+        assertFalse(radio.setTxVfoFrequency(145900000));radio.disconnect()
+    }
+
     @Test fun stalePhoneBaseCannotOverwriteNewHandsetSave()=runTest {
         val transport=ScriptedL4sTransport(profiles=true)
         val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) {7}

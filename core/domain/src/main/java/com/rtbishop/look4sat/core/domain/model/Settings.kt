@@ -157,7 +157,8 @@ data class RadioControlSettings(
     /** Optional spacing between commands sharing one physical CAT connection. */
     val sharedBusCommandDelayMillis: Long = 0L,
     /** L4S tracking/control quantum, distinct from the radio's 10 Hz hardware resolution. */
-    val l4sDopplerStepHz: Long = 250L
+    val l4sDopplerStepHz: Long = 250L,
+    val l4sCorrectionEditStepHz: Long = 10L
 ) {
     companion object {
         const val MODEL_YAESU_FT817 = "Yaesu FT-817/818"

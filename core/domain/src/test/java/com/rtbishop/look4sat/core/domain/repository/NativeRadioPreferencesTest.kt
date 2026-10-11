@@ -19,7 +19,8 @@ class NativeRadioPreferencesTest {
         assertEquals(435101000L,l4sTrackingTarget(435100600,0,1000))
         assertEquals(10L,normalizeL4sStep(1));assertEquals(250L,normalizeL4sStep(259))
     }
-    @Test fun rxAndTxCorrectionsApplyExactlyOnceBeforeQuantization() {
+    @Test fun rxAndTxCorrectionsApplyExactlyOnceAfterControlQuantization() {
+        assertEquals(435100010L,l4sTrackingTarget(435100006,10,250))
         assertEquals(435099500L,l4sTrackingTarget(435100006,-500,250))
         assertEquals(145900750L,l4sTrackingTarget(145900004,750,250))
         assertThrows(IllegalArgumentException::class.java) {l4sTrackingTarget(1,-500,250)}

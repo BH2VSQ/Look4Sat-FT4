@@ -31,6 +31,7 @@ interface IRadioController {
     suspend fun selectSatelliteProfile(name: String, transponderUuid: String): Boolean =
         prepareTrackingContext(radioContextKey(transponderUuid))
     suspend fun updateTrackingBases(bases: RadioBaseFrequencies): Boolean = true
+    suspend fun profileStoreCommand(data:ByteArray):ByteArray?=null
 
     val isConnected: Boolean
 

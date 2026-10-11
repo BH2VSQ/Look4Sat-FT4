@@ -22,7 +22,8 @@ data class RemoteRadioCapabilities(
     val liveCwRetune: Boolean,
     val trackingDisplay: Boolean = false,
     val nativeSettings: Boolean = false,
-    val satelliteProfiles: Boolean = false
+    val satelliteProfiles: Boolean = false,
+    val transactionalProfileStore: Boolean = false
 )
 
 data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double,
@@ -35,14 +36,16 @@ fun radioSatelliteProfileKey(name: String, transponderUuid: String): String =
     radioContextKey("${name.length}:$name:$transponderUuid")
 
 data class RadioBaseFrequencies(val rxHz: Long, val txHz: Long?)
+data class RawTrackingTargets(val rxHz: Long, val txHz: Long?)
+data class AppliedRadioFrequencies(val rxHz: Long, val txHz: Long?)
 
 fun normalizeL4sStep(stepHz: Long): Long = stepHz.coerceIn(10L,10_000L)/10*10
 
 fun l4sTrackingTarget(hz: Long, correctionHz: Long, stepHz: Long): Long {
-    val adjusted=Math.addExact(hz,correctionHz)
-    require(adjusted in 1..0xfffffffaL) { "L4S corrected frequency outside unsigned 32-bit Hz range" }
+    require(hz in 1..0xfffffffaL) { "L4S frequency outside unsigned 32-bit Hz range" }
     val step=normalizeL4sStep(stepHz)
-    val target=(adjusted+step/2)/step*step
+    val corrected=Math.addExact((hz+step/2)/step*step,correctionHz)
+    val target=(corrected+5)/10*10
     require(target in 1..0xfffffffaL) { "L4S quantized frequency outside unsigned 32-bit Hz range" }
     return target
 }
@@ -82,7 +85,9 @@ data class RemoteRadioState(
     val nativeSquelch: Int? = null,
     val nativeStepHz: Long = 250,
     val nativeProfileGeneration: Long? = null,
-    val nativeProfileCapacity: Int? = null
+    val nativeProfileCapacity: Int? = null,
+    val profileStore:RadioProfileStoreStatus?=null,
+    val transmitStateKnown:Boolean=true
 )
 
 object CwTransmitText {
