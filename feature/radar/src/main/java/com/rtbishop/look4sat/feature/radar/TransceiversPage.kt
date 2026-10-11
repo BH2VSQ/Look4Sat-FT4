@@ -97,6 +97,8 @@ import com.rtbishop.look4sat.core.domain.audio.IAudioHub
 import com.rtbishop.look4sat.core.domain.model.SatRadio
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
+import com.rtbishop.look4sat.core.domain.utility.CalculatorTuning
+import com.rtbishop.look4sat.core.domain.utility.CalculatorFrequencyAnchor
 import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.formatFrequency
@@ -170,6 +172,7 @@ fun CalculatorPage(
     cw: CwSubState,
     audioHub: IAudioHub,
     calculatorOffsetKHz: String = "",
+    radioControl: RadioControlSubState = RadioControlSubState(),
     onAction: (RadarAction) -> Unit,
     requestMicPermission: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -225,12 +228,18 @@ fun CalculatorPage(
             }
         }
 
+        if (radioControl.isL4sModel || radioControl.txPanel.isConnected || radioControl.rxPanel.isConnected) {
+            Text(stringResource(if (radioControl.isTracking) R.string.rc_calculator_cat_link else R.string.rc_calculator_need_tracking),
+                style = MaterialTheme.typography.bodySmall)
+        }
         DopplerFrequencyCalculator(
             transponder = selectedTransceiver,
             orbitalPos = orbitalPos,
             offsetKHz = calculatorOffsetKHz,
             onOffsetChange = { onAction(RadarAction.ChangeCalculatorOffset(it)) },
             onFrequencyChange = { tx, rx -> onAction(RadarAction.UpdateCalculatorFrequency(tx, rx)) },
+            onTuningChange = { onAction(RadarAction.TuneCalculator(it)) },
+            initialTxBaseHz = radioControl.txBaseFrequencyHz.takeIf { selectedTransceiver.uuid == selectedUuid },
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -602,6 +611,8 @@ private fun DopplerFrequencyCalculator(
     offsetKHz: String = "",
     onOffsetChange: (String) -> Unit = {},
     onFrequencyChange: (Long, Long) -> Unit = { _, _ -> },
+    onTuningChange: (CalculatorTuning) -> Unit = {},
+    initialTxBaseHz: Long? = null,
     modifier: Modifier = Modifier
 ) {
     if (orbitalPos == null || !DopplerFrequencyCalculator.isLinearTransponder(transponder)) return
@@ -675,7 +686,7 @@ private fun DopplerFrequencyCalculator(
         offsetHz
     ) {
         if (txFrequencyHz == 0L || rxFrequencyHz == 0L) {
-            passbandPosition = 0.5f
+            passbandPosition = initialTxBaseHz?.let { ((it-nominalTxLow).toFloat()/nominalTxRange).coerceIn(0f,1f) } ?: 0.5f
             txFrequencyHz = txAtPassbandPosition(passbandPosition)
             rxFrequencyHz = downlinkFor(txFrequencyHz) ?: (rxLow + rxRange / 2)
         } else {
@@ -703,6 +714,20 @@ private fun DopplerFrequencyCalculator(
     }
     val rxSliderValue = ((rxFrequencyHz - rxLow).toFloat() / rxRange).coerceIn(0f, 1f)
 
+    fun publishTuning() {
+        val anchor = when(lastEditedField) {
+            EditedField.TX -> CalculatorFrequencyAnchor.GROUND_TX
+            EditedField.RX -> CalculatorFrequencyAnchor.GROUND_RX
+            EditedField.PASSBAND -> CalculatorFrequencyAnchor.SATELLITE
+        }
+        val hz = when(lastEditedField) {
+            EditedField.TX -> txFrequencyHz
+            EditedField.RX -> rxFrequencyHz
+            EditedField.PASSBAND -> nominalTxLow + (passbandPosition.coerceIn(0f,1f)*nominalTxRange).toLong()
+        }
+        onTuningChange(CalculatorTuning(transponder.uuid,anchor,hz))
+    }
+
     fun updateTx(newTxHz: Long) {
         when (lastEditedField) {
             EditedField.PASSBAND -> {
@@ -715,6 +740,7 @@ private fun DopplerFrequencyCalculator(
                 rxFrequencyHz = downlinkFor(txFrequencyHz) ?: rxFrequencyHz
             }
         }
+        publishTuning()
     }
 
     fun updateRx(newRxHz: Long) {
@@ -734,6 +760,7 @@ private fun DopplerFrequencyCalculator(
                 txFrequencyHz = uplinkFor(rxFrequencyHz) ?: txFrequencyHz
             }
         }
+        publishTuning()
     }
 
     Column(
@@ -764,6 +791,7 @@ private fun DopplerFrequencyCalculator(
                                 EditedField.PASSBAND -> { lastEditedField = EditedField.TX }
                                 else -> { lastEditedField = EditedField.TX }
                             }
+                            publishTuning()
                         },
                         label = {
                             Text("TX", fontSize = 13.sp, textAlign = TextAlign.Center,
@@ -788,6 +816,7 @@ private fun DopplerFrequencyCalculator(
                                 }
                                 else -> { lastEditedField = EditedField.RX }
                             }
+                            publishTuning()
                         },
                         label = {
                             Text("RX", fontSize = 13.sp, textAlign = TextAlign.Center,

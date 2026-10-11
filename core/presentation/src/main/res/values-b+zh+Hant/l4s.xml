@@ -22,4 +22,6 @@
     <string name="rc_l4s_no_cw">連接的韌體未聲明支援 CW 文字拍發。</string>
     <string name="rc_l4s_busy">請先停止目前發射並確認 PTT 關閉，再發送 CW。</string>
     <string name="rc_l4s_radio">電台（單機半雙工）</string>
+    <string name="rc_calculator_cat_link">修改頻率會同步 CAT 追蹤；發射期間保持兩路頻率，停發後套用。</string>
+    <string name="rc_calculator_need_tracking">請先連接電台並開始追蹤，計算器頻率修改才會套用到電台。</string>
 </resources>

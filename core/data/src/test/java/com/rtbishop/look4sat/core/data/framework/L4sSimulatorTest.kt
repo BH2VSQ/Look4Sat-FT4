@@ -30,7 +30,7 @@ class L4sSimulatorTest {
             assertEquals(145900000L,radio.remoteState.value.txFrequencyHz)
             assertTrue(radio.configureTxCtcss(67.0))
             assertTrue(radio.pttOn())
-            assertEquals(FrequencyPairResult.FAILED,radio.setTrackingFrequencies(435101000,145901000))
+            assertEquals(FrequencyPairResult.HELD,radio.setTrackingFrequencies(435101000,145901000))
             assertEquals(435100010L,radio.readWorkingFrequency())
             assertEquals(145900000L,radio.readTxVfoFrequency())
             assertTrue(radio.pttOff())

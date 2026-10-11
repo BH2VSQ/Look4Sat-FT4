@@ -1,6 +1,6 @@
 package com.rtbishop.look4sat.core.domain.repository
 
-enum class FrequencyPairResult { UNSUPPORTED, APPLIED, FAILED }
+enum class FrequencyPairResult { UNSUPPORTED, APPLIED, HELD, FAILED }
 enum class RadioTransmitOwner { NONE, VOICE, CW, FT4 }
 enum class CwTransmitState { IDLE, QUEUED, SENDING, DONE, CANCELLED, FAILED }
 

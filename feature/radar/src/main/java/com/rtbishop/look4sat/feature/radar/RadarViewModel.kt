@@ -423,6 +423,12 @@ class RadarViewModel(
                     else it.copy(calculatorTxHz = action.txHz, calculatorRxHz = action.rxHz)
                 }
             }
+            is RadarAction.TuneCalculator -> {
+                transponders.find { it.uuid == action.tuning.transponderUuid }?.let {
+                    _uiState.update { state -> state.copy(transceivers = state.transceivers.copy(selectedUuid = it.uuid)) }
+                    trackingService.tuneFromCalculator(it, action.tuning)
+                }
+            }
         }
     }
 

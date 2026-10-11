@@ -18,6 +18,7 @@
 package com.rtbishop.look4sat.core.domain.repository
 
 import com.rtbishop.look4sat.core.domain.model.SatRadio
+import com.rtbishop.look4sat.core.domain.utility.CalculatorTuning
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
 import kotlinx.coroutines.flow.StateFlow
@@ -83,6 +84,7 @@ interface IRadioTrackingService {
     fun setTransponder(transponder: SatRadio)
     fun setTxBaseFrequency(frequencyHz: Long)
     fun adjustTxBaseFrequency(deltaHz: Long)
+    fun tuneFromCalculator(transponder: SatRadio, tuning: CalculatorTuning) = Unit
     fun setCtcssTone(toneHz: Double?)
     fun setMode(txMode: String, rxMode: String)
     fun setVoicePtt(enabled: Boolean) = Unit

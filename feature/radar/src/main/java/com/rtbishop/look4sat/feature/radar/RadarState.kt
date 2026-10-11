@@ -156,4 +156,5 @@ sealed interface RadarAction {
      */
     data class CalculatorTransponderChanged(val catnum: Int?) : RadarAction
     data class UpdateCalculatorFrequency(val txHz: Long?, val rxHz: Long?) : RadarAction
+    data class TuneCalculator(val tuning: com.rtbishop.look4sat.core.domain.utility.CalculatorTuning) : RadarAction
 }

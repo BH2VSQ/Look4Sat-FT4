@@ -144,6 +144,7 @@ class L4sController(
                     if(command!=L4sProtocol.HELLO) {
                         val snapshot=L4sProtocol.snapshot(response,state.value)
                         if(snapshot==null) { state.update { old -> old.copy(error="Malformed L4S state reply") };return@withLock null }
+                        if (state.value.txSource!=0 && snapshot.txSource==0) { armed=false;requestedPair=null }
                         state.value=snapshot
                     }
                     if(response.result>1) state.update { old -> old.copy(error=L4sProtocol.error(response.result)) }
@@ -171,8 +172,7 @@ class L4sController(
         if(state.value.txSource!=0 || state.value.cwState in setOf(
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.QUEUED,
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.SENDING)) {
-            state.update { it.copy(error="TX/RX frequencies are held during transmission") }
-            return@withContext FrequencyPairResult.FAILED
+            return@withContext FrequencyPairResult.HELD
         }
         val pair=quantize(rxHz) to txHz?.let(::quantize)
         desiredRx=pair.first;desiredTx=pair.second
@@ -194,6 +194,7 @@ class L4sController(
                     verified.txFrequencyHz!=pair.second || verified.txEnabled!=(pair.second!=null)) return@withContext FrequencyPairResult.FAILED
                 requestedPair=pair;armed=true;FrequencyPairResult.APPLIED
             }
+            4 -> if (state.value.txSource!=0) FrequencyPairResult.HELD else FrequencyPairResult.FAILED
             else -> FrequencyPairResult.FAILED
         }
     }

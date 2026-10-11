@@ -22,4 +22,6 @@
     <string name="rc_l4s_no_cw">The connected firmware does not report CW text support.</string>
     <string name="rc_l4s_busy">Stop the current transmission and confirm PTT OFF before sending CW.</string>
     <string name="rc_l4s_radio">Radio (single half-duplex)</string>
+    <string name="rc_calculator_cat_link">Frequency edits update CAT tracking. Both frequencies stay held during transmission.</string>
+    <string name="rc_calculator_need_tracking">Connect the radio and start tracking to apply calculator frequency edits.</string>
 </resources>

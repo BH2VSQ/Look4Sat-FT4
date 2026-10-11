@@ -69,7 +69,7 @@ class L4sControllerTest {
         assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100000,145900000))
         assertTrue(radio.pttOn())
         val writes=transport.commands.count { it==L4sProtocol.PAIR }
-        assertEquals(FrequencyPairResult.FAILED,radio.setTrackingFrequencies(435100100,145900100))
+        assertEquals(FrequencyPairResult.HELD,radio.setTrackingFrequencies(435100100,145900100))
         assertEquals(writes,transport.commands.count { it==L4sProtocol.PAIR })
         assertTrue(radio.pttOff())
         val revision=radio.remoteState.value.appliedRevision
@@ -116,6 +116,22 @@ class L4sControllerTest {
 
     private fun hex(value:String)=value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
+    @Test fun localPttStatusKeepsConnectionAndReleaseRequiresFreshPair()=runTest {
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect());assertTrue(radio.setSplitModes("FM","FM"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100000,145900000))
+        val revision=radio.remoteState.value.appliedRevision
+        transport.localPtt(true);advanceTimeBy(500);runCurrent()
+        assertTrue(radio.isConnected);assertEquals(3,radio.remoteState.value.txSource)
+        assertEquals(FrequencyPairResult.HELD,radio.setTrackingFrequencies(435100100,145900100))
+        transport.localPtt(false);advanceTimeBy(500);runCurrent()
+        assertTrue(radio.isConnected)
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100000,145900000))
+        assertTrue(radio.remoteState.value.appliedRevision>revision)
+        radio.disconnect()
+    }
+
     @Test fun noHandshakeReplyReportsCommandAndReceivedByteCount()=runTest {
         val transport=ScriptedL4sTransport(silent=true)
         val diagnostics=ControlDiagnosticsBuffer()
@@ -149,6 +165,7 @@ private class ScriptedL4sTransport(
     private var rxMode=0
     private var txMode=0
     private var txState=0
+    fun localPtt(enabled:Boolean) { txState=if(enabled)3 else 0; if(!enabled)pairReady=false }
     private var cwState=0
     private var pairReady=false
     private var modeReady=false

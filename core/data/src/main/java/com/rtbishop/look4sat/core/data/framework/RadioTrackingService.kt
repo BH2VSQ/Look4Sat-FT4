@@ -48,6 +48,8 @@ import com.rtbishop.look4sat.core.domain.utility.DialFollowState
 import com.rtbishop.look4sat.core.domain.utility.DialLeg
 import com.rtbishop.look4sat.core.domain.utility.TransponderMapper
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
+import com.rtbishop.look4sat.core.domain.utility.CalculatorTuning
+import com.rtbishop.look4sat.core.domain.utility.frequencies
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
@@ -91,6 +93,7 @@ class RadioTrackingService(
     private var connectedCatPttSupported = true
     private var trackingJob: Job? = null
     private var remoteMonitorJob: Job? = null
+    @Volatile private var calculatorTuning: CalculatorTuning? = null
     private var manualJob: Job? = null
     @Volatile private var manualOwner = RadioTransmitOwner.NONE
     private val manualEpoch = AtomicLong()
@@ -249,6 +252,7 @@ class RadioTrackingService(
         }
         txController?.remoteState?.let { remoteFlow ->
             remoteMonitorJob = appScope.launch {
+                var previousTxSource = remoteFlow.value.txSource
                 remoteFlow.collect { remote ->
                     _state.update { current -> current.copy(
                         remoteRadio = remote,
@@ -261,6 +265,8 @@ class RadioTrackingService(
                         trackingPhase = if (!remote.connected && current.isActive) TrackingPhase.ERROR else current.trackingPhase,
                         errorMessage = remote.error ?: current.errorMessage
                     ) }
+                    if (previousTxSource!=0 && remote.txSource==0 && remote.connected) tuningWake.trySend(Unit)
+                    previousTxSource=remote.txSource
                     if (!remote.connected && manualOwner != RadioTransmitOwner.NONE) {
                         manualEpoch.incrementAndGet()
                         transmitMutex.withLock { forcePttOffLocked(remote.error ?: "L4S disconnected") }
@@ -408,7 +414,7 @@ class RadioTrackingService(
             check(pass.catNum == request.expectedSatelliteCatalogNumber) { "Satellite context changed" }
             check(transponder.uuid == request.expectedTransponderUuid) { "Transponder context changed" }
             val midpoint = request.waveformStartUtcMillis + request.waveformDurationMillis / 2L
-            val nominal = current.txBaseFrequencyHz ?: transponder.uplinkCenterFrequency()
+            var nominal = current.txBaseFrequencyHz ?: transponder.uplinkCenterFrequency()
             checkNotNull(nominal) { "The selected transponder has no uplink frequency" }
             val position = satelliteRepo.getPosition(
                 pass.orbitalObject,
@@ -416,7 +422,10 @@ class RadioTrackingService(
                 midpoint
             )
             if (request.automatic) validateOrbitPosition(position)
-            val requestedFrequency = position.getUplinkFreq(nominal)
+            val calculatorPair = calculatorTuning?.frequencies(transponder, position,
+                DopplerFrequencyCalculator.parseOffsetHz(settingsRepo.getSatelliteOffset(pass.catNum)))
+            if (calculatorPair != null) nominal = calculatorPair.nominalTxHz
+            val requestedFrequency = calculatorPair?.txHz ?: position.getUplinkFreq(nominal)
             val controller = checkNotNull(txController) { "TX radio is not connected" }
             check(controller.isConnected) { "TX radio is not connected" }
 
@@ -526,8 +535,9 @@ class RadioTrackingService(
             DopplerFrequencyCalculator.parseOffsetHz(settingsRepo.getSatelliteOffset(pass.catNum))
         } else 0L
         val nominalRx = checkNotNull(TransponderMapper.mapUplinkToDownlink(base, transponder)) + offset
-        val tx = position.getUplinkFreq(base)
-        val rx = position.getDownlinkFreq(nominalRx)
+        val calculated = calculatorTuning?.frequencies(transponder, position, offset)
+        val tx = calculated?.txHz ?: position.getUplinkFreq(base)
+        val rx = calculated?.rxHz ?: position.getDownlinkFreq(nominalRx)
         check(controller.setTrackingFrequencies(rx, tx) == FrequencyPairResult.APPLIED) {
             controller.remoteState?.value?.error ?: "RX/TX pair was not applied before TX"
         }
@@ -1072,7 +1082,7 @@ class RadioTrackingService(
     }
 
     // A cycle and a settings change own the same lock as transmit preparation.
-    // During PTT, suppress dial-change detection but keep Doppler writes running.
+    // During PTT, hold both CAT legs and suppress dial-change detection.
     private suspend fun runTrackingLoop(split: Boolean) {
         var lastSetTx: Long? = null
         var lastSetRx: Long? = null
@@ -1117,12 +1127,14 @@ class RadioTrackingService(
                     // Keep BOTH RX and TX fixed during all transmission, including CW gaps.
                     val frozen = hasTransmitClaim || current.pttState != PttState.OFF
                     var base = current.txBaseFrequencyHz
+                    val calculated = calculatorTuning?.frequencies(transponder, position, offset)
+                    if (calculated != null) base = calculated.nominalTxHz
                     var observedTx = current.txFrequencyHz
                     var observedRx = current.rxFrequencyHz
                     suspend fun readTx() = if (split) tx?.readTxVfoFrequency() else tx?.readFrequencyAndMode()?.first
                     suspend fun readRx() = if (split) rx?.readWorkingFrequency() else rx?.readFrequencyAndMode()?.first
                     // Do not change the nominal pair under a waveform, even from the RX dial.
-                    if (!frozen) {
+                    if (!frozen && calculated == null) {
                         suspend fun sampleDial(leg: DialLeg): Boolean {
                             val controller = if (leg == DialLeg.TX) tx else rx
                             val commanded = if (leg == DialLeg.TX) lastSetTx else lastSetRx
@@ -1168,10 +1180,10 @@ class RadioTrackingService(
                     }
                     // A synchronous UI intent can invalidate this snapshot while a read suspends.
                     if (cycleRevision != tuningRevision.get() || !_state.value.isActive) return@withLock
-                    val nominalRx = (base?.let { TransponderMapper.mapUplinkToDownlink(it, transponder) }
+                    val nominalRx = calculated?.nominalRxHz ?: (base?.let { TransponderMapper.mapUplinkToDownlink(it, transponder) }
                         ?: transponder.downlinkLow)?.plus(offset)
-                    val desiredTx = base?.let(position::getUplinkFreq)
-                    val desiredRx = nominalRx?.let(position::getDownlinkFreq)
+                    val desiredTx = calculated?.txHz ?: base?.let(position::getUplinkFreq)
+                    val desiredRx = calculated?.rxHz ?: nominalRx?.let(position::getDownlinkFreq)
                     // The FT4 lease preloads the slot-midpoint frequency. Hold both CAT legs
                     // until the waveform ends so no synthesizer step occurs under modulation.
                     if (!frozen && dialFollowState.activeLeg == null) {
@@ -1184,6 +1196,7 @@ class RadioTrackingService(
                                     observedRx = tx.remoteState?.value?.rxFrequencyHz
                                     lastSetTx = observedTx; lastSetRx = observedRx
                                 }
+                                FrequencyPairResult.HELD -> Unit
                                 else -> failTrackingCommand("Atomic RX/TX frequency pair was not applied")
                             }
                         } else {
@@ -1244,6 +1257,11 @@ class RadioTrackingService(
 
     override fun setTransponder(transponder: SatRadio) {
         changeRadioSettings {
+            configureTransponder(transponder)
+        }
+    }
+
+    private suspend fun configureTransponder(transponder: SatRadio) {
             val txMode = controlUplinkMode(transponder)
             val tx = txController
             val rx = rxController
@@ -1252,7 +1270,7 @@ class RadioTrackingService(
             // radio is connected; startTracking will program the selected mode.
             if (tx?.isConnected != true && rx?.isConnected != true) {
                 updateSelectedTransponder(transponder, rxMode)
-                return@changeRadioSettings
+                return
             }
             val split = _state.value.splitMode
             val txModeOk: Boolean
@@ -1276,10 +1294,32 @@ class RadioTrackingService(
                 tx.setCtcssMode(false)
             }
             if (!ctcssOk) {
-                return@changeRadioSettings failTrackingCommand("CTCSS command was not acknowledged")
+                return failTrackingCommand("CTCSS command was not acknowledged")
             }
             if (txModeOk != false && rxModeOk != false) updateSelectedTransponder(transponder, rxMode)
             else failTrackingCommand("Radio mode command was not acknowledged")
+    }
+
+    override fun tuneFromCalculator(transponder: SatRadio, tuning: CalculatorTuning) {
+        if (tuning.transponderUuid != transponder.uuid || tuning.frequencyHz <= 0 ||
+            !DopplerFrequencyCalculator.isLinearTransponder(transponder)) return
+        if (_state.value.isActive && _state.value.currentPass?.catNum != transponder.catnum) {
+            failTrackingCommand("Start tracking the calculator satellite before tuning its radio")
+            return
+        }
+        fun accept() {
+            calculatorTuning = tuning
+            tuningRevision.incrementAndGet()
+            tuningWake.trySend(Unit)
+            diagnose("calculator/tune", "anchor=${tuning.anchor} frequencyHz=${tuning.frequencyHz}")
+        }
+        if (_state.value.selectedTransponder?.uuid == transponder.uuid) {
+            // Only update the desired anchor; the normal tracking loop owns all CAT writes.
+            // During TX this stays pending without cancelling or retuning the transmission.
+            accept()
+        } else changeRadioSettings {
+            configureTransponder(transponder)
+            if (_state.value.selectedTransponder?.uuid == transponder.uuid) accept()
         }
     }
 
@@ -1311,11 +1351,16 @@ class RadioTrackingService(
 
     override fun setTxBaseFrequency(frequencyHz: Long) {
         if (frequencyHz <= 0L) return
-        changeRadioSettings { _state.update { it.copy(txBaseFrequencyHz = frequencyHz) } }
+        changeRadioSettings {
+            calculatorTuning = null
+            _state.update { it.copy(txBaseFrequencyHz = frequencyHz) }
+            tuningWake.trySend(Unit)
+        }
     }
 
     override fun adjustTxBaseFrequency(deltaHz: Long) {
         changeRadioSettings {
+            calculatorTuning = null
             val base = _state.value.txBaseFrequencyHz ?: return@changeRadioSettings
             val adjusted = Math.addExact(base, deltaHz)
             if (adjusted > 0L) _state.update { it.copy(txBaseFrequencyHz = adjusted) }
@@ -1352,6 +1397,7 @@ class RadioTrackingService(
     }
 
     private fun updateSelectedTransponder(transponder: SatRadio, rxMode: String?) {
+        calculatorTuning = null
         val txCenter = transponder.uplinkCenterFrequency()
         val rxNominal = if (txCenter != null) TransponderMapper.mapUplinkToDownlink(txCenter, transponder)
         else transponder.downlinkLow
