@@ -35,6 +35,7 @@ data class RadioPanelState(
 )
 
 data class RadioControlSubState(
+    val isL4sModel: Boolean = false,
     val txPanel: RadioPanelState = RadioPanelState("TX (Uplink)"),
     val rxPanel: RadioPanelState = RadioPanelState("RX (Downlink)"),
     val selectedTransponderUuid: String? = null,

@@ -16,4 +16,10 @@
     <string name="rc_l4s_wpm">Speed: %1$d WPM</string>
     <string name="rc_l4s_send">Send</string>
     <string name="rc_l4s_progress">CW %1$d/%2$d · %3$s</string>
+    <string name="rc_l4s_need_connection">Connect to the L4S radio first. You can prepare CW text here; transmission is disabled.</string>
+    <string name="rc_l4s_need_tracking">Select a transponder and start tracking; wait until the radio is ready.</string>
+    <string name="rc_l4s_need_cw_mode">CW text requires a CW or linear transponder. FM uses hold-to-talk PTT.</string>
+    <string name="rc_l4s_no_cw">The connected firmware does not report CW text support.</string>
+    <string name="rc_l4s_busy">Stop the current transmission and confirm PTT OFF before sending CW.</string>
+    <string name="rc_l4s_radio">Radio (single half-duplex)</string>
 </resources>

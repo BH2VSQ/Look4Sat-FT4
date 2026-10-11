@@ -4,6 +4,10 @@ import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
 import com.rtbishop.look4sat.core.domain.repository.FrequencyPairResult
 import com.rtbishop.look4sat.core.domain.repository.IRadioController
 import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
+import com.rtbishop.look4sat.core.domain.control.IControlDiagnostics
+import com.rtbishop.look4sat.core.domain.control.NoOpControlDiagnostics
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSeverity
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSource
 import java.security.SecureRandom
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -25,6 +29,7 @@ class L4sController(
     private val transport: RadioTransport,
     private val scope: CoroutineScope,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
     private val newSession: () -> Long = { (SecureRandom().nextInt().toLong() and 0xffffffffL).coerceAtLeast(1) }
 ) : IRadioController {
     private val state=MutableStateFlow(RemoteRadioState())
@@ -47,7 +52,13 @@ class L4sController(
 
     override suspend fun connect(): Boolean = withContext(dispatcher) {
         if(isConnected) return@withContext true
-        if(!transport.connect()) return@withContext false
+        transport.setCdcDtrOnConnect(true)
+        diagnose("l4s/transport", "Opening native CDC with DTR=1 RTS=0")
+        if(!transport.connect()) {
+            state.update { it.copy(connected=false,error="Could not open USB CDC; check device selection and USB permission") }
+            diagnose("l4s/transport",state.value.error!!,ControlDiagnosticSeverity.ERROR)
+            return@withContext false
+        }
         try {
             decoder=L4sProtocol.Decoder();sequence=0;revision=0;armed=false;requestedPair=null
             session=newSession() and 0xffffffffL
@@ -56,9 +67,11 @@ class L4sController(
             val (firmware,caps)=L4sProtocol.capabilities(hello.data) ?: return@withContext failedConnect()
             if(hello.result!=0) return@withContext failedConnect()
             state.value=RemoteRadioState(firmware=firmware,capabilities=caps)
+            diagnose("l4s/hello","firmware=$firmware capabilities=${hello.data.size} bytes")
             if(!ok(request(L4sProtocol.OPEN))) return@withContext failedConnect()
             desiredRx=state.value.rxFrequencyHz; desiredTx=null; selectedRx=true
             isConnected=true;state.update { it.copy(connected=true,error=null) }
+            diagnose("l4s/open","session opened; TX remains off")
             heartbeat=scope.launch(dispatcher) {
                 try {
                     while(isConnected) {
@@ -102,12 +115,20 @@ class L4sController(
             if(!transport.isConnected) return@withLock null
             val seq=sequence.also { sequence=(sequence+1) and 0xffff }
             val wire=L4sProtocol.frame(L4sProtocol.body(command,seq,wireSession,data))
-            repeat(2) {
-                if(!transport.write(wire)) return@withLock null
+            var receivedBytes=0
+            val label=when(command) { L4sProtocol.HELLO -> "HELLO"; L4sProtocol.OPEN -> "OPEN"; else -> "0x${command.toString(16)}" }
+            repeat(2) { attempt ->
+                if(command!=L4sProtocol.KEEPALIVE) diagnose("l4s/request","cmd=$label seq=$seq attempt=${attempt+1} bytes=${wire.size}")
+                if(!transport.write(wire)) {
+                    state.update { it.copy(error="L4S $label USB write failed") }
+                    diagnose("l4s/write",state.value.error!!,ControlDiagnosticSeverity.ERROR)
+                    return@withLock null
+                }
                 val response=withTimeoutOrNull(600) {
                     var match: L4sProtocol.Reply?=null
                     while(match==null) {
                         val chunk=transport.readAvailable(1024)
+                        receivedBytes+=chunk.size
                         decoder.feed(chunk).forEach { plain ->
                             val reply=L4sProtocol.reply(plain)
                             if(reply!=null && reply.command==command && reply.sequence==seq &&
@@ -119,6 +140,7 @@ class L4sController(
                     match
                 }
                 if(response!=null) {
+                    if(command!=L4sProtocol.KEEPALIVE) diagnose("l4s/reply","cmd=$label seq=$seq result=${response.result} rxBytes=$receivedBytes")
                     if(command!=L4sProtocol.HELLO) {
                         val snapshot=L4sProtocol.snapshot(response,state.value)
                         if(snapshot==null) { state.update { old -> old.copy(error="Malformed L4S state reply") };return@withLock null }
@@ -128,9 +150,15 @@ class L4sController(
                     return@withLock response
                 }
             }
-            state.update { it.copy(error="L4S response timed out") }
+            val hint=if(command==L4sProtocol.HELLO) "; check L4S firmware, CDC/DTR and USB key mode" else ""
+            state.update { it.copy(error="L4S $label timed out (RX $receivedBytes bytes)$hint") }
+            diagnose("l4s/timeout",state.value.error!!,ControlDiagnosticSeverity.ERROR)
             null
         }
+
+    private fun diagnose(stage:String,message:String,severity:ControlDiagnosticSeverity=ControlDiagnosticSeverity.INFO) {
+        diagnostics.record(ControlDiagnosticSource.RADIO,stage,message,severity)
+    }
 
     private fun ok(reply: L4sProtocol.Reply?): Boolean = reply?.result==L4sProtocol.APPLIED
     private fun quantize(hz: Long): Long {

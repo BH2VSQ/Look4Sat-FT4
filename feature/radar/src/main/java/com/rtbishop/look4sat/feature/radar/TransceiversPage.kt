@@ -452,6 +452,10 @@ private fun ExpandedRadioControl(
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
         )
 
+        if (radioControl.isL4sModel || radioControl.remoteRadio != null) {
+            RemoteRadioControls(radioControl, onAction)
+        }
+
         // Frequency tuner
         if (radioControl.txBaseFrequencyHz != null) {
             Column(
@@ -545,10 +549,6 @@ private fun ExpandedRadioControl(
                     }
                 }
             }
-        }
-
-        if (radioControl.remoteRadio != null) {
-            RemoteRadioControls(radioControl, onAction)
         }
 
         // Control buttons

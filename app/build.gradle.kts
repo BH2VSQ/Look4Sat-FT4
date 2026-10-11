@@ -31,6 +31,7 @@ android {
     namespace = libs.versions.packageName.get()
     defaultConfig {
         applicationId = if (l4sDevelopment) "cn.ba7opf.look4sat.l4s" else "cn.ba7opf.look4sat"
+        if (l4sDevelopment) versionCode = libs.versions.appVersionCode.get().toInt() + 1
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -47,7 +48,7 @@ android {
     }
     buildTypes {
         release {
-            if (l4sDevelopment) versionNameSuffix = "-l4s-alpha1"
+            if (l4sDevelopment) versionNameSuffix = "-l4s-alpha2"
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }

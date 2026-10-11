@@ -1655,7 +1655,11 @@ fun RadioControlDialog(
             }
 
             // TX radio (the sole CAT connection in single-radio duplex mode).
-            val txLabel = stringResource(if (isSingleRadio) R.string.rc_single_radio else R.string.rc_tx_radio)
+            val txLabel = stringResource(when {
+                isL4s -> R.string.rc_l4s_radio
+                isSingleRadio -> R.string.rc_single_radio
+                else -> R.string.rc_tx_radio
+            })
             Text(txLabel, fontWeight = FontWeight.Medium)
             if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
                 OutlinedTextField(

@@ -41,23 +41,45 @@ import androidx.compose.ui.unit.dp
 import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
 import com.rtbishop.look4sat.core.domain.repository.PttState
 import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
+import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.formatFrequency
 
+internal fun RadioControlSubState.canSendL4sCw(): Boolean =
+    remoteRadio?.connected == true && remoteRadio.capabilities?.cwText == true &&
+        remoteRadio.txSource == 0 && isReady && txPanel.mode == "CW" &&
+        transmitOwner == RadioTransmitOwner.NONE && pttState == PttState.OFF
+
 @Composable
 internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (RadarAction) -> Unit) {
-    val remote = control.remoteRadio ?: return
-    val caps = remote.capabilities ?: return
+    val remote = control.remoteRadio ?: RemoteRadioState()
+    val caps = remote.capabilities
+    val minWpm = caps?.minimumWpm ?: 10
+    val maxWpm = caps?.maximumWpm ?: 45
+    val cwBlockReason = when {
+        !remote.connected -> stringResource(R.string.rc_l4s_need_connection)
+        caps?.cwText != true -> stringResource(R.string.rc_l4s_no_cw)
+        !control.isReady -> stringResource(R.string.rc_l4s_need_tracking)
+        control.txPanel.mode != "CW" -> stringResource(R.string.rc_l4s_need_cw_mode)
+        remote.txSource != 0 || control.transmitOwner != RadioTransmitOwner.NONE || control.pttState != PttState.OFF ->
+            stringResource(R.string.rc_l4s_busy)
+        else -> null
+    }
     val action by rememberUpdatedState(onAction)
-    val canVoice by rememberUpdatedState(remote.connected && control.isReady && caps.voicePtt &&
+    val canVoice by rememberUpdatedState(remote.connected && control.isReady && caps?.voicePtt == true &&
         control.txPanel.mode in setOf("FM", "NFM") && control.transmitOwner == RadioTransmitOwner.NONE &&
         control.pttState == PttState.OFF)
     var showCw by rememberSaveable { mutableStateOf(false) }
     val pttLabel = stringResource(R.string.rc_l4s_hold)
     DisposableEffect(Unit) { onDispose { action(RadarAction.StopRemoteTx) } }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(stringResource(R.string.rc_l4s_firmware, remote.firmware), color = MaterialTheme.colorScheme.primary)
+        OutlinedButton(onClick = { showCw = true }, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.rc_l4s_cw))
+        }
+        cwBlockReason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text(if (remote.firmware.isBlank()) stringResource(R.string.rc_l4s_need_connection)
+            else stringResource(R.string.rc_l4s_firmware, remote.firmware), color = MaterialTheme.colorScheme.primary)
         Text(stringResource(R.string.rc_l4s_applied,
             remote.txFrequencyHz?.let(::formatFrequency) ?: "—", remote.rxFrequencyHz?.let(::formatFrequency) ?: "—"),
             style = MaterialTheme.typography.bodySmall)
@@ -91,10 +113,6 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                     }.padding(8.dp)
             ) { Text(pttLabel, color = if (canVoice || control.transmitOwner == RadioTransmitOwner.VOICE)
                 MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)) }
-            OutlinedButton(onClick = { showCw = true }, enabled = remote.connected && caps.cwText &&
-                control.isReady && control.txPanel.mode == "CW" && control.transmitOwner == RadioTransmitOwner.NONE) {
-                Text(stringResource(R.string.rc_l4s_cw))
-            }
         }
         OutlinedButton(onClick = { action(RadarAction.StopRemoteTx) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.rc_l4s_stop))
@@ -103,7 +121,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
     }
     if (showCw) {
         var text by rememberSaveable { mutableStateOf("") }
-        var wpm by rememberSaveable { mutableIntStateOf(20.coerceIn(caps.minimumWpm, caps.maximumWpm)) }
+        var wpm by rememberSaveable { mutableIntStateOf(20.coerceIn(minWpm, maxWpm)) }
         var error by remember { mutableStateOf<String?>(null) }
         val close = { action(RadarAction.StopRemoteTx); showCw = false }
         SharedDialog(title = stringResource(R.string.rc_l4s_cw), onDismissRequest = close, onCancel = close) { padding ->
@@ -113,20 +131,21 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                     .verticalScroll(rememberScrollState()).padding(padding),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                cwBlockReason?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
                 OutlinedTextField(text, { text = it.take(4096); error = null },
                     label = { Text(stringResource(R.string.rc_l4s_message)) },
                     enabled = control.transmitOwner == RadioTransmitOwner.NONE, modifier = Modifier.fillMaxWidth())
                 Text(stringResource(R.string.rc_l4s_wpm, wpm))
-                Slider(value = wpm.toFloat(), onValueChange = { wpm = it.toInt() },
-                    valueRange = caps.minimumWpm.toFloat()..caps.maximumWpm.toFloat(),
+                Slider(value = wpm.coerceIn(minWpm, maxWpm).toFloat(), onValueChange = { wpm = it.toInt() },
+                    valueRange = minWpm.toFloat()..maxWpm.toFloat(),
                     enabled = control.transmitOwner == RadioTransmitOwner.NONE)
                 Text(stringResource(R.string.rc_l4s_progress, remote.cwPosition, remote.cwLength, remote.cwState.name))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
-                        runCatching { CwTransmitText.chunks(text, caps.maxCwText) }
-                            .onSuccess { action(RadarAction.SendCw(text, wpm)) }
+                        runCatching { CwTransmitText.chunks(text, caps?.maxCwText ?: 92) }
+                            .onSuccess { action(RadarAction.SendCw(text, wpm.coerceIn(minWpm, maxWpm))) }
                             .onFailure { error = it.message }
-                    }, enabled = remote.connected && control.transmitOwner == RadioTransmitOwner.NONE && text.isNotBlank()) {
+                    }, enabled = control.canSendL4sCw() && text.isNotBlank()) {
                         Text(stringResource(R.string.rc_l4s_send))
                     }
                     OutlinedButton(onClick = { action(RadarAction.StopRemoteTx) }) {

@@ -296,7 +296,7 @@ class RadioTrackingService(
             )
         } else null
         val controller = injected ?: if (profile.isL4s) {
-            L4sController(checkNotNull(transport) { "L4S USB transport is unavailable" }, appScope)
+            L4sController(checkNotNull(transport) { "L4S USB transport is unavailable" }, appScope, diagnostics=diagnostics)
         } else if (usesHamlib) {
             HamlibRigctldController(
                 endpoint = address,

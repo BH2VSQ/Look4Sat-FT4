@@ -31,7 +31,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Backward-compatible CAT specialization of the shared station-control transport. */
-interface RadioTransport : ControlTransport
+interface RadioTransport : ControlTransport {
+    /** Native CDC devices may gate replies on DTR. Generic CAT adapters stay deasserted. */
+    fun setCdcDtrOnConnect(enabled: Boolean) = Unit
+}
 
 class BluetoothSppRadioTransport(
     private val manager: BluetoothManager?,
@@ -254,6 +257,8 @@ class UsbSerialRadioTransport(
     private val baudRate: Int,
     stopBits: Int = 1
 ) : RadioTransport {
+    private var cdcDtrOnConnect = false
+    override fun setCdcDtrOnConnect(enabled: Boolean) { cdcDtrOnConnect = enabled }
     private val manager = context.applicationContext.getSystemService(UsbManager::class.java)
     private val selector = parseUsbSerialSelector(deviceSelector)
     private var connection: UsbDeviceConnection? = null
@@ -444,7 +449,7 @@ class UsbSerialRadioTransport(
         return connection.controlTransfer(
             CDC_REQUEST_TYPE,
             CDC_SET_CONTROL_LINE_STATE,
-            0,
+            cdcControlLineState(cdcDtrOnConnect),
             intf.id,
             null,
             0,
@@ -604,6 +609,9 @@ class UsbSerialRadioTransport(
         const val CH34X_DEFAULT_BAUD_RATE = 9_600
     }
 }
+
+// Bit 0 is DTR; bit 1 (RTS) stays clear to avoid keying modem-line PTT adapters.
+internal fun cdcControlLineState(dtr: Boolean): Int = if (dtr) 1 else 0
 
 internal data class UsbSerialSelector(
     val deviceId: Int,

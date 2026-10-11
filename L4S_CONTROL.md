@@ -21,7 +21,9 @@
 
 固件：`cmake --preset L4S`，随后 `cmake --build --preset L4S`。原 Fusion/CW preset 不启用 L4S 控制。回退时使用原刷机工具、原固件及其兼容的配置/校准备份。
 
-Android：通过现有环境变量配置签名和 FT4 原生工具链后运行 `./gradlew.bat -Pl4sDevelopment=true :app:assembleRelease`。该参数仅改变联调包名和版本后缀 `-l4s-alpha1`；默认构建不改变稳定版标识。签名密码和证书不进入仓库。
+Android：通过现有环境变量配置签名和 FT4 原生工具链后运行 `./gradlew.bat -Pl4sDevelopment=true :app:assembleRelease`。该参数使用独立联调包名、开发版本号及后缀 `-l4s-alpha2`；默认构建不改变稳定版标识。签名密码和证书不进入仓库。alpha2 可覆盖安装 alpha1，继续兼容手台上的 `L4S-v1-alpha1` 固件，不需要为本次修复重新刷机。
+
+alpha2 修正了原生 CDC 打开时未开启 DTR、导致固件不发送回复的问题。仅 L4S 原生 CDC 会话请求 DTR，RTS 保持关闭，其他 CAT 型号保持原行为。CW 拍发入口在选择 L4S 型号后即可见，位于展开的转发器控制区顶部；未连接时可预填文本，但只有已连接、跟踪就绪、CW 模式且确认未发射时才能发送。诊断导出增加 HELLO/OPEN、重试次数和接收字节数，不记录 CW 文本。
 
 主机模拟器：在固件目录运行 `tools/l4s/build-host.ps1`、`python -m unittest discover -s tools/l4s -p 'test_*.py'`，然后 `python tools/l4s/simulator.py --port 4534`。Android 测试设置环境变量 `L4S_SIMULATOR_PORT=4534` 后运行 `./gradlew.bat test`。模拟器调用生产 C 协议核心；射频、实际 VFO 与 CW 时序为模拟钩子，不是硬件验证。
 

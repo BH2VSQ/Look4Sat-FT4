@@ -16,4 +16,10 @@
     <string name="rc_l4s_wpm">速度：%1$d WPM</string>
     <string name="rc_l4s_send">发送</string>
     <string name="rc_l4s_progress">CW %1$d/%2$d · %3$s</string>
+    <string name="rc_l4s_need_connection">請先連接 L4S 電台。可以預填 CW 文字，未連接時禁止發送。</string>
+    <string name="rc_l4s_need_tracking">選擇轉發器並開始追蹤，等待電台就緒後才能發送。</string>
+    <string name="rc_l4s_need_cw_mode">CW 拍發需選擇 CW／線性轉發器；FM 使用按住 PTT 通話。</string>
+    <string name="rc_l4s_no_cw">連接的韌體未聲明支援 CW 文字拍發。</string>
+    <string name="rc_l4s_busy">請先停止目前發射並確認 PTT 關閉，再發送 CW。</string>
+    <string name="rc_l4s_radio">電台（單機半雙工）</string>
 </resources>

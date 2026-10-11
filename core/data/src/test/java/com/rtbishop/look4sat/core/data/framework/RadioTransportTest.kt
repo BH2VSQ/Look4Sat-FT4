@@ -20,6 +20,13 @@ import org.junit.Test
 
 class RadioTransportTest {
     @Test
+    fun nativeCdcDtrOptInNeverAssertsRts() {
+        assertEquals(0, cdcControlLineState(false))
+        assertEquals(1, cdcControlLineState(true))
+        assertEquals(0, cdcControlLineState(true) and 2)
+    }
+
+    @Test
     fun tcpEndpointParsesDnsIpv4AndBracketedIpv6() {
         assertEquals(RadioTcpEndpoint("radio.local", 4_532), parseTcpEndpoint("radio.local:4532"))
         assertEquals(RadioTcpEndpoint("192.0.2.10", 12_345), parseTcpEndpoint("192.0.2.10:12345"))

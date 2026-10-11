@@ -1,6 +1,7 @@
 package com.rtbishop.look4sat.core.data.framework
 
 import com.rtbishop.look4sat.core.domain.repository.FrequencyPairResult
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticsBuffer
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -37,6 +38,7 @@ class L4sControllerTest {
         val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
         assertTrue(radio.connect())
         assertEquals("mock-v1",radio.remoteState.value.firmware)
+        assertTrue(transport.dtrOnConnect)
         assertEquals(10,radio.remoteState.value.capabilities!!.frequencyStepHz)
         assertFalse(radio.setSplitModes("USB","USB"))
         assertTrue(radio.setSplitModes("FM","FM"))
@@ -113,13 +115,29 @@ class L4sControllerTest {
     }
 
     private fun hex(value:String)=value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+    @Test fun noHandshakeReplyReportsCommandAndReceivedByteCount()=runTest {
+        val transport=ScriptedL4sTransport(silent=true)
+        val diagnostics=ControlDiagnosticsBuffer()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler),diagnostics) { 7 }
+        assertFalse(radio.connect())
+        assertTrue(radio.remoteState.value.error!!.contains("HELLO timed out (RX 0 bytes)"))
+        assertTrue(diagnostics.events.value.any { it.stage=="l4s/timeout" && it.message.contains("HELLO") })
+        assertEquals(listOf(L4sProtocol.HELLO,L4sProtocol.HELLO),transport.commands)
+        assertFalse(transport.commands.contains(L4sProtocol.PTT))
+        radio.disconnect()
+    }
 }
 
 private class ScriptedL4sTransport(
+    private val silent:Boolean=false,
     private val ignorePair:Boolean=false,
     private val acceptPairOnly:Boolean=false,
     private var dropFirstCwReply:Boolean=false
 ):RadioTransport {
+    var dtrOnConnect=false
+        private set
+    override fun setCdcDtrOnConnect(enabled:Boolean) { dtrOnConnect=enabled }
     override var isConnected=false
     var closeSession=false
     val commands=mutableListOf<Int>()
@@ -142,6 +160,8 @@ private class ScriptedL4sTransport(
         val p=L4sProtocol.Decoder().feed(bytes).single()
         val command=L4sProtocol.u16(p,0);val seq=L4sProtocol.u16(p,6)
         commands+=command
+        // Matches the production firmware's DTR gate, which TCP-only tests did not model.
+        if(silent || !dtrOnConnect) return true
         retries[seq]?.let { wire+=it;return true }
         var result=0
         var data:ByteArray

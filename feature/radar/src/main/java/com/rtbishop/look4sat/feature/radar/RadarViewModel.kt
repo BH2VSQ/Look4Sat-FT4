@@ -17,6 +17,8 @@
  */
 package com.rtbishop.look4sat.feature.radar
 
+import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
@@ -147,7 +149,9 @@ class RadarViewModel(
         }
         viewModelScope.launch {
             settingsRepo.radioControlSettings.collectLatest { settings ->
-                _uiState.update { it.copy(radioTransport = settings.catTransport) }
+                _uiState.update { it.copy(radioTransport = settings.catTransport,
+                    radioControl = it.radioControl.copy(isL4sModel = settings.radioModel in setOf(
+                        RadioControlSettings.MODEL_QUANSHENG_UVK1, RadioControlSettings.MODEL_QUANSHENG_UVK5V3))) }
             }
         }
         viewModelScope.launch {
