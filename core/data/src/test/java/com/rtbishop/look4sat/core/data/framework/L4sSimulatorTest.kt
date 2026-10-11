@@ -30,6 +30,8 @@ class L4sSimulatorTest {
             assertEquals(145900000L,radio.remoteState.value.txFrequencyHz)
             assertTrue(radio.configureTxCtcss(67.0))
             assertTrue(radio.pttOn())
+            assertTrue(radio.remoteState.value.capabilities!!.trackingDisplay)
+            assertTrue(radio.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay("TEST",137.0,34.0)))
             assertEquals(FrequencyPairResult.HELD,radio.setTrackingFrequencies(435101000,145901000))
             assertEquals(435100010L,radio.readWorkingFrequency())
             assertEquals(145900000L,radio.readTxVfoFrequency())

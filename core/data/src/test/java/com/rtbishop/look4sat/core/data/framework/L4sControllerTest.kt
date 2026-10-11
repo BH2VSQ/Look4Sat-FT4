@@ -116,6 +116,32 @@ class L4sControllerTest {
 
     private fun hex(value:String)=value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
+    @Test fun oldFirmwareDoesNotReceiveOptionalDisplayCommand()=runTest {
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect())
+        assertTrue(radio.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay("ISS",137.0,34.0)))
+        assertFalse(transport.commands.contains(L4sProtocol.CONTEXT))
+        radio.disconnect()
+    }
+
+    @Test fun displayContextUsesCapabilityAndCanUpdateDuringTxWithoutTuning()=runTest {
+        val transport=ScriptedL4sTransport(displayContext=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        assertTrue(radio.connect());assertTrue(radio.setSplitModes("FM","FM"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100000,145900000))
+        assertTrue(radio.pttOn())
+        val writes=transport.commands.count { it==L4sProtocol.PAIR }
+        assertTrue(radio.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay("DOSAAF-85",137.0,-34.0)))
+        val context=transport.requests.last { L4sProtocol.u16(it,0)==L4sProtocol.CONTEXT }
+        assertEquals(1370,L4sProtocol.u16(context,12))
+        assertEquals((-340).toShort(),L4sProtocol.u16(context,14).toShort())
+        assertEquals("DOSAAF-85",context.copyOfRange(16,32).toString(Charsets.US_ASCII).trimEnd('\u0000'))
+        assertEquals(writes,transport.commands.count { it==L4sProtocol.PAIR })
+        assertEquals(1,radio.remoteState.value.txSource)
+        radio.disconnect()
+    }
+
     @Test fun localPttStatusKeepsConnectionAndReleaseRequiresFreshPair()=runTest {
         val transport=ScriptedL4sTransport()
         val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
@@ -146,6 +172,7 @@ class L4sControllerTest {
 }
 
 private class ScriptedL4sTransport(
+    private val displayContext:Boolean=false,
     private val silent:Boolean=false,
     private val ignorePair:Boolean=false,
     private val acceptPairOnly:Boolean=false,
@@ -157,6 +184,7 @@ private class ScriptedL4sTransport(
     override var isConnected=false
     var closeSession=false
     val commands=mutableListOf<Int>()
+    val requests=mutableListOf<ByteArray>()
     var cwStarts=0
     private var session=0L
     private var rx=145000000L
@@ -177,6 +205,7 @@ private class ScriptedL4sTransport(
         val p=L4sProtocol.Decoder().feed(bytes).single()
         val command=L4sProtocol.u16(p,0);val seq=L4sProtocol.u16(p,6)
         commands+=command
+        requests+=p
         // Matches the production firmware's DTR gate, which TCP-only tests did not model.
         if(silent || !dtrOnConnect) return true
         retries[seq]?.let { wire+=it;return true }
@@ -185,7 +214,7 @@ private class ScriptedL4sTransport(
         if(command==L4sProtocol.HELLO) {
             data=ByteArray(42)
             "L4S1".toByteArray().copyInto(data);data[4]=3
-            L4sProtocol.put32(data,5,15);L4sProtocol.put16(data,9,10)
+            L4sProtocol.put32(data,5,if(displayContext)79 else 15);L4sProtocol.put16(data,9,10)
             data[11]=92;data[12]=10;data[13]=45;L4sProtocol.put16(data,14,1500)
             L4sProtocol.put32(data,16,18000000);L4sProtocol.put32(data,20,1300000000)
             "mock-v1".toByteArray().copyInto(data,24);data[40]=15;data[41]=9

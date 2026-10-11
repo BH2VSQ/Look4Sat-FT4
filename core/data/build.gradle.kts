@@ -13,3 +13,10 @@ android {
 dependencies {
     implementation(project(":core:ft4-native"))
 }
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    val simulatorPort = providers.environmentVariable("L4S_SIMULATOR_PORT")
+    inputs.property("l4sSimulatorPort", simulatorPort.orElse(""))
+    // A running external C-core simulator must be exercised, not reused from a skipped/cached run.
+    outputs.upToDateWhen { simulatorPort.orNull.isNullOrBlank() }
+}

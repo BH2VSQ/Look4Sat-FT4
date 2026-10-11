@@ -26,6 +26,7 @@ interface IRadioController {
     val supportsAtomicPair: Boolean get() = false
     suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult = FrequencyPairResult.UNSUPPORTED
     suspend fun startCw(text: String, wpm: Int): Boolean = false
+    suspend fun updateTrackingDisplay(display: RadioTrackingDisplay): Boolean = true
 
     val isConnected: Boolean
 

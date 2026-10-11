@@ -1124,8 +1124,12 @@ class RadioTrackingService(
                     val position = satelliteRepo.getPosition(pass.orbitalObject, settingsRepo.stationPosition.value, now)
                     val tx = txController
                     val rx = if (split) tx else rxController
+                    if (tx?.remoteState?.value?.capabilities?.trackingDisplay==true) {
+                        tx.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay(
+                            pass.name,Math.toDegrees(position.azimuth),Math.toDegrees(position.elevation)))
+                    }
                     // Keep BOTH RX and TX fixed during all transmission, including CW gaps.
-                    val frozen = hasTransmitClaim || current.pttState != PttState.OFF
+                    val frozen = hasTransmitClaim || current.pttState != PttState.OFF || tx?.remoteState?.value?.txSource?.let { it!=0 }==true
                     var base = current.txBaseFrequencyHz
                     val calculated = calculatorTuning?.frequencies(transponder, position, offset)
                     if (calculated != null) base = calculated.nominalTxHz

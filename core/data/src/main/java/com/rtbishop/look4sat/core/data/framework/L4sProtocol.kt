@@ -16,6 +16,7 @@ internal object L4sProtocol {
     const val PTT = 0x708
     const val CW = 0x709
     const val STOP = 0x70A
+    const val CONTEXT = 0x70B
     const val APPLIED = 0
     const val ACCEPTED = 1
     private const val MAX_BODY = 120
@@ -54,7 +55,7 @@ internal object L4sProtocol {
     }
 
     fun reply(body: ByteArray): Reply? {
-        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870a) return null
+        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870b) return null
         return Reply(u16(body,0) and 0x7fff,u16(body,6),u32(body,8),body[5].toInt() and 255,body.copyOfRange(12,body.size))
     }
 
@@ -86,7 +87,7 @@ internal object L4sProtocol {
         val caps=RemoteRadioCapabilities(
             u16(data,9).toLong(),data[11].toInt() and 255,data[12].toInt() and 255,data[13].toInt() and 255,
             u16(data,14),u32(data,16),u32(data,20),data[40].toInt() and 255,data[41].toInt() and 255,
-            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0
+            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0
         )
         if(caps.frequencyStepHz!=10L || caps.maxCwText !in 1..92 || caps.minimumWpm !in 1..45 ||
             caps.maximumWpm !in caps.minimumWpm..45 || caps.watchdogMillis!=1500 || !caps.atomicPair) return null

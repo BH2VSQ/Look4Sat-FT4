@@ -162,6 +162,18 @@ class L4sController(
     }
 
     private fun ok(reply: L4sProtocol.Reply?): Boolean = reply?.result==L4sProtocol.APPLIED
+    override suspend fun updateTrackingDisplay(display: com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay): Boolean = withContext(dispatcher) {
+        if (!isConnected) return@withContext false
+        if (state.value.capabilities?.trackingDisplay!=true) return@withContext true
+        if (!display.azimuthDegrees.isFinite() || !display.elevationDegrees.isFinite()) return@withContext false
+        val data=ByteArray(20)
+        val az=kotlin.math.round((((display.azimuthDegrees%360)+360)%360)*10).toInt()%3600
+        val el=kotlin.math.round(display.elevationDegrees.coerceIn(-90.0,90.0)*10).toInt()
+        L4sProtocol.put16(data,0,az);L4sProtocol.put16(data,2,el)
+        display.satelliteName.take(16).map { if(it in ' '..'~')it else '?' }.joinToString("")
+            .toByteArray(Charsets.US_ASCII).copyInto(data,4)
+        ok(request(L4sProtocol.CONTEXT,data))
+    }
     private fun quantize(hz: Long): Long {
         require(hz in 1..0xfffffffaL) { "L4S frequency outside unsigned 32-bit Hz range" }
         return (hz+5)/10*10

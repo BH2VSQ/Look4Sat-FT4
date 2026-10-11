@@ -19,8 +19,11 @@ data class RemoteRadioCapabilities(
     val cwText: Boolean,
     val ctcss: Boolean,
     val liveFmRetune: Boolean,
-    val liveCwRetune: Boolean
+    val liveCwRetune: Boolean,
+    val trackingDisplay: Boolean = false
 )
+
+data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double)
 
 data class RemoteRadioState(
     val connected: Boolean = false,
