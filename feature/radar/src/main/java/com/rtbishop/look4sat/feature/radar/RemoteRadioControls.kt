@@ -48,7 +48,7 @@ import com.rtbishop.look4sat.core.presentation.formatFrequency
 
 internal fun RadioControlSubState.canSendL4sCw(): Boolean =
     remoteRadio?.connected == true && remoteRadio.capabilities?.cwText == true &&
-        remoteRadio.txSource == 0 && isReady && txPanel.mode == "CW" &&
+        !remoteRadio.nativeMenuOpen && remoteRadio.txSource == 0 && isReady && txPanel.mode == "CW" &&
         transmitOwner == RadioTransmitOwner.NONE && pttState == PttState.OFF
 
 @Composable
@@ -59,6 +59,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
     val maxWpm = caps?.maximumWpm ?: 45
     val cwBlockReason = when {
         !remote.connected -> stringResource(R.string.rc_l4s_need_connection)
+        remote.nativeMenuOpen -> stringResource(R.string.rc_l4s_menu_open)
         caps?.cwText != true -> stringResource(R.string.rc_l4s_no_cw)
         !control.isReady -> stringResource(R.string.rc_l4s_need_tracking)
         control.txPanel.mode != "CW" -> stringResource(R.string.rc_l4s_need_cw_mode)
@@ -67,7 +68,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         else -> null
     }
     val action by rememberUpdatedState(onAction)
-    val canVoice by rememberUpdatedState(remote.connected && control.isReady && caps?.voicePtt == true &&
+    val canVoice by rememberUpdatedState(remote.connected && !remote.nativeMenuOpen && control.isReady && caps?.voicePtt == true &&
         control.txPanel.mode in setOf("FM", "NFM") && control.transmitOwner == RadioTransmitOwner.NONE &&
         control.pttState == PttState.OFF)
     var showCw by rememberSaveable { mutableStateOf(false) }
@@ -93,6 +94,11 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         Text(stringResource(R.string.rc_l4s_source, when(remote.txSource) {
             1 -> "PTT"; 2 -> "CW"; 3 -> stringResource(R.string.rc_l4s_local); else -> stringResource(R.string.rc_l4s_off)
         }), style = MaterialTheme.typography.bodySmall)
+        if(caps?.nativeSettings==true) {
+            fun toneLabel(hz:Double?)=hz?.let { "${it} Hz" } ?: "OFF"
+            Text(stringResource(R.string.rc_l4s_tones,toneLabel(remote.txCtcssHz),toneLabel(remote.rxCtcssHz),toneLabel(remote.activationCtcssHz)),
+                style=MaterialTheme.typography.bodySmall)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -121,7 +127,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
     }
     if (showCw) {
         var text by rememberSaveable { mutableStateOf("") }
-        var wpm by rememberSaveable { mutableIntStateOf(20.coerceIn(minWpm, maxWpm)) }
+        var wpm by rememberSaveable { mutableIntStateOf((remote.nativeCwWpm ?: 20).coerceIn(minWpm, maxWpm)) }
         var error by remember { mutableStateOf<String?>(null) }
         val close = { action(RadarAction.StopRemoteTx); showCw = false }
         SharedDialog(title = stringResource(R.string.rc_l4s_cw), onDismissRequest = close, onCancel = close) { padding ->

@@ -19,6 +19,12 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RadioTransportTest {
+    @Test fun onlyL4sNativeCdcUsesShortBoundedWriteTimeout() {
+        assertEquals(150,usbRadioWriteTimeoutMillis(true,UsbSerialDriverKind.CDC_ACM))
+        assertEquals(1000,usbRadioWriteTimeoutMillis(false,UsbSerialDriverKind.CDC_ACM))
+        assertEquals(1000,usbRadioWriteTimeoutMillis(true,UsbSerialDriverKind.CP210X))
+        assertEquals(1000,usbRadioWriteTimeoutMillis(true,UsbSerialDriverKind.FTDI))
+    }
     @Test
     fun nativeCdcDtrOptInNeverAssertsRts() {
         assertEquals(0, cdcControlLineState(false))

@@ -17,6 +17,7 @@ internal object L4sProtocol {
     const val CW = 0x709
     const val STOP = 0x70A
     const val CONTEXT = 0x70B
+    const val SETTINGS = 0x70C
     const val APPLIED = 0
     const val ACCEPTED = 1
     private const val MAX_BODY = 120
@@ -55,7 +56,7 @@ internal object L4sProtocol {
     }
 
     fun reply(body: ByteArray): Reply? {
-        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870b) return null
+        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870c) return null
         return Reply(u16(body,0) and 0x7fff,u16(body,6),u32(body,8),body[5].toInt() and 255,body.copyOfRange(12,body.size))
     }
 
@@ -87,7 +88,7 @@ internal object L4sProtocol {
         val caps=RemoteRadioCapabilities(
             u16(data,9).toLong(),data[11].toInt() and 255,data[12].toInt() and 255,data[13].toInt() and 255,
             u16(data,14),u32(data,16),u32(data,20),data[40].toInt() and 255,data[41].toInt() and 255,
-            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0
+            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0
         )
         if(caps.frequencyStepHz!=10L || caps.maxCwText !in 1..92 || caps.minimumWpm !in 1..45 ||
             caps.maximumWpm !in caps.minimumWpm..45 || caps.watchdogMillis!=1500 || !caps.atomicPair) return null
@@ -107,8 +108,25 @@ internal object L4sProtocol {
         )
     }
 
+    fun settingsSnapshot(reply: Reply, old: RemoteRadioState): RemoteRadioState? {
+        if(reply.result!=APPLIED) return snapshot(reply,old)
+        val p=reply.data
+        if(p.size!=55 || p[24].toInt() !in 0..3 || p[25].toInt() !in 0..7 || p[26].toInt() !in 10..45 ||
+            p[27].toInt() !in 45..120 || p[27].toInt()%5!=0 || p[28].toInt() !in 0..6 || (29..31).any { p[it].toInt() !in 0..50 }) return null
+        val tones=listOf(u16(p,32),u16(p,34),u16(p,36))
+        if(tones.any { it!=0 && it !in com.rtbishop.look4sat.core.domain.utility.CtcssTones.tenths }) return null
+        val base=snapshot(reply.copy(data=p.copyOfRange(0,24)),old) ?: return null
+        return base.copy(txCtcssHz=tones[0].takeIf {it!=0}?.div(10.0),rxCtcssHz=tones[1].takeIf {it!=0}?.div(10.0),
+            activationCtcssHz=tones[2].takeIf {it!=0}?.div(10.0),nativePower=p[25].toInt(),nativeCwWpm=p[26].toInt(),
+            nativeMenuOpen=p[38].toInt() and 1 !=0,settingsSequence=reply.sequence,
+            nativeSettingsModified=p[38].toInt() and 8 !=0,nativeProfileValid=p[38].toInt() and 16 !=0,
+            nativeProfileKey=p.copyOfRange(39,55).joinToString("") { "%02x".format(it.toInt() and 255) },
+            nativeSavedMode=p[24].toInt(),nativeSavedTxCtcssHz=(p[29].toInt()).takeIf {it>0}
+                ?.let { com.rtbishop.look4sat.core.domain.utility.CtcssTones.tenths[it-1]/10.0 })
+    }
+
     fun modeNumber(mode: String): Int? = when(mode.uppercase(java.util.Locale.ROOT)) {
-        "FM", "NFM", "FM-N" -> 0
+        "FM", "FMN", "NFM", "FM-N" -> 0
         "AM" -> 1
         "USB" -> 2
         "CW" -> 3

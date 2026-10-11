@@ -20,10 +20,15 @@ data class RemoteRadioCapabilities(
     val ctcss: Boolean,
     val liveFmRetune: Boolean,
     val liveCwRetune: Boolean,
-    val trackingDisplay: Boolean = false
+    val trackingDisplay: Boolean = false,
+    val nativeSettings: Boolean = false
 )
 
-data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double)
+data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double,
+    val contextKey: String? = null)
+
+fun radioContextKey(uuid: String): String = java.security.MessageDigest.getInstance("SHA-256")
+    .digest(uuid.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it.toInt() and 255) }
 
 data class RemoteRadioState(
     val connected: Boolean = false,
@@ -41,7 +46,19 @@ data class RemoteRadioState(
     val cwState: CwTransmitState = CwTransmitState.IDLE,
     val cwPosition: Int = 0,
     val cwLength: Int = 0,
-    val error: String? = null
+    val error: String? = null,
+    val txCtcssHz: Double? = null,
+    val rxCtcssHz: Double? = null,
+    val activationCtcssHz: Double? = null,
+    val nativeCwWpm: Int? = null,
+    val nativePower: Int? = null,
+    val nativeMenuOpen: Boolean = false,
+    val settingsSequence: Int? = null,
+    val nativeSettingsModified: Boolean = false,
+    val nativeProfileValid: Boolean = false,
+    val nativeProfileKey: String? = null,
+    val nativeSavedMode: Int? = null,
+    val nativeSavedTxCtcssHz: Double? = null
 )
 
 object CwTransmitText {

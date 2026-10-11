@@ -201,6 +201,7 @@ class SerialRadioController(
         actor.executePttOn { delegate.startCw(text, wpm) }
     override suspend fun updateTrackingDisplay(display: com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay) =
         actor.execute { delegate.updateTrackingDisplay(display) }
+    override suspend fun prepareTrackingContext(contextKey: String) = actor.execute { delegate.prepareTrackingContext(contextKey) }
     override val isConnected: Boolean get() = delegate.isConnected
     override suspend fun connect() = actor.execute(CONNECT_TIMEOUT_MILLIS, delegate::connect)
     override suspend fun disconnect() = actor.execute(operation = delegate::disconnect)

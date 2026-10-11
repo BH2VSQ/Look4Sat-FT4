@@ -511,7 +511,7 @@ private fun ExpandedRadioControl(
         }
 
         // CTCSS (only for FM uplink)
-        if (radio.uplinkMode?.uppercase() == "FM") {
+        if (radio.uplinkMode?.uppercase() in setOf("FM","FMN","FM-N","NFM")) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()

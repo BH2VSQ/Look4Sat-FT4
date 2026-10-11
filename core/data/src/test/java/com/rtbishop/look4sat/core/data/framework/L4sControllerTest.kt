@@ -116,6 +116,42 @@ class L4sControllerTest {
 
     private fun hex(value:String)=value.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
+    @Test fun transientWriteFailureRetriesTheExactSameCwRequest()=runTest {
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) {7}
+        assertTrue(radio.connect());assertTrue(radio.setSplitModes("CW","CW"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100000,145900000))
+        transport.failCommand=L4sProtocol.CW;transport.failedWrites=1
+        assertTrue(radio.startCw("TEST",20))
+        val requests=transport.requests.filter {L4sProtocol.u16(it,0)==L4sProtocol.CW}
+        assertEquals(2,requests.size);assertArrayEquals(requests[0],requests[1]);assertEquals(1,transport.cwStarts)
+        assertTrue(radio.isConnected);radio.disconnect()
+    }
+
+    @Test fun persistentWriteFailureMarksDisconnectedAndNeverRekeys()=runTest {
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) {7}
+        assertTrue(radio.connect());transport.failCommand=L4sProtocol.PAIR;transport.failedWrites=2
+        assertEquals(FrequencyPairResult.FAILED,radio.setTrackingFrequencies(435100000,145900000))
+        assertFalse(radio.isConnected);assertFalse(transport.isConnected)
+        assertTrue(radio.remoteState.value.error!!.contains("attached=false"))
+        assertFalse(radio.pttOn());assertFalse(transport.commands.contains(L4sProtocol.PTT))
+        radio.disconnect()
+    }
+
+    @Test fun settingsReadbackLoadsNativePreferencesAndMenuState()=runTest {
+        val transport=ScriptedL4sTransport(nativeSettings=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) {7}
+        assertTrue(radio.connect())
+        assertEquals(67.0,radio.remoteState.value.txCtcssHz!!,0.0)
+        assertEquals(744.0/10,radio.remoteState.value.activationCtcssHz!!,0.0)
+        assertEquals(25,radio.remoteState.value.nativeCwWpm)
+        assertTrue(radio.remoteState.value.nativeProfileValid)
+        transport.menuOpen=true;advanceTimeBy(1400);runCurrent()
+        assertTrue(radio.remoteState.value.nativeMenuOpen)
+        radio.disconnect()
+    }
+
     @Test fun oldFirmwareDoesNotReceiveOptionalDisplayCommand()=runTest {
         val transport=ScriptedL4sTransport()
         val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
@@ -172,12 +208,17 @@ class L4sControllerTest {
 }
 
 private class ScriptedL4sTransport(
+    private val nativeSettings:Boolean=false,
     private val displayContext:Boolean=false,
     private val silent:Boolean=false,
     private val ignorePair:Boolean=false,
     private val acceptPairOnly:Boolean=false,
     private var dropFirstCwReply:Boolean=false
 ):RadioTransport {
+    var failCommand:Int?=null
+    var failedWrites=0
+    var menuOpen=false
+    override val lastIoFailure get()="mock bulk OUT result=-1 attached=false"
     var dtrOnConnect=false
         private set
     override fun setCdcDtrOnConnect(enabled:Boolean) { dtrOnConnect=enabled }
@@ -206,6 +247,7 @@ private class ScriptedL4sTransport(
         val command=L4sProtocol.u16(p,0);val seq=L4sProtocol.u16(p,6)
         commands+=command
         requests+=p
+        if(command==failCommand && failedWrites>0) {failedWrites--;return false}
         // Matches the production firmware's DTR gate, which TCP-only tests did not model.
         if(silent || !dtrOnConnect) return true
         retries[seq]?.let { wire+=it;return true }
@@ -214,7 +256,7 @@ private class ScriptedL4sTransport(
         if(command==L4sProtocol.HELLO) {
             data=ByteArray(42)
             "L4S1".toByteArray().copyInto(data);data[4]=3
-            L4sProtocol.put32(data,5,if(displayContext)79 else 15);L4sProtocol.put16(data,9,10)
+            L4sProtocol.put32(data,5,if(nativeSettings)207 else if(displayContext)79 else 15);L4sProtocol.put16(data,9,10)
             data[11]=92;data[12]=10;data[13]=45;L4sProtocol.put16(data,14,1500)
             L4sProtocol.put32(data,16,18000000);L4sProtocol.put32(data,20,1300000000)
             "mock-v1".toByteArray().copyInto(data,24);data[40]=15;data[41]=9
@@ -232,10 +274,17 @@ private class ScriptedL4sTransport(
                 L4sProtocol.CW -> if(pairReady && modeReady) { txState=2;cwState=1;cwStarts++;result=1 } else result=10
                 L4sProtocol.STOP -> { txState=0;cwState=4;pairReady=false }
             }
-            data=ByteArray(24)
+            data=ByteArray(if(command==L4sProtocol.SETTINGS)55 else 24)
             L4sProtocol.put32(data,0,rx);L4sProtocol.put32(data,4,tx);L4sProtocol.put32(data,8,revision)
             data[16]=rxMode.toByte();data[17]=txMode.toByte();data[18]=if(tx!=0L)1 else 0
             data[19]=txState.toByte();data[20]=cwState.toByte()
+            if(command==L4sProtocol.SETTINGS) {
+                data[24]=0;data[25]=3;data[26]=25;data[27]=60;data[28]=4;data[29]=1;data[30]=0;data[31]=4
+                L4sProtocol.put16(data,32,if(txMode==0)670 else 0);L4sProtocol.put16(data,36,744)
+                data[38]=(16 or if(menuOpen)1 else 0).toByte()
+                com.rtbishop.look4sat.core.domain.repository.radioContextKey("test-transponder").chunked(2)
+                    .map {it.toInt(16).toByte()}.toByteArray().copyInto(data,39)
+            }
         }
         val reply=L4sProtocol.body(command or 0x8000,seq,session,data).also { it[5]=result.toByte() }
         val frame=L4sProtocol.frame(reply)

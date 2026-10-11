@@ -32,6 +32,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** Backward-compatible CAT specialization of the shared station-control transport. */
 interface RadioTransport : ControlTransport {
+    val lastIoFailure: String? get() = null
     /** Native CDC devices may gate replies on DTR. Generic CAT adapters stay deasserted. */
     fun setCdcDtrOnConnect(enabled: Boolean) = Unit
 }
@@ -258,6 +259,9 @@ class UsbSerialRadioTransport(
     stopBits: Int = 1
 ) : RadioTransport {
     private var cdcDtrOnConnect = false
+    @Volatile override var lastIoFailure: String? = null
+        private set
+    private var connectedDevice: UsbDevice? = null
     override fun setCdcDtrOnConnect(enabled: Boolean) { cdcDtrOnConnect = enabled }
     private val manager = context.applicationContext.getSystemService(UsbManager::class.java)
     private val selector = parseUsbSerialSelector(deviceSelector)
@@ -328,6 +332,7 @@ class UsbSerialRadioTransport(
             input = selectedInput
             output = selectedOutput
             connection = opened
+            connectedDevice = device
             true
         } catch (cancelled: CancellationException) {
             claimed.asReversed().forEach { runCatching { opened.releaseInterface(it) } }
@@ -371,6 +376,7 @@ class UsbSerialRadioTransport(
         }
         opened?.close()
         connection = null
+        connectedDevice = null
         claimedInterfaces = emptyList()
         selectedPort = null
         input = null
@@ -380,13 +386,22 @@ class UsbSerialRadioTransport(
 
     override suspend fun write(bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) return@withContext true
-        val current = connection ?: return@withContext false
-        val endpoint = output ?: return@withContext false
+        val current = connection ?: run { lastIoFailure="USB connection closed";return@withContext false }
+        val endpoint = output ?: run { lastIoFailure="USB OUT endpoint unavailable";return@withContext false }
+        lastIoFailure=null
+        val timeout=usbRadioWriteTimeoutMillis(cdcDtrOnConnect,selectedPort?.driver)
         var offset = 0
         while (offset < bytes.size) {
             val count = minOf(bytes.size - offset, MAX_USB_TRANSFER_BYTES)
-            val written = current.bulkTransfer(endpoint, bytes, offset, count, IO_TIMEOUT_MILLIS)
-            if (written <= 0) return@withContext false
+            val written = try { current.bulkTransfer(endpoint, bytes, offset, count, timeout) }
+            catch(cancelled:CancellationException) {throw cancelled}
+            catch(error:Exception) { lastIoFailure="bulk OUT exception=${error.javaClass.simpleName} sent=$offset/${bytes.size}";return@withContext false }
+            if (written <= 0) {
+                val device=connectedDevice
+                val attached=runCatching { device!=null && manager.deviceList.values.any { it.deviceId==device.deviceId } }.getOrNull()
+                lastIoFailure="bulk OUT result=$written sent=$offset/${bytes.size} timeoutMs=$timeout attached=$attached driver=${selectedPort?.driver}"
+                return@withContext false
+            }
             offset += written
         }
         true
@@ -612,6 +627,8 @@ class UsbSerialRadioTransport(
 
 // Bit 0 is DTR; bit 1 (RTS) stays clear to avoid keying modem-line PTT adapters.
 internal fun cdcControlLineState(dtr: Boolean): Int = if (dtr) 1 else 0
+internal fun usbRadioWriteTimeoutMillis(nativeCdc: Boolean, driver: UsbSerialDriverKind?): Int =
+    if (nativeCdc && driver==UsbSerialDriverKind.CDC_ACM) 150 else 1000
 
 internal data class UsbSerialSelector(
     val deviceId: Int,

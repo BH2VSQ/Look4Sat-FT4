@@ -69,11 +69,13 @@ class L4sController(
             state.value=RemoteRadioState(firmware=firmware,capabilities=caps)
             diagnose("l4s/hello","firmware=$firmware capabilities=${hello.data.size} bytes")
             if(!ok(request(L4sProtocol.OPEN))) return@withContext failedConnect()
+            if(caps.nativeSettings && !ok(request(L4sProtocol.SETTINGS))) return@withContext failedConnect()
             desiredRx=state.value.rxFrequencyHz; desiredTx=null; selectedRx=true
             isConnected=true;state.update { it.copy(connected=true,error=null) }
             diagnose("l4s/open","session opened; TX remains off")
             heartbeat=scope.launch(dispatcher) {
                 try {
+                    var polls=0
                     while(isConnected) {
                         delay(400)
                         if(!ok(request(L4sProtocol.KEEPALIVE))) {
@@ -81,6 +83,7 @@ class L4sController(
                             state.update { it.copy(connected=false,error=it.error ?: "L4S heartbeat lost; reconnect") }
                             transport.disconnect()
                         }
+                        if(isConnected && caps.nativeSettings && ++polls%2==0) request(L4sProtocol.SETTINGS)
                     }
                 } catch(cancelled: CancellationException) { throw cancelled }
                 catch(error: Exception) {
@@ -113,6 +116,7 @@ class L4sController(
     private suspend fun request(command: Int, data: ByteArray=byteArrayOf(), wireSession: Long=session): L4sProtocol.Reply? =
         ioMutex.withLock {
             if(!transport.isConnected) return@withLock null
+            if(!isConnected && command !in setOf(L4sProtocol.HELLO,L4sProtocol.OPEN,L4sProtocol.STOP,L4sProtocol.CLOSE,L4sProtocol.SETTINGS)) return@withLock null
             val seq=sequence.also { sequence=(sequence+1) and 0xffff }
             val wire=L4sProtocol.frame(L4sProtocol.body(command,seq,wireSession,data))
             var receivedBytes=0
@@ -120,9 +124,17 @@ class L4sController(
             repeat(2) { attempt ->
                 if(command!=L4sProtocol.KEEPALIVE) diagnose("l4s/request","cmd=$label seq=$seq attempt=${attempt+1} bytes=${wire.size}")
                 if(!transport.write(wire)) {
-                    state.update { it.copy(error="L4S $label USB write failed") }
-                    diagnose("l4s/write",state.value.error!!,ControlDiagnosticSeverity.ERROR)
-                    return@withLock null
+                    val detail=transport.lastIoFailure ?: "no transport detail"
+                    diagnose("l4s/write-retry","cmd=$label seq=$seq $detail",ControlDiagnosticSeverity.WARNING)
+                    delay(25)
+                    if(!transport.write(wire)) {
+                        val error="L4S $label USB write failed: ${transport.lastIoFailure ?: detail}"
+                        isConnected=false;armed=false;requestedPair=null
+                        state.update { it.copy(connected=false,error=error) }
+                        diagnose("l4s/write",error,ControlDiagnosticSeverity.ERROR)
+                        transport.disconnect() // Drop DTR; firmware's watchdog remains the independent fallback.
+                        return@withLock null
+                    }
                 }
                 val response=withTimeoutOrNull(600) {
                     var match: L4sProtocol.Reply?=null
@@ -142,10 +154,14 @@ class L4sController(
                 if(response!=null) {
                     if(command!=L4sProtocol.KEEPALIVE) diagnose("l4s/reply","cmd=$label seq=$seq result=${response.result} rxBytes=$receivedBytes")
                     if(command!=L4sProtocol.HELLO) {
-                        val snapshot=L4sProtocol.snapshot(response,state.value)
+                        val snapshot=if(command==L4sProtocol.SETTINGS) L4sProtocol.settingsSnapshot(response,state.value)
+                            else L4sProtocol.snapshot(response,state.value)
                         if(snapshot==null) { state.update { old -> old.copy(error="Malformed L4S state reply") };return@withLock null }
                         if (state.value.txSource!=0 && snapshot.txSource==0) { armed=false;requestedPair=null }
-                        state.value=snapshot
+                        if(response.result==3) {
+                            isConnected=false;armed=false;requestedPair=null
+                            state.value=snapshot.copy(connected=false,error=L4sProtocol.error(3))
+                        } else state.value=snapshot
                     }
                     if(response.result>1) state.update { old -> old.copy(error=L4sProtocol.error(response.result)) }
                     return@withLock response
@@ -166,13 +182,25 @@ class L4sController(
         if (!isConnected) return@withContext false
         if (state.value.capabilities?.trackingDisplay!=true) return@withContext true
         if (!display.azimuthDegrees.isFinite() || !display.elevationDegrees.isFinite()) return@withContext false
-        val data=ByteArray(20)
+        val data=ByteArray(if(state.value.capabilities?.nativeSettings==true)36 else 20)
         val az=kotlin.math.round((((display.azimuthDegrees%360)+360)%360)*10).toInt()%3600
         val el=kotlin.math.round(display.elevationDegrees.coerceIn(-90.0,90.0)*10).toInt()
         L4sProtocol.put16(data,0,az);L4sProtocol.put16(data,2,el)
         display.satelliteName.take(16).map { if(it in ' '..'~')it else '?' }.joinToString("")
             .toByteArray(Charsets.US_ASCII).copyInto(data,4)
+        if(data.size==36) display.contextKey?.let { decodeContextKey(it).copyInto(data,20) }
         ok(request(L4sProtocol.CONTEXT,data))
+    }
+    override suspend fun prepareTrackingContext(contextKey: String): Boolean = withContext(dispatcher) {
+        if(state.value.capabilities?.nativeSettings!=true) return@withContext true
+        val data=ByteArray(36)
+        L4sProtocol.put16(data,0,0xffff);L4sProtocol.put16(data,2,0x8000)
+        decodeContextKey(contextKey).copyInto(data,20)
+        ok(request(L4sProtocol.CONTEXT,data))
+    }
+    private fun decodeContextKey(key:String):ByteArray {
+        require(key.length==32 && key.all { it in '0'..'9' || it in 'a'..'f' })
+        return key.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
     private fun quantize(hz: Long): Long {
         require(hz in 1..0xfffffffaL) { "L4S frequency outside unsigned 32-bit Hz range" }
@@ -232,7 +260,7 @@ class L4sController(
         if(caps.rxModeMask and (1 shl rx)==0 || caps.txModeMask and (1 shl tx)==0) {
             state.update { it.copy(error="L4S supports FM/CW transmit; AM/USB are receive-only") };return@withContext false
         }
-        val narrow=if(listOf(rxMode,txMode).any { it?.uppercase(java.util.Locale.ROOT) in listOf("NFM","FM-N") }) 1 else 0
+        val narrow=if(listOf(rxMode,txMode).any { it?.uppercase(java.util.Locale.ROOT) in listOf("NFM","FM-N","FMN") }) 1 else 0
         ok(request(L4sProtocol.MODE,byteArrayOf(rx.toByte(),tx.toByte(),narrow.toByte()))) &&
             state.value.rxMode==L4sProtocol.modeName(rx) && state.value.txMode==L4sProtocol.modeName(tx)
     }

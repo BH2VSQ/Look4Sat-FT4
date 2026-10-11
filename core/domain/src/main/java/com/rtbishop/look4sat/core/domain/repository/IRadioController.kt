@@ -27,6 +27,7 @@ interface IRadioController {
     suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult = FrequencyPairResult.UNSUPPORTED
     suspend fun startCw(text: String, wpm: Int): Boolean = false
     suspend fun updateTrackingDisplay(display: RadioTrackingDisplay): Boolean = true
+    suspend fun prepareTrackingContext(contextKey: String): Boolean = true
 
     val isConnected: Boolean
 

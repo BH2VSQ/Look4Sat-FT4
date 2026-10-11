@@ -24,4 +24,6 @@
     <string name="rc_l4s_radio">电台（单机半双工）</string>
     <string name="rc_calculator_cat_link">修改频率会同步 CAT 跟踪；发射期间保持两路频率，停发后应用。</string>
     <string name="rc_calculator_need_tracking">请先连接电台并开始跟踪，计算器频率修改才会应用到电台。</string>
+    <string name="rc_l4s_menu_open">请先关闭手台 MENU，再开始发射。</string>
+    <string name="rc_l4s_tones">亚音 TX %1$s · RX %2$s · 激活 %3$s</string>
 </resources>

@@ -60,10 +60,45 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+    @Test fun fmMetadataDefaultsSurviveConnectionAndApplyModeAndTxCtcss()=runTest {
+        val remote=remoteFixtureState()
+        remote.value=remote.value.copy(capabilities=remote.value.capabilities!!.copy(nativeSettings=true),settingsSequence=1)
+        val tx=FakeRadioController(remote=remote)
+        val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=RadioControlSettings.MODEL_QUANSHENG_UVK1,
+            splitMode=true,transport=RadioControlSettings.TRANSPORT_USB)
+        fixture.transponder=fixture.transponder.copy(info="Mode V/U FM Voice CTCSS 67.0 Hz",uplinkMode="FM",downlinkMode="FM")
+        fixture.service.setTransponder(fixture.transponder);runCurrent()
+        fixture.service.connectRadios();runCurrent()
+        assertEquals(67.0,fixture.service.state.value.ctcssTone!!,0.0)
+        fixture.startTracking();runCurrent()
+        assertTrue(tx.operations.contains("split-modes:FM:FM"))
+        assertTrue(tx.operations.contains("tone:67.0"))
+        fixture.close()
+    }
+
+    @Test fun savedNativeProfileForThisTransponderOverridesOnlyItsDefaults()=runTest {
+        val remote=remoteFixtureState()
+        remote.value=remote.value.copy(capabilities=remote.value.capabilities!!.copy(nativeSettings=true),settingsSequence=1,
+            nativeProfileValid=true,nativeProfileKey=com.rtbishop.look4sat.core.domain.repository.radioContextKey("test-transponder"),
+            nativeSavedMode=0,nativeSavedTxCtcssHz=88.5,txCtcssHz=88.5)
+        val tx=FakeRadioController(remote=remote)
+        val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=RadioControlSettings.MODEL_QUANSHENG_UVK1,
+            splitMode=true,transport=RadioControlSettings.TRANSPORT_USB)
+        fixture.transponder=fixture.transponder.copy(info="FM CTCSS 67.0 Hz",uplinkMode="FM",downlinkMode="FM")
+        fixture.service.setTransponder(fixture.transponder);runCurrent();fixture.service.connectRadios();runCurrent()
+        fixture.startTracking();runCurrent()
+        assertTrue(tx.operations.contains("tone:88.5"))
+        tx.operations.clear()
+        fixture.service.setTransponder(fixture.transponder.copy(uuid="other",info="FM Voice"));runCurrent()
+        assertNull(fixture.service.state.value.ctcssTone)
+        assertTrue(tx.operations.contains("ctcss:false"))
+        fixture.close()
+    }
     @Test fun calculatorTxEditImmediatelyAppliesAtomicPairWithoutDoubleDoppler() = runTest {
         val tx=FakeRadioController(remote=remoteFixtureState())
         val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=RadioControlSettings.MODEL_QUANSHENG_UVK1,
