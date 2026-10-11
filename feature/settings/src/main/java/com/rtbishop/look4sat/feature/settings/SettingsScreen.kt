@@ -241,11 +241,17 @@ private fun SettingsScreen(
         )
     }
     if (dialogs.radioControl) {
+        var showProfiles by rememberSaveable {mutableStateOf(false)}
         RadioControlDialog(
             initialSettings = uiState.radioControlSettings,
             onDismiss = { dialogs.radioControl = false },
-            onSave = { onAction(SettingsAction.UpdateRadioControl(it)) }
+            onSave = { onAction(SettingsAction.UpdateRadioControl(it)) },
+            frequencyLocked=uiState.radioTrackingState.frequencyEditingLocked,
+            onOpenProfiles={showProfiles=true;onAction(SettingsAction.RefreshRadioProfiles)}
         )
+        if(showProfiles) RadioProfilesDialog(uiState.radioProfiles,uiState.radioTrackingState,uiState.radioProfilesExport,onAction) {
+            onAction(SettingsAction.CancelRadioProfileOperation);showProfiles=false
+        }
     }
     if (dialogs.rotatorControl) {
         RotatorControlDialog(

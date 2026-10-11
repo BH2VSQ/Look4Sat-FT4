@@ -13,13 +13,14 @@ class L4sCwAvailabilityTest {
         true,true,true,true,false,false)
     private val ready = RadioControlSubState(isL4sModel=true, isReady=true,
         txPanel=RadioPanelState("TX",mode="CW"),
-        remoteRadio=RemoteRadioState(connected=true,capabilities=capabilities))
+        remoteRadio=RemoteRadioState(connected=true,capabilities=capabilities,txEnabled=true))
 
     @Test fun transmissionNeedsConnectedReadyCwRadioAndConfirmedPttOff() {
         assertTrue(ready.canSendL4sCw())
         assertFalse(ready.copy(remoteRadio=null).canSendL4sCw())
         assertFalse(ready.copy(remoteRadio=ready.remoteRadio!!.copy(connected=false)).canSendL4sCw())
         assertFalse(ready.copy(isReady=false).canSendL4sCw())
+        assertFalse(ready.copy(remoteRadio=ready.remoteRadio!!.copy(txEnabled=false)).canSendL4sCw())
         assertFalse(ready.copy(txPanel=RadioPanelState("TX",mode="FM")).canSendL4sCw())
         assertFalse(ready.copy(pttState=PttState.ERROR).canSendL4sCw())
         assertFalse(ready.copy(remoteRadio=ready.remoteRadio!!.copy(txSource=3)).canSendL4sCw())

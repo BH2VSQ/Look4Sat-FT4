@@ -49,8 +49,16 @@ data class RadioControlSubState(
     val transmitOwner: com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner = com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner.NONE,
     val pttState: com.rtbishop.look4sat.core.domain.repository.PttState = com.rtbishop.look4sat.core.domain.repository.PttState.OFF,
     val targetTxHz: Long? = null,
-    val targetRxHz: Long? = null
-)
+    val targetRxHz: Long? = null,
+    val referenceRxHz:Long?=null,
+    val calculatorLinked:Boolean=false,
+    val txDopplerHz:Long?=null,val rxDopplerHz:Long?=null,
+    val referenceDirty:Boolean=false
+) {
+    val frequencyEditingLocked get()=isL4sModel && (isTracking && !isReady || pttState!=com.rtbishop.look4sat.core.domain.repository.PttState.OFF ||
+        transmitOwner!=com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner.NONE || remoteRadio?.txSource?.let {it!=0}==true ||
+        remoteRadio?.nativeMenuOpen==true || remoteRadio?.profileStore?.busy==true || remoteRadio?.let {!it.connected || !it.transmitStateKnown}==true)
+}
 
 data class TransceiverSubState(
     val transmitters: List<SatRadio> = emptyList(),
@@ -121,6 +129,7 @@ sealed interface RadarAction {
 
     // Radio control actions
     data class SetTxFrequency(val frequencyHz: Long) : RadarAction
+    data class SetBaseFrequencies(val bases:com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies):RadarAction
     data class AdjustTxFrequency(val deltaHz: Long) : RadarAction
     data class SetCtcssTone(val toneHz: Double?) : RadarAction
     data object ToggleTracking : RadarAction

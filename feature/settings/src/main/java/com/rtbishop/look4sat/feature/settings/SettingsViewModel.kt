@@ -79,6 +79,7 @@ import java.io.File
 class SettingsViewModel(
     private val databaseRepo: IDatabaseRepo,
     private val settingsRepo: ISettingsRepo,
+    private val radioTrackingService:com.rtbishop.look4sat.core.domain.repository.IRadioTrackingService,
     private val ft4Service: IFt4Service,
     private val ft4AudioTransmitter: IFt4AudioTransmitter,
     private val audioHub: IAudioHub,
@@ -133,6 +134,8 @@ class SettingsViewModel(
     val uiState: StateFlow<SettingsState> = _uiState
 
     init {
+        viewModelScope.launch {radioTrackingService.profileManagerState.collect {profiles->_uiState.update {it.copy(radioProfiles=profiles)}}}
+        viewModelScope.launch {radioTrackingService.state.collect {radio->_uiState.update {it.copy(radioTrackingState=radio)}}}
         val ft4Settings = settingsRepo.ft4Settings.value
         timeSynchronizationService.setNtpEnabled(ft4Settings.ntpSynchronizationEnabled)
         timeSynchronizationService.setGnssEnabled(ft4Settings.gnssSynchronizationEnabled)
@@ -345,7 +348,19 @@ class SettingsViewModel(
             }
             // Remote control & data sources
             is SettingsAction.UpdateRC -> settingsRepo.updateRCSettings(action.settings)
-            is SettingsAction.UpdateRadioControl -> settingsRepo.updateRadioControlSettings(action.settings)
+            is SettingsAction.UpdateRadioControl -> viewModelScope.launch {
+                if(!radioTrackingService.applyRadioControlSettings(action.settings))showToast("Stop transmitting before changing CAT settings")
+            }
+            SettingsAction.RefreshRadioProfiles -> viewModelScope.launch {radioTrackingService.refreshRadioProfiles()}
+            is SettingsAction.DeleteRadioProfile -> viewModelScope.launch {radioTrackingService.requestDeleteRadioProfile(action.slot)}
+            is SettingsAction.ImportRadioProfiles -> viewModelScope.launch {radioTrackingService.prepareRadioProfileImport(action.json)}
+            is SettingsAction.RestoreRadioProfiles -> viewModelScope.launch {radioTrackingService.stageRadioProfileImport(action.overwrite)}
+            SettingsAction.CancelRadioProfileOperation -> viewModelScope.launch {radioTrackingService.cancelRadioProfileOperation()}
+            SettingsAction.ExportRadioProfiles -> viewModelScope.launch {
+                val json=radioTrackingService.exportRadioProfiles();_uiState.update {it.copy(radioProfilesExport=json)}
+            }
+            SettingsAction.ConsumeRadioProfilesExport -> _uiState.update {it.copy(radioProfilesExport=null)}
+            is SettingsAction.SetRadioProfileAlias -> radioTrackingService.setRadioProfileAlias(action.key,action.alias)
             is SettingsAction.UpdateRotatorControl -> settingsRepo.updateRotatorSettings(action.settings)
             SettingsAction.ConnectRotator -> viewModelScope.launch { rotatorTrackingService.connect() }
             SettingsAction.DisconnectRotator -> viewModelScope.launch {
@@ -1153,6 +1168,7 @@ class SettingsViewModel(
                 SettingsViewModel(
                     databaseRepo = container.databaseRepo,
                     settingsRepo = container.settingsRepo,
+                    radioTrackingService = container.radioTrackingService,
                     ft4Service = container.ft4Service,
                     ft4AudioTransmitter = container.ft4AudioTransmitter,
                     audioHub = container.audioHub,

@@ -264,7 +264,11 @@ class RadarViewModel(
                             transmitOwner = svc.transmitOwner,
                             pttState = svc.pttState,
                             targetTxHz = svc.targetTxFrequencyHz,
-                            targetRxHz = svc.targetRxFrequencyHz
+                            targetRxHz = svc.targetRxFrequencyHz,
+                            referenceRxHz=svc.nominalRxFrequencyHz,
+                            calculatorLinked=svc.calculatorLinked,
+                            txDopplerHz=svc.txDopplerCorrectionHz,rxDopplerHz=svc.rxDopplerCorrectionHz,
+                            referenceDirty=svc.referenceDirty
                         )
                     )
                 }
@@ -314,6 +318,14 @@ class RadarViewModel(
     }
 
     fun onAction(action: RadarAction) {
+        if(_uiState.value.radioControl.frequencyEditingLocked && when(action) {
+            is RadarAction.SetTxFrequency,is RadarAction.AdjustTxFrequency,is RadarAction.SetBaseFrequencies -> true
+            is RadarAction.ChangeCalculatorOffset -> calculatorCatnum==trackingService.state.value.currentPass?.catNum &&
+                (_uiState.value.radioControl.txPanel.isConnected || _uiState.value.radioControl.rxPanel.isConnected)
+            is RadarAction.SetCtcssTone,is RadarAction.TuneCalculator,
+            is RadarAction.SelectTransmitter -> true
+            else->false
+        })return
         when (action) {
             is RadarAction.AddToCalendar -> addToCalendar(action.name, action.aosTime, action.losTime)
             is RadarAction.SelectTransmitter -> {
@@ -330,6 +342,7 @@ class RadarViewModel(
                 }
             }
             is RadarAction.SetTxFrequency -> trackingService.setTxBaseFrequency(action.frequencyHz)
+            is RadarAction.SetBaseFrequencies -> trackingService.setBaseFrequencies(action.bases)
             is RadarAction.AdjustTxFrequency -> trackingService.adjustTxBaseFrequency(action.deltaHz)
             is RadarAction.SetCtcssTone -> trackingService.setCtcssTone(action.toneHz)
             RadarAction.ToggleTracking -> {

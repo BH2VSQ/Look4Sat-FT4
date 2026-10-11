@@ -71,6 +71,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -1164,7 +1165,9 @@ private fun OutputChannelSection(
 fun RadioControlDialog(
     initialSettings: RadioControlSettings,
     onDismiss: () -> Unit,
-    onSave: (RadioControlSettings) -> Unit
+    onSave: (RadioControlSettings) -> Unit,
+    frequencyLocked:Boolean=false,
+    onOpenProfiles:()->Unit={}
 ) {
     val context    = androidx.compose.ui.platform.LocalContext.current
     val padding    = LocalSpacing.current.large
@@ -1200,6 +1203,7 @@ fun RadioControlDialog(
         mutableStateOf(initialSettings.fmDialDeadbandHz.toString())
     }
     val l4sDopplerStepHz = rememberSaveable { mutableStateOf(initialSettings.l4sDopplerStepHz.toString()) }
+    val l4sCorrectionStepHz = rememberSaveable { mutableStateOf(initialSettings.l4sCorrectionEditStepHz.toString()) }
     val sharedBusDelayMillis = rememberSaveable {
         mutableStateOf(initialSettings.sharedBusCommandDelayMillis.toString())
     }
@@ -1415,6 +1419,9 @@ fun RadioControlDialog(
         ) return@accept
         val parsedL4sStep=l4sDopplerStepHz.value.toLongOrNull()
         if(isL4s && (parsedL4sStep==null || parsedL4sStep !in 10L..10_000L || parsedL4sStep%10!=0L)) return@accept
+        if(isL4s && frequencyLocked)return@accept
+        val correctionStep=l4sCorrectionStepHz.value.toLongOrNull()
+        if(isL4s && (correctionStep==null || correctionStep !in 10L..1000L || correctionStep%10!=0L))return@accept
         onSave(
             RadioControlSettings(
                 enabled        = enabled.value,
@@ -1441,7 +1448,8 @@ fun RadioControlDialog(
                 linearDialDeadbandHz = linearDialDeadbandHz.value.toLongOrNull() ?: 20L,
                 fmDialDeadbandHz = fmDialDeadbandHz.value.toLongOrNull() ?: 200L,
                 sharedBusCommandDelayMillis = sharedBusDelayMillis.value.toLongOrNull() ?: 0L,
-                l4sDopplerStepHz = parsedL4sStep ?: 250L
+                l4sDopplerStepHz = parsedL4sStep ?: 250L,
+                l4sCorrectionEditStepHz = correctionStep ?: 10L
             )
         )
         onDismiss()
@@ -1616,7 +1624,14 @@ fun RadioControlDialog(
                     label={Text(stringResource(R.string.rc_l4s_step))},
                     supportingText={Text(stringResource(R.string.rc_l4s_step_hint))},
                     isError=step==null || step !in 10L..10_000L || step%10!=0L,
-                    enabled=enabled.value,singleLine=true,modifier=Modifier.fillMaxWidth())
+                    enabled=enabled.value && !frequencyLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
+                val correctionStep=l4sCorrectionStepHz.value.toLongOrNull()
+                OutlinedTextField(value=l4sCorrectionStepHz.value,onValueChange={l4sCorrectionStepHz.value=it},
+                    label={Text(stringResource(R.string.rc_l4s_correction_step))},
+                    isError=correctionStep==null || correctionStep !in 10L..1000L || correctionStep%10!=0L,
+                    enabled=enabled.value && !frequencyLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
+                if(frequencyLocked)Text(stringResource(R.string.rc_l4s_edit_locked),color=MaterialTheme.colorScheme.primary)
+                OutlinedButton(onClick=onOpenProfiles,modifier=Modifier.fillMaxWidth()) {Text(stringResource(R.string.rc_l4s_profiles))}
             }
             if (modelDescriptor.capabilities.singleRadioSplit && !isL4s) {
                 Row(
