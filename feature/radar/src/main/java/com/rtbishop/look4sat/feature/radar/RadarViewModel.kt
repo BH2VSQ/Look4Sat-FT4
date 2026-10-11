@@ -99,6 +99,7 @@ class RadarViewModel(
             shouldShowSweep = settingsRepo.otherSettings.value.stateOfSweep,
             shouldUseCompass = settingsRepo.otherSettings.value.stateOfSensors,
             sstv = SstvSubState(selectedMode = settingsRepo.otherSettings.value.sstvMode),
+            radioControl = RadioControlSubState(cwPresets=settingsRepo.getRemoteCwPresets()),
             radioTransport = settingsRepo.radioControlSettings.value.catTransport,
             rotatorEnabled = settingsRepo.rotatorSettings.value.enabled,
             rotatorPosition = if (settingsRepo.rotatorSettings.value.enabled) {
@@ -345,6 +346,10 @@ class RadarViewModel(
             RadarAction.DisconnectRadios -> viewModelScope.launch { trackingService.disconnectRadios() }
             is RadarAction.VoicePtt -> trackingService.setVoicePtt(action.pressed)
             is RadarAction.SendCw -> trackingService.sendCw(action.text, action.wpm)
+            is RadarAction.SaveCwPreset -> {
+                settingsRepo.updateRemoteCwPreset(action.index,action.text)
+                _uiState.update { it.copy(radioControl=it.radioControl.copy(cwPresets=settingsRepo.getRemoteCwPresets())) }
+            }
             RadarAction.StopRemoteTx -> trackingService.cancelRemoteTransmit()
 
             // SSTV actions

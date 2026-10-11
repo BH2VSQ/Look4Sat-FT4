@@ -96,6 +96,7 @@ class RadioTrackingService(
     private var trackingJob: Job? = null
     private var remoteMonitorJob: Job? = null
     @Volatile private var calculatorTuning: CalculatorTuning? = null
+    @Volatile private var nativeBaseOverride: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? = null
     @Volatile private var ctcssExplicit = false
     private var manualJob: Job? = null
     @Volatile private var manualOwner = RadioTransmitOwner.NONE
@@ -217,7 +218,7 @@ class RadioTrackingService(
             rxController = null
             _state.update { it.copy(errorMessage = null) }
             val txOk = tx.connect()
-            if(txOk) _state.value.selectedTransponder?.let { tx.prepareTrackingContext(radioContextKey(it.uuid)) }
+            if(txOk) _state.value.selectedTransponder?.let { selectProfileContext(tx,it) }
             _state.update {
                 it.copy(
                     txConnected = txOk,
@@ -258,9 +259,10 @@ class RadioTrackingService(
             remoteMonitorJob = appScope.launch {
                 var previousTxSource = remoteFlow.value.txSource
                 var previousSettingsSequence: Int? = null
+                var previousProfileGeneration: Long? = null
                 remoteFlow.collect { remote ->
                     val settingsChanged=remote.settingsSequence!=null && remote.settingsSequence!=previousSettingsSequence
-                    val matchingProfile=remote.nativeProfileValid && _state.value.selectedTransponder?.uuid?.let(::radioContextKey)==remote.nativeProfileKey
+                    val matchingProfile=remote.nativeProfileValid && _state.value.selectedTransponder?.let { profileKey(remote,it) }==remote.nativeProfileKey
                     _state.update { current -> current.copy(
                         remoteRadio = remote,
                         txConnected = remote.connected, rxConnected = remote.connected,
@@ -279,6 +281,13 @@ class RadioTrackingService(
                     if (previousTxSource!=0 && remote.txSource==0 && remote.connected) tuningWake.trySend(Unit)
                     previousTxSource=remote.txSource
                     previousSettingsSequence=remote.settingsSequence
+                    if(remote.nativeProfileGeneration!=previousProfileGeneration && remote.nativeSettingsModified && matchingProfile &&
+                        pendingControls.get()==0 && _state.value.trackingPhase!=TrackingPhase.INITIALIZING) {
+                        nativeBaseOverride=remote.nativeBaseFrequencies;calculatorTuning=null
+                        remote.nativeBaseFrequencies?.let { bases -> _state.update { it.copy(txBaseFrequencyHz=bases.txHz) } }
+                        tuningRevision.incrementAndGet();tuningWake.trySend(Unit)
+                    }
+                    previousProfileGeneration=remote.nativeProfileGeneration
                     if(settingsChanged && matchingProfile && pendingControls.get()==0 && _state.value.trackingPhase!=TrackingPhase.INITIALIZING) ctcssExplicit=true
                     if (!remote.connected && manualOwner != RadioTransmitOwner.NONE) {
                         manualEpoch.incrementAndGet()
@@ -315,7 +324,8 @@ class RadioTrackingService(
             )
         } else null
         val controller = injected ?: if (profile.isL4s) {
-            L4sController(checkNotNull(transport) { "L4S USB transport is unavailable" }, appScope, diagnostics=diagnostics)
+            L4sController(checkNotNull(transport) { "L4S USB transport is unavailable" }, appScope, diagnostics=diagnostics,
+                tuningStepHz={settingsRepo.radioControlSettings.value.l4sDopplerStepHz})
         } else if (usesHamlib) {
             HamlibRigctldController(
                 endpoint = address,
@@ -550,14 +560,16 @@ class RadioTrackingService(
         val offset = if (DopplerFrequencyCalculator.isLinearTransponder(transponder)) {
             DopplerFrequencyCalculator.parseOffsetHz(settingsRepo.getSatelliteOffset(pass.catNum))
         } else 0L
-        val nominalRx = checkNotNull(TransponderMapper.mapUplinkToDownlink(base, transponder)) + offset
+        val nominalRx = nativeBaseOverride?.rxHz ?: (checkNotNull(TransponderMapper.mapUplinkToDownlink(base, transponder)) + offset)
         val calculated = calculatorTuning?.frequencies(transponder, position, offset)
         val tx = calculated?.txHz ?: position.getUplinkFreq(base)
         val rx = calculated?.rxHz ?: position.getDownlinkFreq(nominalRx)
+        check(controller.updateTrackingBases(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(
+            calculated?.nominalRxHz ?: nominalRx,calculated?.nominalTxHz ?: base))) { "Radio base settings changed; retry after synchronization" }
         check(controller.setTrackingFrequencies(rx, tx) == FrequencyPairResult.APPLIED) {
             controller.remoteState?.value?.error ?: "RX/TX pair was not applied before TX"
         }
-        _state.update { it.copy(targetTxFrequencyHz = tx, targetRxFrequencyHz = rx) }
+        _state.update { it.copy(targetTxFrequencyHz = trackingTarget(controller,tx,false), targetRxFrequencyHz = trackingTarget(controller,rx,true)) }
     }
 
     override fun setVoicePtt(enabled: Boolean) {
@@ -1022,19 +1034,19 @@ class RadioTrackingService(
             ?: return failTrackingInitialization("TX radio is not connected")
         if (!radio.isConnected) return failTrackingInitialization("TX radio is not connected")
 
-        val txMode = controlUplinkMode(transponder)
         val isSatelliteMode = _state.value.satelliteMode
-        val rxMode = controlDownlinkMode(transponder, txMode)
 
         transmitMutex.withLock {
-            if(!radio.prepareTrackingContext(radioContextKey(transponder.uuid))) return failTrackingInitialization("Radio context was not acknowledged")
+            if(!selectProfileContext(radio,transponder)) return failTrackingInitialization("Radio context was not acknowledged")
+            val txMode = controlUplinkMode(transponder)
+            val rxMode = controlDownlinkMode(transponder, txMode)
             // Compute nominal base frequencies
             val txCenter = transponder.uplinkCenterFrequency()
-            val rxNominal = if (txCenter != null) {
+            val rxNominal = nativeBaseOverride?.rxHz ?: if (txCenter != null) {
                 TransponderMapper.mapUplinkToDownlink(txCenter, transponder)
             } else transponder.downlinkLow
 
-            val txBase = initialTxBaseFreqHz ?: txCenter
+            val txBase = nativeBaseOverride?.txHz ?: initialTxBaseFreqHz ?: txCenter
             Log.i(tag, "Icom duplex setup: txBase=${txBase}Hz rxNominal=${rxNominal}Hz txMode=$txMode rxMode=$rxMode")
 
             // ── Initial setup sequence ──────────────────────────────────────────
@@ -1144,10 +1156,12 @@ class RadioTrackingService(
                     val rx = if (split) tx else rxController
                     if (tx?.remoteState?.value?.capabilities?.trackingDisplay==true) {
                         tx.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay(
-                            pass.name,Math.toDegrees(position.azimuth),Math.toDegrees(position.elevation),radioContextKey(transponder.uuid)))
+                            pass.name,Math.toDegrees(position.azimuth),Math.toDegrees(position.elevation),
+                            tx.remoteState?.value?.let { profileKey(it,transponder) } ?: radioContextKey(transponder.uuid)))
                     }
                     // Keep BOTH RX and TX fixed during all transmission, including CW gaps.
-                    val frozen = hasTransmitClaim || current.pttState != PttState.OFF || tx?.remoteState?.value?.txSource?.let { it!=0 }==true
+                    val frozen = hasTransmitClaim || current.pttState != PttState.OFF || tx?.remoteState?.value?.txSource?.let { it!=0 }==true ||
+                        tx?.remoteState?.value?.nativeMenuOpen==true
                     var base = current.txBaseFrequencyHz
                     val calculated = calculatorTuning?.frequencies(transponder, position, offset)
                     if (calculated != null) base = calculated.nominalTxHz
@@ -1156,7 +1170,7 @@ class RadioTrackingService(
                     suspend fun readTx() = if (split) tx?.readTxVfoFrequency() else tx?.readFrequencyAndMode()?.first
                     suspend fun readRx() = if (split) rx?.readWorkingFrequency() else rx?.readFrequencyAndMode()?.first
                     // Do not change the nominal pair under a waveform, even from the RX dial.
-                    if (!frozen && calculated == null) {
+                    if (!frozen && calculated == null && nativeBaseOverride==null) {
                         suspend fun sampleDial(leg: DialLeg): Boolean {
                             val controller = if (leg == DialLeg.TX) tx else rx
                             val commanded = if (leg == DialLeg.TX) lastSetTx else lastSetRx
@@ -1202,13 +1216,22 @@ class RadioTrackingService(
                     }
                     // A synchronous UI intent can invalidate this snapshot while a read suspends.
                     if (cycleRevision != tuningRevision.get() || !_state.value.isActive) return@withLock
-                    val nominalRx = calculated?.nominalRxHz ?: (base?.let { TransponderMapper.mapUplinkToDownlink(it, transponder) }
+                    val nominalRx = calculated?.nominalRxHz ?: nativeBaseOverride?.rxHz ?: (base?.let { TransponderMapper.mapUplinkToDownlink(it, transponder) }
                         ?: transponder.downlinkLow)?.plus(offset)
                     val desiredTx = calculated?.txHz ?: base?.let(position::getUplinkFreq)
                     val desiredRx = calculated?.rxHz ?: nominalRx?.let(position::getDownlinkFreq)
                     // The FT4 lease preloads the slot-midpoint frequency. Hold both CAT legs
                     // until the waveform ends so no synthesizer step occurs under modulation.
                     if (!frozen && dialFollowState.activeLeg == null) {
+                        if(nominalRx!=null && tx?.remoteState?.value?.capabilities?.satelliteProfiles==true &&
+                            !tx.updateTrackingBases(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(nominalRx,base))) {
+                            val latest=tx.remoteState?.value
+                            if(latest?.nativeSettingsModified==true) {
+                                nativeBaseOverride=latest.nativeBaseFrequencies;calculatorTuning=null
+                                latest.nativeBaseFrequencies?.let { saved -> _state.update { it.copy(txBaseFrequencyHz=saved.txHz) } }
+                            }
+                            tuningRevision.incrementAndGet();return@withLock
+                        }
                         val txWriteAllowed = current.pttState == PttState.OFF
                         var wroteTx = false
                         if (split && tx?.supportsAtomicPair == true && desiredRx != null) {
@@ -1245,8 +1268,8 @@ class RadioTrackingService(
                             txBaseFrequencyHz = base,
                             txFrequencyHz = observedTx,
                             rxFrequencyHz = observedRx,
-                            targetTxFrequencyHz = desiredTx,
-                            targetRxFrequencyHz = desiredRx,
+                            targetTxFrequencyHz = trackingTarget(tx,desiredTx,false),
+                            targetRxFrequencyHz = trackingTarget(tx,desiredRx,true),
                             nominalTxFrequencyHz = base,
                             nominalRxFrequencyHz = nominalRx,
                             txDopplerCorrectionHz = dopplerCorrection(observedTx, base),
@@ -1285,20 +1308,20 @@ class RadioTrackingService(
 
     private suspend fun configureTransponder(transponder: SatRadio) {
             applyDataToneDefault(transponder)
-            val txMode = controlUplinkMode(transponder)
             val tx = txController
             val rx = rxController
-            val rxMode = controlDownlinkMode(transponder, txMode)
             // Selecting a transponder is also local UI state. Allow it before a
             // radio is connected; startTracking will program the selected mode.
             if (tx?.isConnected != true && rx?.isConnected != true) {
-                updateSelectedTransponder(transponder, rxMode)
+                updateSelectedTransponder(transponder, controlDownlinkMode(transponder,controlUplinkMode(transponder)))
                 return
             }
             val split = _state.value.splitMode
-            if (tx?.isConnected==true && !tx.prepareTrackingContext(radioContextKey(transponder.uuid))) {
+            if (tx?.isConnected==true && !selectProfileContext(tx,transponder)) {
                 failTrackingCommand("Radio context was not acknowledged");return
             }
+            val txMode=controlUplinkMode(transponder)
+            val rxMode=controlDownlinkMode(transponder,txMode)
             val txModeOk: Boolean
             val rxModeOk: Boolean
             if (split) {
@@ -1334,6 +1357,7 @@ class RadioTrackingService(
             return
         }
         fun accept() {
+            nativeBaseOverride=null
             calculatorTuning = tuning
             tuningRevision.incrementAndGet()
             tuningWake.trySend(Unit)
@@ -1379,6 +1403,7 @@ class RadioTrackingService(
         if (frequencyHz <= 0L) return
         changeRadioSettings {
             calculatorTuning = null
+            nativeBaseOverride=null
             _state.update { it.copy(txBaseFrequencyHz = frequencyHz) }
             tuningWake.trySend(Unit)
         }
@@ -1387,6 +1412,7 @@ class RadioTrackingService(
     override fun adjustTxBaseFrequency(deltaHz: Long) {
         changeRadioSettings {
             calculatorTuning = null
+            nativeBaseOverride=null
             val base = _state.value.txBaseFrequencyHz ?: return@changeRadioSettings
             val adjusted = Math.addExact(base, deltaHz)
             if (adjusted > 0L) _state.update { it.copy(txBaseFrequencyHz = adjusted) }
@@ -1425,6 +1451,7 @@ class RadioTrackingService(
 
     private fun updateSelectedTransponder(transponder: SatRadio, rxMode: String?) {
         calculatorTuning = null
+        nativeBaseOverride=null
         val txCenter = transponder.uplinkCenterFrequency()
         val rxNominal = if (txCenter != null) TransponderMapper.mapUplinkToDownlink(txCenter, transponder)
         else transponder.downlinkLow
@@ -1438,12 +1465,13 @@ class RadioTrackingService(
                 rxMode = rxMode
             )
         }
+        restoreNativeProfile(transponder)
     }
 
     private fun applyDataToneDefault(transponder: SatRadio) {
         val current=_state.value
         if(current.selectedTransponder?.uuid==transponder.uuid || current.selectedTransponder==null && ctcssExplicit) return
-        val saved=txController?.remoteState?.value?.takeIf { it.nativeProfileValid && it.nativeProfileKey==radioContextKey(transponder.uuid) }
+        val saved=txController?.remoteState?.value?.takeIf { it.nativeProfileValid && it.nativeProfileKey==profileKey(it,transponder) }
         val tone=if(saved!=null) saved.nativeSavedTxCtcssHz else transponder.defaultTxCtcssHz()
         ctcssExplicit=saved!=null || tone!=null
         _state.update { it.copy(ctcssTone=tone) }
@@ -1453,13 +1481,43 @@ class RadioTrackingService(
         // New firmware restores the saved native profile on MODE. Missing metadata must not erase it.
         if(mode.isFmMode() && radio.remoteState?.value?.capabilities?.nativeSettings==true && !ctcssExplicit) {
             val saved=radio.remoteState!!.value
-            if(!saved.nativeProfileValid || saved.nativeProfileKey=="0".repeat(32) || saved.nativeProfileKey==radioContextKey(transponder.uuid)) return true
+            if(!saved.nativeProfileValid || saved.nativeProfileKey=="0".repeat(32) || saved.nativeProfileKey==profileKey(saved,transponder)) return true
             return radio.configureTxCtcss(null)
         }
         return radio.configureTxCtcss(tone)
     }
     private fun nativeProfileMode(transponder: SatRadio): Int? = txController?.remoteState?.value
-        ?.takeIf { it.nativeProfileValid && it.nativeProfileKey==radioContextKey(transponder.uuid) }?.nativeSavedMode
+        ?.takeIf { it.nativeProfileValid && it.nativeProfileKey==profileKey(it,transponder) }?.nativeSavedMode
+
+    private fun profileKey(remote: com.rtbishop.look4sat.core.domain.repository.RemoteRadioState,transponder:SatRadio):String {
+        val pass=_state.value.currentPass
+        return if(remote.capabilities?.satelliteProfiles==true && pass!=null && pass.catNum==transponder.catnum)
+            com.rtbishop.look4sat.core.domain.repository.radioSatelliteProfileKey(pass.name,transponder.uuid)
+        else radioContextKey(transponder.uuid)
+    }
+
+    private suspend fun selectProfileContext(radio:IRadioController,transponder:SatRadio):Boolean {
+        val pass=_state.value.currentPass
+        val ok=if(pass!=null && pass.catNum==transponder.catnum) radio.selectSatelliteProfile(pass.name,transponder.uuid)
+            else radio.prepareTrackingContext(radioContextKey(transponder.uuid))
+        if(ok) restoreNativeProfile(transponder)
+        return ok
+    }
+    private fun restoreNativeProfile(transponder:SatRadio) {
+        val remote=txController?.remoteState?.value ?: return
+        if(!remote.nativeProfileValid || remote.nativeProfileKey!=profileKey(remote,transponder)) {nativeBaseOverride=null;return}
+        nativeBaseOverride=remote.nativeBaseFrequencies
+        ctcssExplicit=true
+        _state.update { it.copy(ctcssTone=remote.nativeSavedTxCtcssHz,
+            txBaseFrequencyHz=remote.nativeBaseFrequencies?.txHz ?: it.txBaseFrequencyHz) }
+    }
+    private fun trackingTarget(radio:IRadioController?,hz:Long?,rx:Boolean):Long? {
+        if(hz==null) return null
+        val remote=radio?.remoteState?.value ?: return hz
+        if(remote.capabilities?.atomicPair!=true) return hz
+        return com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(hz,
+            if(rx) remote.nativeRxCorrectionHz else remote.nativeTxCorrectionHz,settingsRepo.radioControlSettings.value.l4sDopplerStepHz)
+    }
 
     private fun failTrackingCommand(message: String) {
         diagnose("tracking/command", message, ControlDiagnosticSeverity.ERROR)

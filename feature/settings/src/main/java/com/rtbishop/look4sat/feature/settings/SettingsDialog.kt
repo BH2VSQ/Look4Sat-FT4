@@ -1199,6 +1199,7 @@ fun RadioControlDialog(
     val fmDialDeadbandHz = rememberSaveable {
         mutableStateOf(initialSettings.fmDialDeadbandHz.toString())
     }
+    val l4sDopplerStepHz = rememberSaveable { mutableStateOf(initialSettings.l4sDopplerStepHz.toString()) }
     val sharedBusDelayMillis = rememberSaveable {
         mutableStateOf(initialSettings.sharedBusCommandDelayMillis.toString())
     }
@@ -1412,6 +1413,8 @@ fun RadioControlDialog(
             txAddressError.value || rxAddressError.value || civAddressError.value ||
             txUsbError.value != null || rxUsbError.value != null
         ) return@accept
+        val parsedL4sStep=l4sDopplerStepHz.value.toLongOrNull()
+        if(isL4s && (parsedL4sStep==null || parsedL4sStep !in 10L..10_000L || parsedL4sStep%10!=0L)) return@accept
         onSave(
             RadioControlSettings(
                 enabled        = enabled.value,
@@ -1437,7 +1440,8 @@ fun RadioControlDialog(
                 dialSettleMillis = dialSettleMillis.value.toLongOrNull() ?: 1_500L,
                 linearDialDeadbandHz = linearDialDeadbandHz.value.toLongOrNull() ?: 20L,
                 fmDialDeadbandHz = fmDialDeadbandHz.value.toLongOrNull() ?: 200L,
-                sharedBusCommandDelayMillis = sharedBusDelayMillis.value.toLongOrNull() ?: 0L
+                sharedBusCommandDelayMillis = sharedBusDelayMillis.value.toLongOrNull() ?: 0L,
+                l4sDopplerStepHz = parsedL4sStep ?: 250L
             )
         )
         onDismiss()
@@ -1607,6 +1611,12 @@ fun RadioControlDialog(
             }
             if (isL4s) {
                 Text(stringResource(R.string.rc_l4s_hint), style = MaterialTheme.typography.bodySmall)
+                val step=l4sDopplerStepHz.value.toLongOrNull()
+                OutlinedTextField(value=l4sDopplerStepHz.value,onValueChange={l4sDopplerStepHz.value=it},
+                    label={Text(stringResource(R.string.rc_l4s_step))},
+                    supportingText={Text(stringResource(R.string.rc_l4s_step_hint))},
+                    isError=step==null || step !in 10L..10_000L || step%10!=0L,
+                    enabled=enabled.value,singleLine=true,modifier=Modifier.fillMaxWidth())
             }
             if (modelDescriptor.capabilities.singleRadioSplit && !isL4s) {
                 Row(

@@ -155,7 +155,9 @@ data class RadioControlSettings(
     /** Manual-tuning detection threshold for FM transponders. */
     val fmDialDeadbandHz: Long = 200L,
     /** Optional spacing between commands sharing one physical CAT connection. */
-    val sharedBusCommandDelayMillis: Long = 0L
+    val sharedBusCommandDelayMillis: Long = 0L,
+    /** L4S tracking/control quantum, distinct from the radio's 10 Hz hardware resolution. */
+    val l4sDopplerStepHz: Long = 250L
 ) {
     companion object {
         const val MODEL_YAESU_FT817 = "Yaesu FT-817/818"

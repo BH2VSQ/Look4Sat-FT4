@@ -65,6 +65,48 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+    @Test fun satelliteProfileRestoresIndependentBasesForTrackingAndPttPreparation()=runTest {
+        val remote=remoteFixtureState()
+        val bases=com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(435150000,145920000)
+        remote.value=remote.value.copy(capabilities=remote.value.capabilities!!.copy(nativeSettings=true,satelliteProfiles=true),
+            nativeProfileValid=true,nativeProfileKey=com.rtbishop.look4sat.core.domain.repository.radioSatelliteProfileKey("TEST","test-transponder"),
+            nativeBaseFrequencies=bases,nativeProfileGeneration=1,settingsSequence=1,nativeSavedMode=0)
+        val tx=FakeRadioController(remote=remote)
+        val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=RadioControlSettings.MODEL_QUANSHENG_UVK1,
+            splitMode=true,transport=RadioControlSettings.TRANSPORT_USB)
+        fixture.transponder=fixture.transponder.copy(uplinkMode="FM",downlinkMode="FM")
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        assertEquals(145920000L,fixture.service.state.value.txBaseFrequencyHz)
+        assertEquals(fixture.position.getDownlinkFreq(bases.rxHz),tx.frequencyHz)
+        assertEquals(fixture.position.getUplinkFreq(bases.txHz!!),tx.txFrequencyHz)
+        assertTrue(tx.operations.contains("bases:435150000:145920000"))
+        fixture.service.setVoicePtt(true);runCurrent()
+        assertEquals(fixture.position.getDownlinkFreq(bases.rxHz),tx.frequencyHz)
+        assertEquals(1,remote.value.txSource)
+        fixture.service.setVoicePtt(false);runCurrent();fixture.close()
+    }
+
+    @Test fun nativeSaveUpdatesBothBasesAndPhoneEditsSyncBackToMenu()=runTest {
+        val remote=remoteFixtureState()
+        remote.value=remote.value.copy(capabilities=remote.value.capabilities!!.copy(nativeSettings=true,satelliteProfiles=true),
+            nativeProfileValid=true,nativeProfileKey=com.rtbishop.look4sat.core.domain.repository.radioSatelliteProfileKey("TEST","test-transponder"),
+            nativeBaseFrequencies=com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(435150000,145920000),
+            nativeProfileGeneration=1,settingsSequence=1,nativeSavedMode=0)
+        val tx=FakeRadioController(remote=remote)
+        val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=RadioControlSettings.MODEL_QUANSHENG_UVK1,
+            splitMode=true,transport=RadioControlSettings.TRANSPORT_USB)
+        fixture.transponder=fixture.transponder.copy(uplinkMode="FM",downlinkMode="FM")
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        remote.value=remote.value.copy(nativeProfileGeneration=2,settingsSequence=2,nativeSettingsModified=true,
+            nativeBaseFrequencies=com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(435160000,145925000))
+        runCurrent()
+        assertEquals(145925000L,fixture.service.state.value.txBaseFrequencyHz)
+        assertEquals(fixture.position.getDownlinkFreq(435160000),tx.frequencyHz)
+        fixture.service.setTxBaseFrequency(145930000);runCurrent()
+        assertEquals(145930000L,remote.value.nativeBaseFrequencies!!.txHz)
+        assertEquals(145930000L,fixture.service.state.value.txBaseFrequencyHz)
+        fixture.close()
+    }
     @Test fun fmMetadataDefaultsSurviveConnectionAndApplyModeAndTxCtcss()=runTest {
         val remote=remoteFixtureState()
         remote.value=remote.value.copy(capabilities=remote.value.capabilities!!.copy(nativeSettings=true),settingsSequence=1)
@@ -1086,6 +1128,13 @@ private class FakeRadioController(
 ) : IRadioController {
     override val remoteState get() = remote
     override val supportsAtomicPair get() = remote != null
+    override suspend fun updateTrackingBases(bases: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies):Boolean {
+        if(remote?.value?.capabilities?.satelliteProfiles==true) {
+            operations+="bases:${bases.rxHz}:${bases.txHz}"
+            remote.value=remote.value.copy(nativeBaseFrequencies=bases)
+        }
+        return true
+    }
     override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult {
         operations += "pair:$rxHz:$txHz"
         if (remote?.value?.txSource != 0) return FrequencyPairResult.FAILED

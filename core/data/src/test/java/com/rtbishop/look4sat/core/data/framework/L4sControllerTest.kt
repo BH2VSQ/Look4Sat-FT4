@@ -35,7 +35,7 @@ class L4sControllerTest {
 
     @Test fun handshakeConfiguresAtomicReadbackAndNoSsbtTransmit()=runTest {
         val transport=ScriptedL4sTransport()
-        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) { 7 }
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler),tuningStepHz={10}) { 7 }
         assertTrue(radio.connect())
         assertEquals("mock-v1",radio.remoteState.value.firmware)
         assertTrue(transport.dtrOnConnect)
@@ -194,6 +194,51 @@ class L4sControllerTest {
         radio.disconnect()
     }
 
+    @Test fun default250HzStepAndLiveConfiguredStepQuantizeBothLegs()=runTest {
+        var step=250L
+        val transport=ScriptedL4sTransport()
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler),tuningStepHz={step}) {7}
+        assertTrue(radio.connect());assertTrue(radio.setSplitModes("FM","FM"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100125,145900624))
+        assertEquals(435100250L,radio.remoteState.value.rxFrequencyHz)
+        assertEquals(145900500L,radio.remoteState.value.txFrequencyHz)
+        step=1000
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100125,145900624))
+        assertEquals(435100000L,radio.remoteState.value.rxFrequencyHz)
+        assertEquals(145901000L,radio.remoteState.value.txFrequencyHz)
+        radio.disconnect()
+    }
+
+    @Test fun profileReadbackCorrelatesFullNameAndRequiresFreshPairAfterSave()=runTest {
+        val transport=ScriptedL4sTransport(profiles=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) {7}
+        assertTrue(radio.connect());assertTrue(radio.selectSatelliteProfile("SATELLITE LONG NAME","FM"))
+        assertEquals(com.rtbishop.look4sat.core.domain.repository.radioSatelliteProfileKey("SATELLITE LONG NAME","FM"),radio.remoteState.value.nativeProfileKey)
+        assertTrue(radio.setSplitModes("FM","FM"))
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100006,145900004))
+        assertEquals(435099500L,radio.remoteState.value.rxFrequencyHz)
+        assertEquals(145900750L,radio.remoteState.value.txFrequencyHz)
+        val writes=transport.commands.count {it==L4sProtocol.PAIR}
+        transport.profileGeneration++
+        advanceTimeBy(1600);runCurrent()
+        assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100006,145900004))
+        assertEquals(writes+1,transport.commands.count {it==L4sProtocol.PAIR})
+        radio.disconnect()
+    }
+
+    @Test fun stalePhoneBaseCannotOverwriteNewHandsetSave()=runTest {
+        val transport=ScriptedL4sTransport(profiles=true)
+        val radio=L4sController(transport,backgroundScope,StandardTestDispatcher(testScheduler)) {7}
+        assertTrue(radio.connect());assertTrue(radio.selectSatelliteProfile("SATELLITE","FM"))
+        transport.profileGeneration++;transport.baseRx=435200000
+        assertFalse(radio.updateTrackingBases(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(435150000,145900000)))
+        assertEquals(435200000L,transport.baseRx)
+        assertEquals(435200000L,radio.remoteState.value.nativeBaseFrequencies!!.rxHz)
+        assertTrue(radio.updateTrackingBases(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(435150000,145900000)))
+        assertEquals(435150000L,radio.remoteState.value.nativeBaseFrequencies!!.rxHz)
+        radio.disconnect()
+    }
+
     @Test fun noHandshakeReplyReportsCommandAndReceivedByteCount()=runTest {
         val transport=ScriptedL4sTransport(silent=true)
         val diagnostics=ControlDiagnosticsBuffer()
@@ -208,6 +253,7 @@ class L4sControllerTest {
 }
 
 private class ScriptedL4sTransport(
+    private val profiles:Boolean=false,
     private val nativeSettings:Boolean=false,
     private val displayContext:Boolean=false,
     private val silent:Boolean=false,
@@ -218,6 +264,11 @@ private class ScriptedL4sTransport(
     var failCommand:Int?=null
     var failedWrites=0
     var menuOpen=false
+    var profileGeneration=1L
+    var baseRx=435100000L
+    private var baseTx=145900000L
+    private var step=250
+    private var profileKey=com.rtbishop.look4sat.core.domain.repository.radioContextKey("test-transponder")
     override val lastIoFailure get()="mock bulk OUT result=-1 attached=false"
     var dtrOnConnect=false
         private set
@@ -256,7 +307,7 @@ private class ScriptedL4sTransport(
         if(command==L4sProtocol.HELLO) {
             data=ByteArray(42)
             "L4S1".toByteArray().copyInto(data);data[4]=3
-            L4sProtocol.put32(data,5,if(nativeSettings)207 else if(displayContext)79 else 15);L4sProtocol.put16(data,9,10)
+            L4sProtocol.put32(data,5,if(profiles)463 else if(nativeSettings)207 else if(displayContext)79 else 15);L4sProtocol.put16(data,9,10)
             data[11]=92;data[12]=10;data[13]=45;L4sProtocol.put16(data,14,1500)
             L4sProtocol.put32(data,16,18000000);L4sProtocol.put32(data,20,1300000000)
             "mock-v1".toByteArray().copyInto(data,24);data[40]=15;data[41]=9
@@ -265,6 +316,12 @@ private class ScriptedL4sTransport(
                 L4sProtocol.OPEN -> session=L4sProtocol.u32(p,8)
                 L4sProtocol.KEEPALIVE -> if(closeSession) { session=0;txState=0;result=3 }
                 L4sProtocol.CLOSE -> { session=0;txState=0 }
+                L4sProtocol.PROFILE -> when(p[12].toInt()) {
+                    0-> {profileKey=p.copyOfRange(13,29).joinToString("") {"%02x".format(it.toInt() and 255)};pairReady=false}
+                    1-> if(L4sProtocol.u32(p,23)!=profileGeneration) result=9 else {
+                        baseRx=L4sProtocol.u32(p,13);baseTx=L4sProtocol.u32(p,17);step=L4sProtocol.u16(p,21);pairReady=false
+                    }
+                }
                 L4sProtocol.MODE -> { rxMode=p[12].toInt();txMode=p[13].toInt();modeReady=true }
                 L4sProtocol.PAIR -> if(acceptPairOnly) result=L4sProtocol.ACCEPTED
                 else if(!ignorePair) {
@@ -274,16 +331,21 @@ private class ScriptedL4sTransport(
                 L4sProtocol.CW -> if(pairReady && modeReady) { txState=2;cwState=1;cwStarts++;result=1 } else result=10
                 L4sProtocol.STOP -> { txState=0;cwState=4;pairReady=false }
             }
-            data=ByteArray(if(command==L4sProtocol.SETTINGS)55 else 24)
+            data=ByteArray(if(command==L4sProtocol.PROFILE && result==0)79 else if(command==L4sProtocol.SETTINGS)55 else 24)
             L4sProtocol.put32(data,0,rx);L4sProtocol.put32(data,4,tx);L4sProtocol.put32(data,8,revision)
             data[16]=rxMode.toByte();data[17]=txMode.toByte();data[18]=if(tx!=0L)1 else 0
             data[19]=txState.toByte();data[20]=cwState.toByte()
-            if(command==L4sProtocol.SETTINGS) {
+            if(data.size>=55) {
                 data[24]=0;data[25]=3;data[26]=25;data[27]=60;data[28]=4;data[29]=1;data[30]=0;data[31]=4
                 L4sProtocol.put16(data,32,if(txMode==0)670 else 0);L4sProtocol.put16(data,36,744)
                 data[38]=(16 or if(menuOpen)1 else 0).toByte()
-                com.rtbishop.look4sat.core.domain.repository.radioContextKey("test-transponder").chunked(2)
+                profileKey.chunked(2)
                     .map {it.toInt(16).toByte()}.toByteArray().copyInto(data,39)
+            }
+            if(data.size==79) {
+                data[55]=3;L4sProtocol.put32(data,56,baseRx);L4sProtocol.put32(data,60,baseTx)
+                L4sProtocol.put32(data,64,-500);L4sProtocol.put32(data,68,750)
+                L4sProtocol.put16(data,72,step);L4sProtocol.put32(data,74,profileGeneration);data[78]=56
             }
         }
         val reply=L4sProtocol.body(command or 0x8000,seq,session,data).also { it[5]=result.toByte() }

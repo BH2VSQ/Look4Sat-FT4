@@ -100,6 +100,8 @@ interface ISettingsRepo {
 
     //region # Radio control settings
     val radioControlSettings: StateFlow<RadioControlSettings>
+    fun getRemoteCwPresets(): List<String> = CwTransmitPresets.defaults
+    fun updateRemoteCwPreset(index: Int, text: String) = Unit
     fun updateRadioControlSettings(settings: RadioControlSettings)
     //endregion
 

@@ -202,6 +202,10 @@ class SerialRadioController(
     override suspend fun updateTrackingDisplay(display: com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay) =
         actor.execute { delegate.updateTrackingDisplay(display) }
     override suspend fun prepareTrackingContext(contextKey: String) = actor.execute { delegate.prepareTrackingContext(contextKey) }
+    override suspend fun selectSatelliteProfile(name: String, transponderUuid: String) =
+        actor.execute { delegate.selectSatelliteProfile(name,transponderUuid) }
+    override suspend fun updateTrackingBases(bases: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies) =
+        actor.execute { delegate.updateTrackingBases(bases) }
     override val isConnected: Boolean get() = delegate.isConnected
     override suspend fun connect() = actor.execute(CONNECT_TIMEOUT_MILLIS, delegate::connect)
     override suspend fun disconnect() = actor.execute(operation = delegate::disconnect)

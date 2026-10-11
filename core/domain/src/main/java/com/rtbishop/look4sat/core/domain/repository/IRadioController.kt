@@ -28,6 +28,9 @@ interface IRadioController {
     suspend fun startCw(text: String, wpm: Int): Boolean = false
     suspend fun updateTrackingDisplay(display: RadioTrackingDisplay): Boolean = true
     suspend fun prepareTrackingContext(contextKey: String): Boolean = true
+    suspend fun selectSatelliteProfile(name: String, transponderUuid: String): Boolean =
+        prepareTrackingContext(radioContextKey(transponderUuid))
+    suspend fun updateTrackingBases(bases: RadioBaseFrequencies): Boolean = true
 
     val isConnected: Boolean
 

@@ -36,6 +36,7 @@ data class RadioPanelState(
 
 data class RadioControlSubState(
     val isL4sModel: Boolean = false,
+    val cwPresets: List<String> = com.rtbishop.look4sat.core.domain.repository.CwTransmitPresets.defaults,
     val txPanel: RadioPanelState = RadioPanelState("TX (Uplink)"),
     val rxPanel: RadioPanelState = RadioPanelState("RX (Downlink)"),
     val selectedTransponderUuid: String? = null,
@@ -127,6 +128,7 @@ sealed interface RadarAction {
     data object DisconnectRadios : RadarAction
     data class VoicePtt(val pressed: Boolean) : RadarAction
     data class SendCw(val text: String, val wpm: Int) : RadarAction
+    data class SaveCwPreset(val index: Int, val text: String) : RadarAction
     data object StopRemoteTx : RadarAction
 
     // SSTV actions

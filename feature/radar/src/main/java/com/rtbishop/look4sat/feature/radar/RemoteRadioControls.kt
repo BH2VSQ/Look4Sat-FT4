@@ -1,6 +1,8 @@
 package com.rtbishop.look4sat.feature.radar
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -19,6 +21,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -38,6 +41,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
 import com.rtbishop.look4sat.core.domain.repository.PttState
 import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
@@ -98,6 +102,12 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
             fun toneLabel(hz:Double?)=hz?.let { "${it} Hz" } ?: "OFF"
             Text(stringResource(R.string.rc_l4s_tones,toneLabel(remote.txCtcssHz),toneLabel(remote.rxCtcssHz),toneLabel(remote.activationCtcssHz)),
                 style=MaterialTheme.typography.bodySmall)
+            remote.nativeBaseFrequencies?.let { bases ->
+                Text(stringResource(R.string.rc_l4s_bases,bases.txHz?.let(::formatFrequency) ?: "—",formatFrequency(bases.rxHz)),
+                    style=MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.rc_l4s_corrections,remote.nativeTxCorrectionHz,remote.nativeRxCorrectionHz,remote.nativeStepHz),
+                    style=MaterialTheme.typography.bodySmall)
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(
@@ -129,6 +139,9 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         var text by rememberSaveable { mutableStateOf("") }
         var wpm by rememberSaveable { mutableIntStateOf((remote.nativeCwWpm ?: 20).coerceIn(minWpm, maxWpm)) }
         var error by remember { mutableStateOf<String?>(null) }
+        var editPreset by rememberSaveable { mutableIntStateOf(-1) }
+        var presetDraft by rememberSaveable { mutableStateOf("") }
+        var presetError by remember { mutableStateOf<String?>(null) }
         val close = { action(RadarAction.StopRemoteTx); showCw = false }
         SharedDialog(title = stringResource(R.string.rc_l4s_cw), onDismissRequest = close, onCancel = close) { padding ->
             Column(
@@ -138,6 +151,27 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 cwBlockReason?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                Text(stringResource(R.string.rc_l4s_presets_hint),style=MaterialTheme.typography.bodySmall)
+                for(row in 0..1) {
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()) {
+                        for(column in 0..3) {
+                            val index=row*4+column
+                            val preset=control.cwPresets.getOrElse(index) {""}
+                            val available=control.transmitOwner==RadioTransmitOwner.NONE && remote.txSource==0
+                            Surface(shape=MaterialTheme.shapes.medium,border=BorderStroke(1.dp,MaterialTheme.colorScheme.outline),
+                                modifier=Modifier.weight(1f).heightIn(min=64.dp).combinedClickable(
+                                    enabled=available,role=Role.Button,
+                                    onLongClickLabel=stringResource(R.string.rc_l4s_edit_preset,index+1),
+                                    onClick={text=preset;error=null},
+                                    onLongClick={presetDraft=preset;presetError=null;editPreset=index})) {
+                                Column(horizontalAlignment=Alignment.CenterHorizontally,modifier=Modifier.padding(6.dp)) {
+                                    Text("F${index+1}",color=MaterialTheme.colorScheme.primary)
+                                    Text(preset.ifBlank {"—"},maxLines=1,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                }
                 OutlinedTextField(text, { text = it.take(4096); error = null },
                     label = { Text(stringResource(R.string.rc_l4s_message)) },
                     enabled = control.transmitOwner == RadioTransmitOwner.NONE, modifier = Modifier.fillMaxWidth())
@@ -159,6 +193,22 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                     }
                 }
                 (error ?: remote.error ?: control.errorMessage)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        }
+        if(editPreset in 0..7) {
+            val dismiss={editPreset=-1;presetError=null}
+            SharedDialog(title=stringResource(R.string.rc_l4s_edit_preset,editPreset+1),onCancel=dismiss,onDismissRequest=dismiss,
+                onAccept={
+                    runCatching {com.rtbishop.look4sat.core.domain.repository.CwTransmitPresets.normalize(presetDraft)}
+                        .onSuccess {action(RadarAction.SaveCwPreset(editPreset,it));dismiss()}
+                        .onFailure {presetError=it.message}
+                }) { padding ->
+                Column(modifier=Modifier.fillMaxWidth().padding(padding),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value=presetDraft,onValueChange={presetDraft=it.take(4096);presetError=null},
+                        label={Text(stringResource(R.string.rc_l4s_message))},modifier=Modifier.fillMaxWidth())
+                    Text(stringResource(R.string.rc_l4s_preset_save_hint),style=MaterialTheme.typography.bodySmall)
+                    presetError?.let {Text(it,color=MaterialTheme.colorScheme.error)}
+                }
             }
         }
     }

@@ -18,6 +18,7 @@ internal object L4sProtocol {
     const val STOP = 0x70A
     const val CONTEXT = 0x70B
     const val SETTINGS = 0x70C
+    const val PROFILE = 0x70D
     const val APPLIED = 0
     const val ACCEPTED = 1
     private const val MAX_BODY = 120
@@ -56,7 +57,7 @@ internal object L4sProtocol {
     }
 
     fun reply(body: ByteArray): Reply? {
-        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870c) return null
+        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870d) return null
         return Reply(u16(body,0) and 0x7fff,u16(body,6),u32(body,8),body[5].toInt() and 255,body.copyOfRange(12,body.size))
     }
 
@@ -88,7 +89,7 @@ internal object L4sProtocol {
         val caps=RemoteRadioCapabilities(
             u16(data,9).toLong(),data[11].toInt() and 255,data[12].toInt() and 255,data[13].toInt() and 255,
             u16(data,14),u32(data,16),u32(data,20),data[40].toInt() and 255,data[41].toInt() and 255,
-            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0
+            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0,bits and 256!=0
         )
         if(caps.frequencyStepHz!=10L || caps.maxCwText !in 1..92 || caps.minimumWpm !in 1..45 ||
             caps.maximumWpm !in caps.minimumWpm..45 || caps.watchdogMillis!=1500 || !caps.atomicPair) return null
@@ -125,6 +126,22 @@ internal object L4sProtocol {
                 ?.let { com.rtbishop.look4sat.core.domain.utility.CtcssTones.tenths[it-1]/10.0 })
     }
 
+    fun profileSnapshot(reply: Reply, old: RemoteRadioState): RemoteRadioState? {
+        if(reply.result!=APPLIED) return snapshot(reply,old)
+        val p=reply.data
+        if(p.size!=79 || p[55].toInt() !in 0..9) return null
+        val rx=u32(p,56);val tx=u32(p,60)
+        if(listOf(rx,tx).any { it!=0L && it !in 18_000_000L..1_300_000_000L }) return null
+        val rxCorrection=u32(p,64).toInt().toLong();val txCorrection=u32(p,68).toInt().toLong()
+        val step=u16(p,72).toLong()
+        if(rxCorrection !in -100_000L..100_000L || txCorrection !in -100_000L..100_000L || step !in 10..10_000 || step%10!=0L) return null
+        val base=settingsSnapshot(reply.copy(data=p.copyOfRange(0,55)),old) ?: return null
+        return base.copy(nativeBaseFrequencies=rx.takeIf { it>0 }?.let {
+            com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(it,tx.takeIf { value->value>0 }) },
+            nativeRxCorrectionHz=rxCorrection,nativeTxCorrectionHz=txCorrection,nativeSquelch=p[55].toInt(),
+            nativeStepHz=step,nativeProfileGeneration=u32(p,74),nativeProfileCapacity=p[78].toInt() and 255)
+    }
+
     fun modeNumber(mode: String): Int? = when(mode.uppercase(java.util.Locale.ROOT)) {
         "FM", "FMN", "NFM", "FM-N" -> 0
         "AM" -> 1
@@ -144,6 +161,8 @@ internal object L4sProtocol {
         9 -> "Stale L4S command or frequency revision"
         10 -> "Apply frequencies and modes before transmitting"
         11 -> "L4S watchdog/TOT stopped transmission"
+        12 -> "Radio profile storage or verification failed"
+        13 -> "Radio satellite profile storage is full; no old profile was overwritten"
         else -> "L4S error $code"
     }
 }

@@ -1140,6 +1140,13 @@ class SettingsRepo(
     private val keyRadioLinearDeadband = "radioLinearDialDeadbandHz"
     private val keyRadioFmDeadband = "radioFmDialDeadbandHz"
     private val keyRadioSharedBusDelay = "radioSharedBusCommandDelayMillis"
+    private val keyRadioL4sStep = "radioL4sDopplerStepHz"
+
+    override fun getRemoteCwPresets(): List<String> = readRemoteCwPresets(preferences)
+
+    override fun updateRemoteCwPreset(index: Int, text: String) {
+        writeRemoteCwPreset(preferences,index,text)
+    }
 
     private val _radioControlSettings = MutableStateFlow(getRadioControlSettings())
     override val radioControlSettings: StateFlow<RadioControlSettings> = _radioControlSettings
@@ -1151,7 +1158,8 @@ class SettingsRepo(
             dialSettleMillis = settings.dialSettleMillis.coerceIn(0L, 10_000L),
             linearDialDeadbandHz = settings.linearDialDeadbandHz.coerceIn(1L, 10_000L),
             fmDialDeadbandHz = settings.fmDialDeadbandHz.coerceIn(10L, 100_000L),
-            sharedBusCommandDelayMillis = settings.sharedBusCommandDelayMillis.coerceIn(0L, 2_000L)
+            sharedBusCommandDelayMillis = settings.sharedBusCommandDelayMillis.coerceIn(0L, 2_000L),
+            l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(settings.l4sDopplerStepHz)
         )
         preferences.edit {
             putBoolean(keyRadioControlEnabled, normalized.enabled)
@@ -1170,6 +1178,7 @@ class SettingsRepo(
             putLong(keyRadioLinearDeadband, normalized.linearDialDeadbandHz)
             putLong(keyRadioFmDeadband, normalized.fmDialDeadbandHz)
             putLong(keyRadioSharedBusDelay, normalized.sharedBusCommandDelayMillis)
+            putLong(keyRadioL4sStep, normalized.l4sDopplerStepHz)
         }
         _radioControlSettings.value = normalized
     }
@@ -1202,7 +1211,8 @@ class SettingsRepo(
             dialSettleMillis = preferences.getLong(keyRadioDialSettle, 1_500L).coerceIn(0L, 10_000L),
             linearDialDeadbandHz = preferences.getLong(keyRadioLinearDeadband, 20L).coerceIn(1L, 10_000L),
             fmDialDeadbandHz = preferences.getLong(keyRadioFmDeadband, 200L).coerceIn(10L, 100_000L),
-            sharedBusCommandDelayMillis = preferences.getLong(keyRadioSharedBusDelay, 0L).coerceIn(0L, 2_000L)
+            sharedBusCommandDelayMillis = preferences.getLong(keyRadioSharedBusDelay, 0L).coerceIn(0L, 2_000L),
+            l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(preferences.getLong(keyRadioL4sStep,250L))
         )
     }
     //endregion

@@ -26,4 +26,11 @@
     <string name="rc_calculator_need_tracking">請先連接電台並開始追蹤，計算器頻率修改才會套用到電台。</string>
     <string name="rc_l4s_menu_open">請先關閉手台 MENU，再開始發射。</string>
     <string name="rc_l4s_tones">亞音 TX %1$s · RX %2$s · 啟用 %3$s</string>
+    <string name="rc_l4s_step">都卜勒控制步進（Hz）</string>
+    <string name="rc_l4s_step_hint">預設 250 Hz；可設 10–10000 Hz，須為 10 的整數倍。發射期間兩路頻率保持不變。</string>
+    <string name="rc_l4s_bases">基準 TX %1$s · RX %2$s</string>
+    <string name="rc_l4s_corrections">修正 TX %1$d Hz · RX %2$d Hz · 步進 %3$d Hz</string>
+    <string name="rc_l4s_presets_hint">點選 F1–F8 填入內容，長按編輯；按「傳送」才開始拍發。</string>
+    <string name="rc_l4s_edit_preset">編輯 F%1$d 預設</string>
+    <string name="rc_l4s_preset_save_hint">儲存在本機。清空內容可清除預設；編輯不會發射。</string>
 </resources>

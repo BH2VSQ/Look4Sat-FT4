@@ -26,4 +26,11 @@
     <string name="rc_calculator_need_tracking">请先连接电台并开始跟踪，计算器频率修改才会应用到电台。</string>
     <string name="rc_l4s_menu_open">请先关闭手台 MENU，再开始发射。</string>
     <string name="rc_l4s_tones">亚音 TX %1$s · RX %2$s · 激活 %3$s</string>
+    <string name="rc_l4s_step">多普勒控制步进（Hz）</string>
+    <string name="rc_l4s_step_hint">默认 250 Hz；可设 10–10000 Hz，须为 10 的整数倍。发射期间两路频率保持不变。</string>
+    <string name="rc_l4s_bases">基准 TX %1$s · RX %2$s</string>
+    <string name="rc_l4s_corrections">修正 TX %1$d Hz · RX %2$d Hz · 步进 %3$d Hz</string>
+    <string name="rc_l4s_presets_hint">点击 F1–F8 填入内容，长按编辑；按“发送”才开始拍发。</string>
+    <string name="rc_l4s_edit_preset">编辑 F%1$d 预设</string>
+    <string name="rc_l4s_preset_save_hint">保存在本机。清空内容可清除预设；编辑不会发射。</string>
 </resources>

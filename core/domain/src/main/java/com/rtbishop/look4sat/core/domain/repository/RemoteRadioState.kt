@@ -21,7 +21,8 @@ data class RemoteRadioCapabilities(
     val liveFmRetune: Boolean,
     val liveCwRetune: Boolean,
     val trackingDisplay: Boolean = false,
-    val nativeSettings: Boolean = false
+    val nativeSettings: Boolean = false,
+    val satelliteProfiles: Boolean = false
 )
 
 data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double,
@@ -29,6 +30,22 @@ data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: D
 
 fun radioContextKey(uuid: String): String = java.security.MessageDigest.getInstance("SHA-256")
     .digest(uuid.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it.toInt() and 255) }
+
+fun radioSatelliteProfileKey(name: String, transponderUuid: String): String =
+    radioContextKey("${name.length}:$name:$transponderUuid")
+
+data class RadioBaseFrequencies(val rxHz: Long, val txHz: Long?)
+
+fun normalizeL4sStep(stepHz: Long): Long = stepHz.coerceIn(10L,10_000L)/10*10
+
+fun l4sTrackingTarget(hz: Long, correctionHz: Long, stepHz: Long): Long {
+    val adjusted=Math.addExact(hz,correctionHz)
+    require(adjusted in 1..0xfffffffaL) { "L4S corrected frequency outside unsigned 32-bit Hz range" }
+    val step=normalizeL4sStep(stepHz)
+    val target=(adjusted+step/2)/step*step
+    require(target in 1..0xfffffffaL) { "L4S quantized frequency outside unsigned 32-bit Hz range" }
+    return target
+}
 
 data class RemoteRadioState(
     val connected: Boolean = false,
@@ -58,7 +75,14 @@ data class RemoteRadioState(
     val nativeProfileValid: Boolean = false,
     val nativeProfileKey: String? = null,
     val nativeSavedMode: Int? = null,
-    val nativeSavedTxCtcssHz: Double? = null
+    val nativeSavedTxCtcssHz: Double? = null,
+    val nativeBaseFrequencies: RadioBaseFrequencies? = null,
+    val nativeRxCorrectionHz: Long = 0,
+    val nativeTxCorrectionHz: Long = 0,
+    val nativeSquelch: Int? = null,
+    val nativeStepHz: Long = 250,
+    val nativeProfileGeneration: Long? = null,
+    val nativeProfileCapacity: Int? = null
 )
 
 object CwTransmitText {
@@ -82,4 +106,9 @@ object CwTransmitText {
         if (remaining.isNotEmpty()) chunks += remaining
         return chunks
     }
+}
+
+object CwTransmitPresets {
+    val defaults=listOf("CQ CQ CQ", "DE", "K", "RR", "599", "TNX", "73", "SK")
+    fun normalize(text: String): String = if(text.isBlank()) "" else CwTransmitText.normalize(text)
 }
