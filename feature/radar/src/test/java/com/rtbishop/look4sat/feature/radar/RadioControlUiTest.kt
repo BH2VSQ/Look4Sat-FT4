@@ -69,9 +69,6 @@ class RadioControlUiTest {
         assertFalse(stackRadioActionButtons(360f, 1f))
         assertTrue(stackRadioActionButtons(240f, 1f))
         assertTrue(stackRadioActionButtons(360f, 1.5f))
-        assertFalse(stackReferenceFrequencyValues(280f, 1f))
-        assertTrue(stackReferenceFrequencyValues(200f, 1f))
-        assertTrue(stackReferenceFrequencyValues(280f, 2f))
     }
 
     @Test fun runtimeModeTakesPriorityOverTheTransponderDefaultForToneVisibility() {

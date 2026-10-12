@@ -7,7 +7,7 @@
     <string name="rc_panel_waiting">等待频率同步</string>
     <string name="rc_panel_rx">RX</string>
     <string name="rc_panel_tx">TX</string>
-    <string name="rc_panel_frequency_mhz">%1$s MHz</string>
+    <string name="rc_panel_reference_pair">RX %1$s · TX %2$s MHz</string>
     <string name="rc_panel_fine_tune">微调（Hz）</string>
     <string name="rc_panel_tx_tone">发射亚音</string>
     <string name="rc_panel_tone_hz">%1$s Hz</string>

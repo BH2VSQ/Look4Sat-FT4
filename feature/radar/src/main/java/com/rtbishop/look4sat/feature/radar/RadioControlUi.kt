@@ -38,9 +38,6 @@ internal fun referenceAdjustmentColumns(widthDp: Float, fontScale: Float): Int =
 internal fun stackRadioActionButtons(widthDp: Float, fontScale: Float): Boolean =
     widthDp / fontScale.coerceAtLeast(1f) < 300f
 
-internal fun stackReferenceFrequencyValues(widthDp: Float, fontScale: Float): Boolean =
-    widthDp / fontScale.coerceAtLeast(1f) < 220f
-
 internal fun showTxToneControl(hasUplink: Boolean, currentMode: String?, transponderMode: String?): Boolean {
     val mode = currentMode?.takeIf { it.isNotBlank() } ?: transponderMode
     return hasUplink && mode?.trim()?.uppercase(Locale.US) in setOf("FM", "FMN", "FM-N", "NFM")

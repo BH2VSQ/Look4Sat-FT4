@@ -7,6 +7,7 @@ package com.rtbishop.look4sat.feature.radar
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -68,32 +69,36 @@ internal fun ReferenceFrequencyControls(control: RadioControlSubState, onAction:
     val enabled = !control.frequencyEditingLocked && control.referenceRxHz != null
     val title = stringResource(R.string.rc_panel_reference)
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
         shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
-        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, role = Role.Button,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f)),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = enabled, role = Role.Button,
             onClickLabel = title, onClick = { showEditor = true })
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(if (control.calculatorLinked) R.string.rc_panel_linked else R.string.rc_panel_independent),
-                            style = MaterialTheme.typography.labelSmall)
-                        control.remoteRadio?.takeIf { it.capabilities?.satelliteProfiles == true }?.let { remote ->
-                            Text(stringResource(if (control.referenceDirty || remote.profileStore?.dirty == true || !remote.nativeProfileValid)
-                                R.string.rc_panel_unsaved else R.string.rc_panel_saved), style = MaterialTheme.typography.labelSmall)
-                        }
-                        if (control.referenceRxHz == null) Text(stringResource(R.string.rc_panel_waiting),
-                            style = MaterialTheme.typography.labelSmall)
+                FlowRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text(stringResource(if (control.calculatorLinked) R.string.rc_panel_linked else R.string.rc_panel_independent),
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    control.remoteRadio?.takeIf { it.capabilities?.satelliteProfiles == true }?.let { remote ->
+                        Text(stringResource(if (control.referenceDirty || remote.profileStore?.dirty == true || !remote.nativeProfileValid)
+                            R.string.rc_panel_unsaved else R.string.rc_panel_saved), style = MaterialTheme.typography.labelSmall)
                     }
+                    if (control.referenceRxHz == null) Text(stringResource(R.string.rc_panel_waiting),
+                        style = MaterialTheme.typography.labelSmall)
                 }
-                Icon(painterResource(R.drawable.ic_edit), contentDescription = null, modifier = Modifier.size(24.dp),
+                Icon(painterResource(R.drawable.ic_edit), contentDescription = null, modifier = Modifier.size(20.dp),
                     tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            ReferenceValue(stringResource(R.string.rc_panel_rx), control.referenceRxHz)
-            ReferenceValue(stringResource(R.string.rc_panel_tx), control.txBaseFrequencyHz)
+            Text(
+                stringResource(R.string.rc_panel_reference_pair,
+                    control.referenceRxHz?.let(::referenceFrequencyText) ?: "—",
+                    control.txBaseFrequencyHz?.let(::referenceFrequencyText) ?: "—"),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                maxLines = 1, softWrap = false,
+                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace
+            )
         }
     }
     if (showEditor) {
@@ -101,25 +106,6 @@ internal fun ReferenceFrequencyControls(control: RadioControlSubState, onAction:
             action(RadarAction.SetBaseFrequencies(it))
             showEditor = false
         })
-    }
-}
-
-@Composable
-private fun ReferenceValue(label: String, frequencyHz: Long?) {
-    val value = frequencyHz?.let { stringResource(R.string.rc_panel_frequency_mhz, referenceFrequencyText(it)) } ?: "—"
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        if (stackReferenceFrequencyValues(maxWidth.value, LocalDensity.current.fontScale)) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(value, modifier = Modifier.weight(1f), textAlign = TextAlign.End,
-                    style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
-            }
-        }
     }
 }
 
