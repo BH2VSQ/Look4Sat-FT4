@@ -123,6 +123,12 @@ A single-language body is a defect: fix it before the release counts as done.
 同一数字，不做自由意译），只列本版改动；两段末尾都写验证情况（跑了哪些单测、签名/ABI 校验）。
 只写一种语言视为缺陷，需补齐后再算发布完成。
 
+## 用户界面文案
+
+- 正常界面保持简洁，只保留必要的名称、数值、连接状态和可操作的错误反馈。
+- RX/TX 基准和 UV-K1/UV-K5 V3 连接区域等正常面板，不展示冗长的开发、测试、协议、能力或内部保护机制说明。
+- 工程细节放入现有诊断日志及导出，不用常驻提示占据操作界面。
+
 ## Copilot Working Mode: Code-Only
 
 - Default to code changes only. Provide explanations in chat only.

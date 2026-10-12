@@ -86,18 +86,9 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
             Text(stringResource(R.string.rc_l4s_cw))
         }
         cwBlockReason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-        Text(if (remote.firmware.isBlank()) stringResource(R.string.rc_l4s_need_connection)
-            else stringResource(R.string.rc_l4s_firmware, remote.firmware), color = MaterialTheme.colorScheme.primary)
         Text(stringResource(R.string.rc_l4s_applied,
             remote.txFrequencyHz?.let(::formatFrequency) ?: "—", remote.rxFrequencyHz?.let(::formatFrequency) ?: "—"),
             style = MaterialTheme.typography.bodySmall)
-        Text(stringResource(R.string.rc_l4s_target,
-            control.targetTxHz?.let(::formatFrequency) ?: "—", control.targetRxHz?.let(::formatFrequency) ?: "—"),
-            style = MaterialTheme.typography.bodySmall)
-        if (control.transmitOwner != RadioTransmitOwner.NONE || remote.txSource != 0) {
-            Text(stringResource(R.string.rc_l4s_frozen), color = MaterialTheme.colorScheme.primary)
-        }
-        Text(stringResource(R.string.rc_l4s_linear), style = MaterialTheme.typography.bodySmall)
         Text(stringResource(R.string.rc_l4s_source, when(remote.txSource) {
             1 -> "PTT"; 2 -> "CW"; 3 -> stringResource(R.string.rc_l4s_local); else -> stringResource(R.string.rc_l4s_off)
         }), style = MaterialTheme.typography.bodySmall)
@@ -105,12 +96,6 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
             fun toneLabel(hz:Double?)=hz?.let { "${it} Hz" } ?: "OFF"
             Text(stringResource(R.string.rc_l4s_tones,toneLabel(remote.txCtcssHz),toneLabel(remote.rxCtcssHz),toneLabel(remote.activationCtcssHz)),
                 style=MaterialTheme.typography.bodySmall)
-            remote.nativeBaseFrequencies?.let { bases ->
-                Text(stringResource(R.string.rc_l4s_bases,bases.txHz?.let(::formatFrequency) ?: "—",formatFrequency(bases.rxHz)),
-                    style=MaterialTheme.typography.bodySmall)
-                Text(stringResource(R.string.rc_l4s_corrections,remote.nativeTxCorrectionHz,remote.nativeRxCorrectionHz,remote.nativeStepHz),
-                    style=MaterialTheme.typography.bodySmall)
-            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(
@@ -232,7 +217,7 @@ internal fun ReferenceFrequencyControls(control: RadioControlSubState, onAction:
             val remote=control.remoteRadio
             Text(stringResource(if(control.referenceDirty || remote.profileStore?.dirty==true || !remote.nativeProfileValid)
                 R.string.rc_l4s_unsaved else R.string.rc_l4s_saved),style=MaterialTheme.typography.bodySmall)
-        } else Text(stringResource(R.string.rc_cat_runtime_reference),style=MaterialTheme.typography.bodySmall)
+        }
         OutlinedButton(onClick={showReferences=true},enabled=!control.frequencyEditingLocked && control.referenceRxHz!=null) {
             Text(stringResource(R.string.rc_l4s_frequency_settings))
         }
@@ -255,7 +240,6 @@ internal fun ReferenceFrequencyControls(control: RadioControlSubState, onAction:
                     enabled=!control.frequencyEditingLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
                 OutlinedTextField(value=tx,onValueChange={tx=it;error=false},label={Text(stringResource(R.string.rc_l4s_tx_reference))},
                     enabled=!control.frequencyEditingLocked && control.txBaseFrequencyHz!=null,singleLine=true,modifier=Modifier.fillMaxWidth())
-                Text(stringResource(if(control.isL4sModel)R.string.rc_l4s_reference_hint else R.string.rc_cat_reference_hint),style=MaterialTheme.typography.bodySmall)
                 if(error)Text(stringResource(R.string.rc_cat_invalid_reference),color=MaterialTheme.colorScheme.error)
             }
         }

@@ -1618,11 +1618,9 @@ fun RadioControlDialog(
                 Spacer(modifier = Modifier.height(6.dp))
             }
             if (isL4s) {
-                Text(stringResource(R.string.rc_l4s_hint), style = MaterialTheme.typography.bodySmall)
                 val step=l4sDopplerStepHz.value.toLongOrNull()
                 OutlinedTextField(value=l4sDopplerStepHz.value,onValueChange={l4sDopplerStepHz.value=it},
                     label={Text(stringResource(R.string.rc_l4s_step))},
-                    supportingText={Text(stringResource(R.string.rc_l4s_step_hint))},
                     isError=step==null || step !in 10L..10_000L || step%10!=0L,
                     enabled=enabled.value && !frequencyLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
                 val correctionStep=l4sCorrectionStepHz.value.toLongOrNull()
