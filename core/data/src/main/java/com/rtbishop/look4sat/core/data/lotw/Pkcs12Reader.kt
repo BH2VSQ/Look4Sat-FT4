@@ -24,6 +24,7 @@ import java.security.PrivateKey
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.security.spec.PKCS8EncodedKeySpec
+import javax.crypto.Mac
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.IvParameterSpec
@@ -172,21 +173,19 @@ internal object Pkcs12Reader {
         val finalKeyBits = if (keyBits > 0) keyBits else aesKeyBits
         require(finalKeyBits in 128..512) { "implausible PBKDF2 key size" }
 
-        val spec = PBEKeySpec(password, salt, iterations, finalKeyBits)
-        val secretKey = try {
-            SecretKeyFactory.getInstance(prfName).generateSecret(spec)
-        } catch (e: java.security.NoSuchAlgorithmException) {
-            // e.g. PBKDF2WithHmacSHA512 needs API 26+; surface the real reason.
-            error(prfName.replace("PBKDF2WithHmac", "PBKDF2-HMAC-") + " (needs Android 8.0+)")
+        val keyBytes = derivePkcs12Key(prfName, password, salt, iterations, finalKeyBits)
+        return try {
+            val cipher = Cipher.getInstance(cipherName)
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                if (cipherName == "AES/CBC/PKCS5Padding") SecretKeySpec(keyBytes, "AES")
+                else SecretKeySpec(keyBytes, "DESede"),
+                IvParameterSpec(iv)
+            )
+            cipher.doFinal(encrypted)
+        } finally {
+            keyBytes.fill(0)
         }
-        val cipher = Cipher.getInstance(cipherName)
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            if (cipherName == "AES/CBC/PKCS5Padding") SecretKeySpec(secretKey.encoded, "AES")
-            else SecretKeySpec(secretKey.encoded, "DESede"),
-            IvParameterSpec(iv)
-        )
-        return cipher.doFinal(encrypted)
     }
 
     /** Human-readable name for a known algorithm OID. */
@@ -298,4 +297,70 @@ internal object Pkcs12Reader {
             return i - offset
         }
     }
+}
+
+/** Provider selection is injectable so JVM tests cannot silently fall back to SunJCE. */
+internal fun derivePkcs12Key(
+    prfName: String,
+    password: CharArray,
+    salt: ByteArray,
+    iterations: Int,
+    keyBits: Int,
+    factory: (String) -> SecretKeyFactory = { SecretKeyFactory.getInstance(it) }
+): ByteArray {
+    val spec = PBEKeySpec(password, salt, iterations, keyBits)
+    return try {
+        // Android's bundled BC factory rejects empty passwords, although PKCS#12 permits them.
+        if (password.isEmpty()) {
+            pbkdf2Hmac(byteArrayOf(), salt, iterations, keyBits / 8, prfName.removePrefix("PBKDF2With"))
+        } else {
+            try {
+                factory(prfName).generateSecret(spec).encoded
+            } catch (_: java.security.NoSuchAlgorithmException) {
+                error(prfName.replace("PBKDF2WithHmac", "PBKDF2-HMAC-") + " (needs Android 8.0+)")
+            }
+        }
+    } finally {
+        spec.clearPassword()
+    }
+}
+
+/** PBKDF2 using JCA HMAC, including zero-length passwords for all supported PBES2 PRFs. */
+internal fun pbkdf2Hmac(
+    password: ByteArray,
+    salt: ByteArray,
+    iterations: Int,
+    keyLengthBytes: Int,
+    hmacAlgorithm: String
+): ByteArray {
+    require(iterations > 0 && keyLengthBytes > 0)
+    val mac = Mac.getInstance(hmacAlgorithm)
+    // Some providers reject an empty SecretKeySpec. One zero byte has the same
+    // zero-padded HMAC key block as an empty password.
+    mac.init(SecretKeySpec(password.takeUnless(ByteArray::isEmpty) ?: byteArrayOf(0), hmacAlgorithm))
+    val output = ByteArray(keyLengthBytes)
+    val input = ByteArray(salt.size + 4)
+    salt.copyInto(input)
+    var outputOffset = 0
+    var block = 1
+    while (outputOffset < output.size) {
+        input[input.size - 4] = (block ushr 24).toByte()
+        input[input.size - 3] = (block ushr 16).toByte()
+        input[input.size - 2] = (block ushr 8).toByte()
+        input[input.size - 1] = block.toByte()
+        var u = mac.doFinal(input)
+        val result = u.copyOf()
+        repeat(iterations - 1) {
+            u = mac.doFinal(u)
+            for (index in result.indices) result[index] = (result[index].toInt() xor u[index].toInt()).toByte()
+        }
+        val copied = minOf(result.size, output.size - outputOffset)
+        result.copyInto(output, outputOffset, 0, copied)
+        outputOffset += copied
+        u.fill(0)
+        result.fill(0)
+        block++
+    }
+    input.fill(0)
+    return output
 }
