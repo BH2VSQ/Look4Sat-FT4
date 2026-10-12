@@ -35,7 +35,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,12 +56,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.CardDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -76,7 +71,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -99,9 +93,7 @@ import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
 import com.rtbishop.look4sat.core.domain.utility.CalculatorTuning
 import com.rtbishop.look4sat.core.domain.utility.CalculatorFrequencyAnchor
-import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.R
-import com.rtbishop.look4sat.core.presentation.formatFrequency
 import com.rtbishop.look4sat.core.presentation.infiniteMarquee
 import com.rtbishop.look4sat.core.cw.CwNativeCapability
 import com.rtbishop.look4sat.core.cw.MorseExpertAudioBridge
@@ -454,148 +446,19 @@ private fun ExpandedRadioControl(
     onAction: (RadarAction) -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp)
-            .padding(bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        HorizontalDivider(
-            thickness = 1.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-        )
-
+        HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
         ReferenceFrequencyControls(radioControl, onAction)
+        TxToneControl(radio, radioControl, onAction)
         if (radioControl.isL4sModel || radioControl.remoteRadio != null) {
             RemoteRadioControls(radioControl, onAction)
         }
-
-        // Frequency tuner
-        if (radioControl.txBaseFrequencyHz != null) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "TX Base: ",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "${formatFrequency(radioControl.txBaseFrequencyHz)} MHz",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                val upLow = radio.uplinkLow
-                val upHigh = radio.uplinkHigh
-                if (upLow != null && upHigh != null && upLow != upHigh) {
-                    Text(
-                        text = "(${formatFrequency(upLow)} – ${formatFrequency(upHigh)})",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    FREQ_ADJUSTMENTS.forEach { (delta, label) ->
-                        CardButton(
-                            onClick = { onAction(RadarAction.AdjustTxFrequency(delta)) },
-                            enabled=!radioControl.frequencyEditingLocked,
-                            text = label,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-            }
-        }
-
-        // CTCSS (only for FM uplink)
-        if (radio.uplinkMode?.uppercase() in setOf("FM","FMN","FM-N","NFM")) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "CTCSS",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    val chipModifier = Modifier.width(64.dp)
-                    FilterChip(
-                        selected = radioControl.ctcssTone == null,
-                        enabled=!radioControl.frequencyEditingLocked,
-                        onClick = { onAction(RadarAction.SetCtcssTone(null)) },
-                        label = {
-                            Text(
-                                text = "Off",
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        },
-                        modifier = chipModifier
-                    )
-                    RadarViewModel.CTCSS_TONES.forEach { tone ->
-                        FilterChip(
-                            selected = radioControl.ctcssTone == tone,
-                            enabled=!radioControl.frequencyEditingLocked,
-                            onClick = { onAction(RadarAction.SetCtcssTone(tone)) },
-                            label = {
-                                Text(
-                                    text = String.format(Locale.ENGLISH, "%.1f", tone),
-                                    fontSize = 12.sp,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            },
-                            modifier = chipModifier
-                        )
-                    }
-                }
-            }
-        }
-
-        // Control buttons
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (!radioControl.txPanel.isConnected && !radioControl.rxPanel.isConnected) {
-                CardButton(
-                    onClick = { onAction(RadarAction.ConnectRadios) },
-                    text = "Connect",
-                    modifier = Modifier.weight(1f)
-                )
-            } else {
-                CardButton(
-                    onClick = { onAction(RadarAction.DisconnectRadios) },
-                    text = "Disconnect",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            CardButton(
-                onClick = { onAction(RadarAction.ToggleTracking) },
-                enabled=radioControl.isTracking || !radioControl.frequencyEditingLocked,
-                text = if (radioControl.isTracking) "Stop" else "Track",
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        // Error
-        radioControl.errorMessage?.let { msg ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                Text(text = msg, color = MaterialTheme.colorScheme.error, fontSize = 14.sp)
-            }
+        RadioTrackingButtons(radioControl, onAction)
+        radioControl.errorMessage?.let { message ->
+            Text(message, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -1235,6 +1098,3 @@ private fun transceiverTitle(radio: SatRadio): String {
     val mode = "${radio.downlinkMode ?: "--"}/${radio.uplinkMode ?: "--"}"
     return "$title ($mode)"
 }
-
-private val FREQ_ADJUSTMENTS =
-    listOf(-10_000L to "-10k", -1_000L to "-1k", -100L to "-100", 100L to "+100", 1_000L to "+1k", 10_000L to "+10k")

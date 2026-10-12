@@ -129,9 +129,7 @@ sealed interface RadarAction {
     data class SelectTransmitter(val uuid: String) : RadarAction
 
     // Radio control actions
-    data class SetTxFrequency(val frequencyHz: Long) : RadarAction
     data class SetBaseFrequencies(val bases:com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies):RadarAction
-    data class AdjustTxFrequency(val deltaHz: Long) : RadarAction
     data class SetCtcssTone(val toneHz: Double?) : RadarAction
     data object ToggleTracking : RadarAction
     data object ConnectRadios : RadarAction

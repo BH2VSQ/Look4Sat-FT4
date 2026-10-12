@@ -322,7 +322,7 @@ class RadarViewModel(
 
     fun onAction(action: RadarAction) {
         if(_uiState.value.radioControl.frequencyEditingLocked && when(action) {
-            is RadarAction.SetTxFrequency,is RadarAction.AdjustTxFrequency,is RadarAction.SetBaseFrequencies -> true
+            is RadarAction.SetBaseFrequencies -> true
             is RadarAction.ChangeCalculatorOffset -> calculatorCatnum==trackingService.state.value.currentPass?.catNum &&
                 (_uiState.value.radioControl.txPanel.isConnected || _uiState.value.radioControl.rxPanel.isConnected)
             is RadarAction.SetCtcssTone,is RadarAction.TuneCalculator,
@@ -344,9 +344,7 @@ class RadarViewModel(
                     transponders.find { it.uuid == action.uuid }?.let { trackingService.setTransponder(it) }
                 }
             }
-            is RadarAction.SetTxFrequency -> trackingService.setTxBaseFrequency(action.frequencyHz)
             is RadarAction.SetBaseFrequencies -> trackingService.setBaseFrequencies(action.bases)
-            is RadarAction.AdjustTxFrequency -> trackingService.adjustTxBaseFrequency(action.deltaHz)
             is RadarAction.SetCtcssTone -> trackingService.setCtcssTone(action.toneHz)
             RadarAction.ToggleTracking -> {
                 val svc = trackingService.state.value
