@@ -7,6 +7,10 @@ on:
         description: Existing release tag to build
         required: true
         type: string
+      source_ref:
+        description: Optional source ref for an explicitly authorized same-version rebuild
+        required: false
+        type: string
   push:
     tags:
       - v*
@@ -30,7 +34,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.source_ref || inputs.tag || github.ref }}
 
       - name: Setup Java
         uses: actions/setup-java@v5
