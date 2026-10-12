@@ -8,6 +8,35 @@ import org.junit.Test
 import kotlinx.coroutines.test.runTest
 
 class HamlibRigctldControllerTest {
+    @Test fun legacyRigWithoutPttCapabilityNeverQueriesUnsupportedStatus()=runTest {
+        val transport=FakeRigctldTransport()
+        val radio=HamlibRigctldController("localhost:4532",transport,pttReadbackSupported=false)
+        assertTrue(radio.connect());assertFalse(radio.supportsPttReadback)
+        assertNull(radio.readPttState());assertFalse(transport.commands.contains("\\get_ptt"))
+        assertFalse(radio.pttOn());assertFalse(radio.pttOff());radio.disconnect()
+        assertFalse(transport.commands.any {it.startsWith("\\set_ptt") || it=="\\get_ptt"})
+    }
+    @Test fun statusReadbackRejectsErrorsAndMalformedValuesWithoutAssumingReceive()=runTest {
+        val transport=FakeRigctldTransport()
+        val radio=HamlibRigctldController("localhost:4532",transport)
+        assertTrue(radio.connect());assertEquals(false,radio.readPttState())
+        assertTrue(radio.pttOn());assertEquals(true,radio.readPttState())
+        for(value in listOf("garbage\n","RPRT -11\n","4\n","-1\n")) {
+            transport.faults["\\get_ptt"]=value
+            assertNull(radio.readPttState())
+        }
+    }
+
+    @Test fun timeoutDropsStreamBeforeLateRepliesCanPolluteNextCommand()=runTest {
+        val transport=FakeRigctldTransport()
+        val radio=HamlibRigctldController("localhost:4532",transport)
+        assertTrue(radio.connect())
+        transport.faults["\\get_mode"]="USB\n"
+        assertNull(radio.readFrequencyAndMode())
+        assertFalse(radio.isConnected);assertFalse(transport.isConnected)
+        transport.faults.clear()
+        assertTrue(radio.connect());assertEquals(145900000L to "USB",radio.readFrequencyAndMode())
+    }
 
     @Test
     fun connectRequiresValidFrequencyAndMode() = runTest {

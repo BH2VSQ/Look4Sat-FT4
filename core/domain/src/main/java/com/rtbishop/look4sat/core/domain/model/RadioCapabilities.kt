@@ -11,7 +11,8 @@ package com.rtbishop.look4sat.core.domain.model
 
 enum class RadioProtocolFamily {
     YAESU_CAT,
-    ICOM_CIV
+    ICOM_CIV,
+    L4S
 }
 
 enum class RadioBand {
@@ -171,7 +172,18 @@ object RadioModelCatalog {
             serialStopBits = 1,
             defaultCivAddress = 0x42
         )
-    )
+    ) + listOf(RadioControlSettings.MODEL_QUANSHENG_UVK1, RadioControlSettings.MODEL_QUANSHENG_UVK5V3).map { model ->
+        RadioModelDescriptor(
+            model, RadioProtocolFamily.L4S,
+            RadioCapabilities(
+                fullDuplex = false, receiveOnly = false, frequencyReadback = true,
+                singleRadioSplit = true, satelliteMode = false, dataMode = false,
+                ptt = true, narrowFm = true, canSetTxFrequencyWhileTransmitting = false,
+                bands = setOf(RadioBand.TWO_METERS, RadioBand.SEVENTY_CENTIMETERS)
+            ),
+            baudRates = listOf(38_400), serialStopBits = 1
+        )
+    }
     private val byModel = descriptors.associateBy(RadioModelDescriptor::model)
 
     val supportedModels: List<String> = descriptors.map(RadioModelDescriptor::model)

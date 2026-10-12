@@ -17,6 +17,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Ic705ControllerTest {
+    @Test fun modernIcomReadPttUsesStatusQueryAndIc820NeverSendsIt()=runTest {
+        for(variant in IcomCivVariant.entries) {
+            val transport=ScriptedCivTransport()
+            val radio=Ic705Controller(null,"USB",transport=transport,variant=variant,dedicatedSatelliteMode=false)
+            assertTrue(radio.connect())
+            transport.payloads.clear()
+            if(variant==IcomCivVariant.IC820) {
+                assertFalse(radio.supportsPttReadback);assertNull(radio.readPttState())
+                assertFalse(transport.payloads.contains("1C:00"))
+            } else {
+                assertTrue(radio.supportsPttReadback);assertEquals(false,radio.readPttState())
+                assertEquals(listOf("1C:00"),transport.payloads)
+            }
+        }
+    }
     @Test
     fun ic820FrequencyAndModeWritesRequireReadbackAndUseConfiguredAddress() = runTest {
         val transport = ScriptedCivTransport(civAddress = 0x43, trackFrequencyWrites = true)
@@ -546,6 +561,7 @@ private class ScriptedCivTransport(
                 else -> replies += ack()
             }
             0x1B -> replies += ack()
+            0x1C -> replies += response(0x1C,0x00,0x00)
             0x25 -> replies += ack()
             0x06 -> {
                 if (payload.size >= 2) {
@@ -562,8 +578,8 @@ private class ScriptedCivTransport(
                 } else {
                     val mode = modeReadbackOverride ?: if (payload[1].toInt() == 0) mainMode else subMode
                     val otherSelector = if (payload[1].toInt() == 0) 0x01 else 0x00
-                    replies += response(0x26, otherSelector, mode, 0x01)
-                    replies += response(0x26, payload[1].toInt(), mode, 0x01)
+                    replies += response(0x26, otherSelector, mode, 0x00, 0x01)
+                    replies += response(0x26, payload[1].toInt(), mode, 0x00, 0x01)
                 }
             }
         }

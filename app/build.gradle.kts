@@ -25,10 +25,13 @@ val hasReleaseSigning = listOf(
     releaseKeyPassword
 ).all { it != null } && file(releaseStoreFile.orEmpty()).isFile
 
+val l4sDevelopment = providers.gradleProperty("l4sDevelopment").orNull == "true"
+
 android {
     namespace = libs.versions.packageName.get()
     defaultConfig {
-        applicationId = "cn.ba7opf.look4sat"
+        applicationId = if (l4sDevelopment) "cn.ba7opf.look4sat.l4s" else "cn.ba7opf.look4sat"
+        if (l4sDevelopment) versionCode = libs.versions.appVersionCode.get().toInt() + 5
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
@@ -45,6 +48,7 @@ android {
     }
     buildTypes {
         release {
+            if (l4sDevelopment) versionNameSuffix = "-l4s-alpha7"
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }

@@ -17,7 +17,9 @@ class RadioCapabilitiesTest {
                 RadioControlSettings.MODEL_ICOM_IC705,
                 RadioControlSettings.MODEL_ICOM_IC9700,
                 RadioControlSettings.MODEL_ICOM_IC910,
-                RadioControlSettings.MODEL_ICOM_IC820
+                RadioControlSettings.MODEL_ICOM_IC820,
+                RadioControlSettings.MODEL_QUANSHENG_UVK1,
+                RadioControlSettings.MODEL_QUANSHENG_UVK5V3
             ),
             RadioModelCatalog.supportedModels
         )

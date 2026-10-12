@@ -71,6 +71,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -1164,7 +1165,9 @@ private fun OutputChannelSection(
 fun RadioControlDialog(
     initialSettings: RadioControlSettings,
     onDismiss: () -> Unit,
-    onSave: (RadioControlSettings) -> Unit
+    onSave: (RadioControlSettings) -> Unit,
+    frequencyLocked:Boolean=false,
+    onOpenProfiles:()->Unit={}
 ) {
     val context    = androidx.compose.ui.platform.LocalContext.current
     val padding    = LocalSpacing.current.large
@@ -1199,6 +1202,8 @@ fun RadioControlDialog(
     val fmDialDeadbandHz = rememberSaveable {
         mutableStateOf(initialSettings.fmDialDeadbandHz.toString())
     }
+    val l4sDopplerStepHz = rememberSaveable { mutableStateOf(initialSettings.l4sDopplerStepHz.toString()) }
+    val l4sCorrectionStepHz = rememberSaveable { mutableStateOf(initialSettings.l4sCorrectionEditStepHz.toString()) }
     val sharedBusDelayMillis = rememberSaveable {
         mutableStateOf(initialSettings.sharedBusCommandDelayMillis.toString())
     }
@@ -1305,11 +1310,12 @@ fun RadioControlDialog(
 
     val modelDescriptor = radioModelDescriptor(radioModel.value)
     val isIcom = modelDescriptor.protocolFamily == RadioProtocolFamily.ICOM_CIV
+    val isL4s = modelDescriptor.protocolFamily == RadioProtocolFamily.L4S
     val isVox = catTransport.value == RadioControlSettings.TRANSPORT_VOX
     val supportsSatelliteMode = modelDescriptor.capabilities.satelliteMode &&
         !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
             tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-    val isSingleRadio = modelDescriptor.capabilities.singleRadioSplit && splitMode.value
+    val isSingleRadio = modelDescriptor.capabilities.singleRadioSplit && (splitMode.value || isL4s)
     val requiredStopBits = modelDescriptor.serialStopBits
 
     val baudRates = radioBaudRates(radioModel.value)
@@ -1411,6 +1417,11 @@ fun RadioControlDialog(
             txAddressError.value || rxAddressError.value || civAddressError.value ||
             txUsbError.value != null || rxUsbError.value != null
         ) return@accept
+        val parsedL4sStep=l4sDopplerStepHz.value.toLongOrNull()
+        if(isL4s && (parsedL4sStep==null || parsedL4sStep !in 10L..10_000L || parsedL4sStep%10!=0L)) return@accept
+        if(frequencyLocked)return@accept
+        val correctionStep=l4sCorrectionStepHz.value.toLongOrNull()
+        if(isL4s && (correctionStep==null || correctionStep !in 10L..1000L || correctionStep%10!=0L))return@accept
         onSave(
             RadioControlSettings(
                 enabled        = enabled.value,
@@ -1436,7 +1447,9 @@ fun RadioControlDialog(
                 dialSettleMillis = dialSettleMillis.value.toLongOrNull() ?: 1_500L,
                 linearDialDeadbandHz = linearDialDeadbandHz.value.toLongOrNull() ?: 20L,
                 fmDialDeadbandHz = fmDialDeadbandHz.value.toLongOrNull() ?: 200L,
-                sharedBusCommandDelayMillis = sharedBusDelayMillis.value.toLongOrNull() ?: 0L
+                sharedBusCommandDelayMillis = sharedBusDelayMillis.value.toLongOrNull() ?: 0L,
+                l4sDopplerStepHz = parsedL4sStep ?: 250L,
+                l4sCorrectionEditStepHz = correctionStep ?: 10L
             )
         )
         onDismiss()
@@ -1467,7 +1480,9 @@ fun RadioControlDialog(
 
             Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                RadioControlSettings.SUPPORTED_TRANSPORTS.forEach { transport ->
+                RadioControlSettings.SUPPORTED_TRANSPORTS.filter {
+                    !isL4s || it == RadioControlSettings.TRANSPORT_USB
+                }.forEach { transport ->
                     FilterChip(
                         selected = catTransport.value == transport,
                         onClick = {
@@ -1534,6 +1549,16 @@ fun RadioControlDialog(
                             val currentAddress = parseCivAddress(civAddress.value)
                             val modelChanged = radioModel.value != model
                             radioModel.value = model
+                            if (radioModelDescriptor(model).protocolFamily == RadioProtocolFamily.L4S) {
+                                splitMode.value = true
+                                if (catTransport.value != RadioControlSettings.TRANSPORT_USB) {
+                                    txAddressByTransport[catTransport.value] = txAddress.value
+                                    txNameByTransport[catTransport.value] = txName.value
+                                    catTransport.value = RadioControlSettings.TRANSPORT_USB
+                                    txAddress.value = txAddressByTransport[RadioControlSettings.TRANSPORT_USB].orEmpty()
+                                    txName.value = txNameByTransport[RadioControlSettings.TRANSPORT_USB].orEmpty()
+                                }
+                            }
                             val newCapabilities = radioModelDescriptor(model).capabilities
                             if (!newCapabilities.singleRadioSplit) splitMode.value = false
                             if (!newCapabilities.satelliteMode) {
@@ -1592,7 +1617,23 @@ fun RadioControlDialog(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
             }
-            if (modelDescriptor.capabilities.singleRadioSplit) {
+            if (isL4s) {
+                Text(stringResource(R.string.rc_l4s_hint), style = MaterialTheme.typography.bodySmall)
+                val step=l4sDopplerStepHz.value.toLongOrNull()
+                OutlinedTextField(value=l4sDopplerStepHz.value,onValueChange={l4sDopplerStepHz.value=it},
+                    label={Text(stringResource(R.string.rc_l4s_step))},
+                    supportingText={Text(stringResource(R.string.rc_l4s_step_hint))},
+                    isError=step==null || step !in 10L..10_000L || step%10!=0L,
+                    enabled=enabled.value && !frequencyLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
+                val correctionStep=l4sCorrectionStepHz.value.toLongOrNull()
+                OutlinedTextField(value=l4sCorrectionStepHz.value,onValueChange={l4sCorrectionStepHz.value=it},
+                    label={Text(stringResource(R.string.rc_l4s_correction_step))},
+                    isError=correctionStep==null || correctionStep !in 10L..1000L || correctionStep%10!=0L,
+                    enabled=enabled.value && !frequencyLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
+                if(frequencyLocked)Text(stringResource(R.string.rc_l4s_edit_locked),color=MaterialTheme.colorScheme.primary)
+                OutlinedButton(onClick=onOpenProfiles,modifier=Modifier.fillMaxWidth()) {Text(stringResource(R.string.rc_l4s_profiles))}
+            }
+            if (modelDescriptor.capabilities.singleRadioSplit && !isL4s) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically,
@@ -1639,7 +1680,11 @@ fun RadioControlDialog(
             }
 
             // TX radio (the sole CAT connection in single-radio duplex mode).
-            val txLabel = stringResource(if (isSingleRadio) R.string.rc_single_radio else R.string.rc_tx_radio)
+            val txLabel = stringResource(when {
+                isL4s -> R.string.rc_l4s_radio
+                isSingleRadio -> R.string.rc_single_radio
+                else -> R.string.rc_tx_radio
+            })
             Text(txLabel, fontWeight = FontWeight.Medium)
             if (catTransport.value == RadioControlSettings.TRANSPORT_TCP) {
                 OutlinedTextField(

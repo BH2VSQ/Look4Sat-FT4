@@ -19,6 +19,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IcomCivProtocolTest {
+    @Test fun selectedVfoNarrowFmIncludesDataByteBeforeFilter() {
+        assertArrayEquals(civCommand(0x26,0x00,0x05,0x00,0x02),
+            IcomCivProtocol.buildSetVfoModeCommand(true,"NFM"))
+        assertArrayEquals(civCommand(0x26,0x01,0x05,0x00,0x02),
+            IcomCivProtocol.buildSetVfoModeCommand(false,"FM-N"))
+    }
     @Test
     fun ic820UsesItsOwnBandAccessAndSplitTableWithoutChangingModernCommands() {
         assertArrayEquals(civCommand(0x07, 0xD1), IcomCivProtocol.buildIc820BandAccessCommand(main = true))

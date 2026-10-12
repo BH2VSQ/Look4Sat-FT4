@@ -193,7 +193,23 @@ class SerialRadioController(
     private val delegate: IRadioController,
     private val actor: RadioCommandActor
 ) : IRadioController {
+    override val remoteState get() = delegate.remoteState
+    override val supportsAtomicPair get() = delegate.supportsAtomicPair
+    override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?) =
+        actor.execute { delegate.setTrackingFrequencies(rxHz, txHz) }
+    override suspend fun startCw(text: String, wpm: Int) =
+        actor.executePttOn { delegate.startCw(text, wpm) }
+    override suspend fun updateTrackingDisplay(display: com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay) =
+        actor.execute { delegate.updateTrackingDisplay(display) }
+    override suspend fun prepareTrackingContext(contextKey: String) = actor.execute { delegate.prepareTrackingContext(contextKey) }
+    override suspend fun selectSatelliteProfile(name: String, transponderUuid: String) =
+        actor.execute { delegate.selectSatelliteProfile(name,transponderUuid) }
+    override suspend fun updateTrackingBases(bases: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies) =
+        actor.execute { delegate.updateTrackingBases(bases) }
+    override suspend fun profileStoreCommand(data:ByteArray)=actor.execute {delegate.profileStoreCommand(data)}
     override val isConnected: Boolean get() = delegate.isConnected
+    override val supportsPttReadback get() = delegate.supportsPttReadback
+    override suspend fun readPttState() = actor.execute(operation = delegate::readPttState)
     override suspend fun connect() = actor.execute(CONNECT_TIMEOUT_MILLIS, delegate::connect)
     override suspend fun disconnect() = actor.execute(operation = delegate::disconnect)
     override suspend fun setFrequency(frequencyHz: Long) = actor.execute { delegate.setFrequency(frequencyHz) }

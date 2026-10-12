@@ -155,7 +155,10 @@ data class RadioControlSettings(
     /** Manual-tuning detection threshold for FM transponders. */
     val fmDialDeadbandHz: Long = 200L,
     /** Optional spacing between commands sharing one physical CAT connection. */
-    val sharedBusCommandDelayMillis: Long = 0L
+    val sharedBusCommandDelayMillis: Long = 0L,
+    /** L4S tracking/control quantum, distinct from the radio's 10 Hz hardware resolution. */
+    val l4sDopplerStepHz: Long = 250L,
+    val l4sCorrectionEditStepHz: Long = 10L
 ) {
     companion object {
         const val MODEL_YAESU_FT817 = "Yaesu FT-817/818"
@@ -164,6 +167,8 @@ data class RadioControlSettings(
         const val MODEL_ICOM_IC9700 = "Icom IC-9700"
         const val MODEL_ICOM_IC910 = "Icom IC-910/D/H"
         const val MODEL_ICOM_IC820 = "Icom IC-820"
+        const val MODEL_QUANSHENG_UVK1 = "Quansheng UV-K1 (L4S)"
+        const val MODEL_QUANSHENG_UVK5V3 = "Quansheng UV-K5 V3 (L4S)"
         const val TRANSPORT_BLUETOOTH = "BLUETOOTH"
         const val TRANSPORT_USB = "USB"
         const val TRANSPORT_TCP = "TCP"

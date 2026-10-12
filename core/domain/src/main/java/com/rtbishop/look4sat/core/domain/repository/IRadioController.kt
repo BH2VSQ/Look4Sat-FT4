@@ -22,7 +22,22 @@ import kotlinx.coroutines.withContext
 
 interface IRadioController {
 
+    val remoteState: kotlinx.coroutines.flow.StateFlow<RemoteRadioState>? get() = null
+    val supportsAtomicPair: Boolean get() = false
+    suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult = FrequencyPairResult.UNSUPPORTED
+    suspend fun startCw(text: String, wpm: Int): Boolean = false
+    suspend fun updateTrackingDisplay(display: RadioTrackingDisplay): Boolean = true
+    suspend fun prepareTrackingContext(contextKey: String): Boolean = true
+    suspend fun selectSatelliteProfile(name: String, transponderUuid: String): Boolean =
+        prepareTrackingContext(radioContextKey(transponderUuid))
+    suspend fun updateTrackingBases(bases: RadioBaseFrequencies): Boolean = true
+    suspend fun profileStoreCommand(data:ByteArray):ByteArray?=null
+
     val isConnected: Boolean
+
+    /** Null means a supported query failed, not a confirmed receive state. */
+    val supportsPttReadback: Boolean get() = false
+    suspend fun readPttState(): Boolean? = null
 
     suspend fun connect(): Boolean
 

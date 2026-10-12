@@ -97,6 +97,8 @@ import com.rtbishop.look4sat.core.domain.audio.IAudioHub
 import com.rtbishop.look4sat.core.domain.model.SatRadio
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
+import com.rtbishop.look4sat.core.domain.utility.CalculatorTuning
+import com.rtbishop.look4sat.core.domain.utility.CalculatorFrequencyAnchor
 import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.formatFrequency
@@ -170,6 +172,7 @@ fun CalculatorPage(
     cw: CwSubState,
     audioHub: IAudioHub,
     calculatorOffsetKHz: String = "",
+    radioControl: RadioControlSubState = RadioControlSubState(),
     onAction: (RadarAction) -> Unit,
     requestMicPermission: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -225,12 +228,22 @@ fun CalculatorPage(
             }
         }
 
+        if (radioControl.isL4sModel || radioControl.txPanel.isConnected || radioControl.rxPanel.isConnected) {
+            Text(stringResource(if(radioControl.frequencyEditingLocked && selectedTransceiver.uuid==radioControl.selectedTransponderUuid &&
+                    (radioControl.txPanel.isConnected || radioControl.rxPanel.isConnected))R.string.rc_l4s_edit_locked
+                else if (radioControl.isTracking) R.string.rc_calculator_cat_link else R.string.rc_calculator_need_tracking),
+                style = MaterialTheme.typography.bodySmall)
+        }
         DopplerFrequencyCalculator(
             transponder = selectedTransceiver,
             orbitalPos = orbitalPos,
             offsetKHz = calculatorOffsetKHz,
             onOffsetChange = { onAction(RadarAction.ChangeCalculatorOffset(it)) },
             onFrequencyChange = { tx, rx -> onAction(RadarAction.UpdateCalculatorFrequency(tx, rx)) },
+            onTuningChange = { if(!radioControl.frequencyEditingLocked && (radioControl.txPanel.isConnected || radioControl.rxPanel.isConnected))onAction(RadarAction.TuneCalculator(it)) },
+            initialTxBaseHz = radioControl.txBaseFrequencyHz.takeIf { selectedTransceiver.uuid == selectedUuid },
+            editingEnabled=!radioControl.frequencyEditingLocked || selectedTransceiver.uuid!=radioControl.selectedTransponderUuid ||
+                (!radioControl.txPanel.isConnected && !radioControl.rxPanel.isConnected),
             modifier = Modifier.fillMaxWidth()
         )
 
@@ -452,6 +465,11 @@ private fun ExpandedRadioControl(
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
         )
 
+        ReferenceFrequencyControls(radioControl, onAction)
+        if (radioControl.isL4sModel || radioControl.remoteRadio != null) {
+            RemoteRadioControls(radioControl, onAction)
+        }
+
         // Frequency tuner
         if (radioControl.txBaseFrequencyHz != null) {
             Column(
@@ -489,6 +507,7 @@ private fun ExpandedRadioControl(
                     FREQ_ADJUSTMENTS.forEach { (delta, label) ->
                         CardButton(
                             onClick = { onAction(RadarAction.AdjustTxFrequency(delta)) },
+                            enabled=!radioControl.frequencyEditingLocked,
                             text = label,
                             modifier = Modifier.weight(1f)
                         )
@@ -498,7 +517,7 @@ private fun ExpandedRadioControl(
         }
 
         // CTCSS (only for FM uplink)
-        if (radio.uplinkMode?.uppercase() == "FM") {
+        if (radio.uplinkMode?.uppercase() in setOf("FM","FMN","FM-N","NFM")) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
@@ -517,6 +536,7 @@ private fun ExpandedRadioControl(
                     val chipModifier = Modifier.width(64.dp)
                     FilterChip(
                         selected = radioControl.ctcssTone == null,
+                        enabled=!radioControl.frequencyEditingLocked,
                         onClick = { onAction(RadarAction.SetCtcssTone(null)) },
                         label = {
                             Text(
@@ -531,6 +551,7 @@ private fun ExpandedRadioControl(
                     RadarViewModel.CTCSS_TONES.forEach { tone ->
                         FilterChip(
                             selected = radioControl.ctcssTone == tone,
+                            enabled=!radioControl.frequencyEditingLocked,
                             onClick = { onAction(RadarAction.SetCtcssTone(tone)) },
                             label = {
                                 Text(
@@ -564,6 +585,7 @@ private fun ExpandedRadioControl(
             }
             CardButton(
                 onClick = { onAction(RadarAction.ToggleTracking) },
+                enabled=radioControl.isTracking || !radioControl.frequencyEditingLocked,
                 text = if (radioControl.isTracking) "Stop" else "Track",
                 modifier = Modifier.weight(1f)
             )
@@ -598,6 +620,9 @@ private fun DopplerFrequencyCalculator(
     offsetKHz: String = "",
     onOffsetChange: (String) -> Unit = {},
     onFrequencyChange: (Long, Long) -> Unit = { _, _ -> },
+    onTuningChange: (CalculatorTuning) -> Unit = {},
+    initialTxBaseHz: Long? = null,
+    editingEnabled:Boolean=true,
     modifier: Modifier = Modifier
 ) {
     if (orbitalPos == null || !DopplerFrequencyCalculator.isLinearTransponder(transponder)) return
@@ -671,7 +696,7 @@ private fun DopplerFrequencyCalculator(
         offsetHz
     ) {
         if (txFrequencyHz == 0L || rxFrequencyHz == 0L) {
-            passbandPosition = 0.5f
+            passbandPosition = initialTxBaseHz?.let { ((it-nominalTxLow).toFloat()/nominalTxRange).coerceIn(0f,1f) } ?: 0.5f
             txFrequencyHz = txAtPassbandPosition(passbandPosition)
             rxFrequencyHz = downlinkFor(txFrequencyHz) ?: (rxLow + rxRange / 2)
         } else {
@@ -699,7 +724,23 @@ private fun DopplerFrequencyCalculator(
     }
     val rxSliderValue = ((rxFrequencyHz - rxLow).toFloat() / rxRange).coerceIn(0f, 1f)
 
+    fun publishTuning() {
+        if(!editingEnabled)return
+        val anchor = when(lastEditedField) {
+            EditedField.TX -> CalculatorFrequencyAnchor.GROUND_TX
+            EditedField.RX -> CalculatorFrequencyAnchor.GROUND_RX
+            EditedField.PASSBAND -> CalculatorFrequencyAnchor.SATELLITE
+        }
+        val hz = when(lastEditedField) {
+            EditedField.TX -> txFrequencyHz
+            EditedField.RX -> rxFrequencyHz
+            EditedField.PASSBAND -> nominalTxLow + (passbandPosition.coerceIn(0f,1f)*nominalTxRange).toLong()
+        }
+        onTuningChange(CalculatorTuning(transponder.uuid,anchor,hz))
+    }
+
     fun updateTx(newTxHz: Long) {
+        if(!editingEnabled)return
         when (lastEditedField) {
             EditedField.PASSBAND -> {
                 passbandPosition = txPosition(newTxHz)
@@ -711,9 +752,11 @@ private fun DopplerFrequencyCalculator(
                 rxFrequencyHz = downlinkFor(txFrequencyHz) ?: rxFrequencyHz
             }
         }
+        publishTuning()
     }
 
     fun updateRx(newRxHz: Long) {
+        if(!editingEnabled)return
         when (lastEditedField) {
             EditedField.PASSBAND -> {
                 val txFromRx = uplinkFor(newRxHz)
@@ -730,6 +773,7 @@ private fun DopplerFrequencyCalculator(
                 txFrequencyHz = uplinkFor(rxFrequencyHz) ?: txFrequencyHz
             }
         }
+        publishTuning()
     }
 
     Column(
@@ -749,6 +793,7 @@ private fun DopplerFrequencyCalculator(
                 ) {
                     FilterChip(
                         selected = lastEditedField == EditedField.TX,
+                        enabled=editingEnabled,
                         onClick = {
                             when (lastEditedField) {
                                 EditedField.TX -> {
@@ -760,6 +805,7 @@ private fun DopplerFrequencyCalculator(
                                 EditedField.PASSBAND -> { lastEditedField = EditedField.TX }
                                 else -> { lastEditedField = EditedField.TX }
                             }
+                            publishTuning()
                         },
                         label = {
                             Text("TX", fontSize = 13.sp, textAlign = TextAlign.Center,
@@ -769,6 +815,7 @@ private fun DopplerFrequencyCalculator(
                     )
                     FilterChip(
                         selected = lastEditedField == EditedField.RX,
+                        enabled=editingEnabled,
                         onClick = {
                             when (lastEditedField) {
                                 EditedField.RX -> {
@@ -784,6 +831,7 @@ private fun DopplerFrequencyCalculator(
                                 }
                                 else -> { lastEditedField = EditedField.RX }
                             }
+                            publishTuning()
                         },
                         label = {
                             Text("RX", fontSize = 13.sp, textAlign = TextAlign.Center,
@@ -802,6 +850,7 @@ private fun DopplerFrequencyCalculator(
                 ) {
                     BasicTextField(
                         value = offsetKHz,
+                        enabled=editingEnabled,
                         onValueChange = { value ->
                             if (isValidCalculatorOffset(value)) onOffsetChange(value)
                         },
@@ -832,6 +881,7 @@ private fun DopplerFrequencyCalculator(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(
                         onClick = { updateTx(txFrequencyHz - stepSizeKHz * 1000L) },
+                        enabled=editingEnabled,
                         modifier = Modifier.width(32.dp).height(28.dp),
                         contentPadding = PaddingValues(0.dp),
                         shape = MaterialTheme.shapes.extraSmall
@@ -839,6 +889,7 @@ private fun DopplerFrequencyCalculator(
 
                     Slider(
                         value = txSliderValue,
+                        enabled=editingEnabled,
                         onValueChange = { norm ->
                             val rawFreq = txLow + (txRange * norm).toLong()
                             val snapped = ((rawFreq + 500) / 1000L) * 1000L
@@ -850,6 +901,7 @@ private fun DopplerFrequencyCalculator(
 
                     OutlinedButton(
                         onClick = { updateTx(txFrequencyHz + stepSizeKHz * 1000L) },
+                        enabled=editingEnabled,
                         modifier = Modifier.width(32.dp).height(28.dp),
                         contentPadding = PaddingValues(0.dp),
                         shape = MaterialTheme.shapes.extraSmall
@@ -902,6 +954,7 @@ private fun DopplerFrequencyCalculator(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(
                         onClick = { updateRx(rxFrequencyHz - stepSizeKHz * 1000L) },
+                        enabled=editingEnabled,
                         modifier = Modifier.width(32.dp).height(28.dp),
                         contentPadding = PaddingValues(0.dp),
                         shape = MaterialTheme.shapes.extraSmall
@@ -909,6 +962,7 @@ private fun DopplerFrequencyCalculator(
 
                     Slider(
                         value = rxSliderValue,
+                        enabled=editingEnabled,
                         onValueChange = { norm ->
                             val rawFreq = rxLow + (rxRange * norm).toLong()
                             val snapped = ((rawFreq + 500) / 1000L) * 1000L
@@ -920,6 +974,7 @@ private fun DopplerFrequencyCalculator(
 
                     OutlinedButton(
                         onClick = { updateRx(rxFrequencyHz + stepSizeKHz * 1000L) },
+                        enabled=editingEnabled,
                         modifier = Modifier.width(32.dp).height(28.dp),
                         contentPadding = PaddingValues(0.dp),
                         shape = MaterialTheme.shapes.extraSmall

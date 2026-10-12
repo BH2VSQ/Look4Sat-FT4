@@ -652,6 +652,7 @@ private fun PagerCard(
                         cw = uiState.cw,
                         audioHub = audioHub,
                         calculatorOffsetKHz = uiState.calculatorOffsetKHz,
+                        radioControl = uiState.radioControl,
                         onAction = onAction,
                         requestMicPermission = requestMicPermission
                     )
