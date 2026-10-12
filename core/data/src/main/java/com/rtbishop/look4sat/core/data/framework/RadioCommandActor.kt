@@ -193,54 +193,57 @@ class SerialRadioController(
     private val delegate: IRadioController,
     private val actor: RadioCommandActor
 ) : IRadioController {
+    override val commandTimeoutMillis get() = delegate.commandTimeoutMillis
+    private suspend fun <T> execute(operation: suspend () -> T): T =
+        actor.execute(delegate.commandTimeoutMillis, operation)
     override val remoteState get() = delegate.remoteState
     override val supportsAtomicPair get() = delegate.supportsAtomicPair
     override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?) =
-        actor.execute { delegate.setTrackingFrequencies(rxHz, txHz) }
+        execute { delegate.setTrackingFrequencies(rxHz, txHz) }
     override suspend fun startCw(text: String, wpm: Int) =
         actor.executePttOn { delegate.startCw(text, wpm) }
     override suspend fun updateTrackingDisplay(display: com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay) =
-        actor.execute { delegate.updateTrackingDisplay(display) }
-    override suspend fun prepareTrackingContext(contextKey: String) = actor.execute { delegate.prepareTrackingContext(contextKey) }
+        execute { delegate.updateTrackingDisplay(display) }
+    override suspend fun prepareTrackingContext(contextKey: String) = execute { delegate.prepareTrackingContext(contextKey) }
     override suspend fun selectSatelliteProfile(name: String, transponderUuid: String) =
-        actor.execute { delegate.selectSatelliteProfile(name,transponderUuid) }
+        execute { delegate.selectSatelliteProfile(name,transponderUuid) }
     override suspend fun updateTrackingBases(bases: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies) =
-        actor.execute { delegate.updateTrackingBases(bases) }
-    override suspend fun profileStoreCommand(data:ByteArray)=actor.execute {delegate.profileStoreCommand(data)}
+        execute { delegate.updateTrackingBases(bases) }
+    override suspend fun profileStoreCommand(data:ByteArray)=execute {delegate.profileStoreCommand(data)}
     override val isConnected: Boolean get() = delegate.isConnected
     override val supportsPttReadback get() = delegate.supportsPttReadback
-    override suspend fun readPttState() = actor.execute(operation = delegate::readPttState)
+    override suspend fun readPttState() = execute(operation = delegate::readPttState)
     override suspend fun connect() = actor.execute(CONNECT_TIMEOUT_MILLIS, delegate::connect)
-    override suspend fun disconnect() = actor.execute(operation = delegate::disconnect)
-    override suspend fun setFrequency(frequencyHz: Long) = actor.execute { delegate.setFrequency(frequencyHz) }
-    override suspend fun setMode(mode: String) = actor.execute { delegate.setMode(mode) }
+    override suspend fun disconnect() = execute(operation = delegate::disconnect)
+    override suspend fun setFrequency(frequencyHz: Long) = execute { delegate.setFrequency(frequencyHz) }
+    override suspend fun setMode(mode: String) = execute { delegate.setMode(mode) }
     override suspend fun setDataMode(enabled: Boolean, baseMode: String) =
-        actor.execute { delegate.setDataMode(enabled, baseMode) }
+        execute { delegate.setDataMode(enabled, baseMode) }
     override suspend fun setTxDataMode(enabled: Boolean, baseMode: String) =
-        actor.execute { delegate.setTxDataMode(enabled, baseMode) }
-    override suspend fun setCtcssMode(enabled: Boolean) = actor.execute { delegate.setCtcssMode(enabled) }
-    override suspend fun setCtcssTone(toneHz: Double) = actor.execute { delegate.setCtcssTone(toneHz) }
-    override suspend fun readFrequencyAndMode() = actor.execute(operation = delegate::readFrequencyAndMode)
+        execute { delegate.setTxDataMode(enabled, baseMode) }
+    override suspend fun setCtcssMode(enabled: Boolean) = execute { delegate.setCtcssMode(enabled) }
+    override suspend fun setCtcssTone(toneHz: Double) = execute { delegate.setCtcssTone(toneHz) }
+    override suspend fun readFrequencyAndMode() = execute(operation = delegate::readFrequencyAndMode)
     override suspend fun pttOn() = actor.executePttOn(operation = delegate::pttOn)
     override fun pttSafetyGeneration() = actor.currentPttGeneration()
     override suspend fun pttOnIfGeneration(expectedGeneration: Long) =
         actor.executePttOn(expectedGeneration, delegate::pttOn)
     override suspend fun pttOff() = actor.executePttOff(delegate::pttOff)
     override fun invalidatePendingPttOn() = actor.invalidatePendingPttOn()
-    override suspend fun setBand(frequencyHz: Long) = actor.execute { delegate.setBand(frequencyHz) }
-    override suspend fun setVfo(vfoA: Boolean) = actor.execute { delegate.setVfo(vfoA) }
-    override suspend fun setSplitMode(enabled: Boolean) = actor.execute { delegate.setSplitMode(enabled) }
+    override suspend fun setBand(frequencyHz: Long) = execute { delegate.setBand(frequencyHz) }
+    override suspend fun setVfo(vfoA: Boolean) = execute { delegate.setVfo(vfoA) }
+    override suspend fun setSplitMode(enabled: Boolean) = execute { delegate.setSplitMode(enabled) }
     override suspend fun setSplitModes(rxMode: String?, txMode: String?) =
-        actor.execute { delegate.setSplitModes(rxMode, txMode) }
+        execute { delegate.setSplitModes(rxMode, txMode) }
     override suspend fun configureTxCtcss(toneHz: Double?) =
-        actor.execute { delegate.configureTxCtcss(toneHz) }
-    override suspend fun setWorkingFrequency(frequencyHz: Long) = actor.execute { delegate.setWorkingFrequency(frequencyHz) }
-    override suspend fun setTxVfoFrequency(frequencyHz: Long) = actor.execute { delegate.setTxVfoFrequency(frequencyHz) }
-    override suspend fun readWorkingFrequency() = actor.execute(operation = delegate::readWorkingFrequency)
-    override suspend fun readTxVfoFrequency() = actor.execute(operation = delegate::readTxVfoFrequency)
+        execute { delegate.configureTxCtcss(toneHz) }
+    override suspend fun setWorkingFrequency(frequencyHz: Long) = execute { delegate.setWorkingFrequency(frequencyHz) }
+    override suspend fun setTxVfoFrequency(frequencyHz: Long) = execute { delegate.setTxVfoFrequency(frequencyHz) }
+    override suspend fun readWorkingFrequency() = execute(operation = delegate::readWorkingFrequency)
+    override suspend fun readTxVfoFrequency() = execute(operation = delegate::readTxVfoFrequency)
 
     private companion object {
-        // Allows insecure + secure Bluetooth SPP attempts and the model handshake to complete.
-        const val CONNECT_TIMEOUT_MILLIS = 15_000L
+        // Two 10 s RFCOMM attempts plus bounded read-only CI-V probes.
+        const val CONNECT_TIMEOUT_MILLIS = 40_000L
     }
 }

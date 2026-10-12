@@ -48,6 +48,7 @@ android {
     }
     buildTypes {
         release {
+            if (providers.gradleProperty("catBluetoothTest").orNull == "true") versionNameSuffix = "-ic705-test1"
             if (l4sDevelopment) versionNameSuffix = "-l4s-alpha7"
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")

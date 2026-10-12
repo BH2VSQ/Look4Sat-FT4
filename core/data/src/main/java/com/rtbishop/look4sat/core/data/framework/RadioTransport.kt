@@ -9,8 +9,6 @@
  */
 package com.rtbishop.look4sat.core.data.framework
 
-import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.hardware.usb.UsbConstants
@@ -19,11 +17,14 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSeverity
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSource
+import com.rtbishop.look4sat.core.domain.control.IControlDiagnostics
+import com.rtbishop.look4sat.core.domain.control.NoOpControlDiagnostics
 import com.rtbishop.look4sat.core.domain.model.RadioTcpEndpoint
 import com.rtbishop.look4sat.core.domain.model.parseRadioTcpEndpoint
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
@@ -33,122 +34,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** Backward-compatible CAT specialization of the shared station-control transport. */
 interface RadioTransport : ControlTransport {
     val lastIoFailure: String? get() = null
+    val connectionDescription: String get() = "transport"
+    val canTryAlternativeConnection: Boolean get() = false
+    suspend fun connectAlternative(): Boolean = false
+    fun configureBluetoothConnection(secureFirst: Boolean, timeoutMillis: Long) = Unit
     /** Native CDC devices may gate replies on DTR. Generic CAT adapters stay deasserted. */
     fun setCdcDtrOnConnect(enabled: Boolean) = Unit
-}
-
-class BluetoothSppRadioTransport(
-    private val manager: BluetoothManager?,
-    private val address: String
-) : RadioTransport {
-    private var socket: android.bluetooth.BluetoothSocket? = null
-    override val isConnected: Boolean get() = socket?.isConnected == true
-
-    @SuppressLint("MissingPermission")
-    override suspend fun connect(): Boolean = withContext(Dispatchers.IO) {
-        val adapter = manager?.adapter ?: return@withContext false
-        if (!BluetoothAdapter.checkBluetoothAddress(address)) return@withContext false
-        runCatching { socket?.close() }
-        socket = null
-        runCatching { adapter.cancelDiscovery() }
-        val device = try {
-            adapter.getRemoteDevice(address)
-        } catch (_: IllegalArgumentException) {
-            return@withContext false
-        }
-        val factories = listOf(
-            { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) },
-            { device.createRfcommSocketToServiceRecord(SPP_UUID) }
-        )
-        for (factory in factories) {
-            val candidate = try {
-                factory()
-            } catch (_: Exception) {
-                continue
-            }
-            socket = candidate
-            try {
-                val connected = withTimeoutOrNull(CONNECT_ATTEMPT_TIMEOUT_MILLIS) {
-                    runInterruptible { candidate.connect() }
-                    true
-                } == true
-                if (connected) return@withContext true
-                runCatching { candidate.close() }
-                socket = null
-            } catch (cancelled: CancellationException) {
-                runCatching { candidate.close() }
-                socket = null
-                throw cancelled
-            } catch (_: Exception) {
-                runCatching { candidate.close() }
-                socket = null
-            }
-        }
-        false
-    }
-
-    override suspend fun disconnect() = withContext(Dispatchers.IO) {
-        runCatching { socket?.close() }
-        socket = null
-    }
-
-    override suspend fun write(bytes: ByteArray): Boolean = withContext(Dispatchers.IO) {
-        val current = socket ?: return@withContext false
-        try {
-            val written = withTimeoutOrNull(IO_TIMEOUT_MILLIS) {
-                runInterruptible { current.outputStream.apply { write(bytes); flush() } }
-                true
-            } == true
-            if (!written) {
-                runCatching { current.close() }
-                socket = null
-            }
-            written
-        } catch (cancelled: CancellationException) {
-            runCatching { current.close() }
-            socket = null
-            throw cancelled
-        } catch (_: Exception) {
-            runCatching { current.close() }
-            socket = null
-            false
-        }
-    }
-
-    override suspend fun readAvailable(maxBytes: Int): ByteArray = withContext(Dispatchers.IO) {
-        val current = socket ?: return@withContext ByteArray(0)
-        try {
-            val input = current.inputStream
-            val count = minOf(input.available(), maxBytes)
-            if (count <= 0) return@withContext ByteArray(0)
-            val result = withTimeoutOrNull(IO_TIMEOUT_MILLIS) {
-                runInterruptible {
-                    val buffer = ByteArray(count)
-                    val read = input.read(buffer)
-                    if (read > 0) buffer.copyOf(read) else ByteArray(0)
-                }
-            }
-            if (result == null) {
-                runCatching { current.close() }
-                socket = null
-            }
-            result ?: ByteArray(0)
-        } catch (cancelled: CancellationException) {
-            runCatching { current.close() }
-            socket = null
-            throw cancelled
-        } catch (_: Exception) {
-            runCatching { current.close() }
-            socket = null
-            ByteArray(0)
-        }
-    }
-
-    private companion object {
-        val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
-        const val CONNECT_ATTEMPT_TIMEOUT_MILLIS = 4_000L
-        const val IO_TIMEOUT_MILLIS = 1_000L
-    }
 }
 
 class TcpRadioTransport(
@@ -157,6 +48,7 @@ class TcpRadioTransport(
     private val timeoutMillis: Int = 1_500
 ) : RadioTransport {
     private var socket: Socket? = null
+    override val connectionDescription get() = "tcp"
     override val isConnected: Boolean get() = socket?.let { it.isConnected && !it.isClosed } == true
 
     override suspend fun connect(): Boolean = withContext(Dispatchers.IO) {
@@ -256,7 +148,8 @@ class UsbSerialRadioTransport(
     context: Context,
     deviceSelector: String,
     private val baudRate: Int,
-    stopBits: Int = 1
+    private val stopBits: Int = 1,
+    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics
 ) : RadioTransport {
     private var cdcDtrOnConnect = false
     @Volatile override var lastIoFailure: String? = null
@@ -272,17 +165,22 @@ class UsbSerialRadioTransport(
     private var output: UsbEndpoint? = null
     private var pendingRead = ByteArray(0)
     private val lineConfiguration = usbSerialLineConfiguration(stopBits)
+    override val connectionDescription get() = "usb driver=${selectedPort?.driver ?: "unopened"} " +
+        "control=${selector?.controlInterfaceId} data=${selector?.dataInterfaceId} baud=$baudRate stopBits=$stopBits"
     override val isConnected: Boolean
         get() = connection != null && claimedInterfaces.isNotEmpty() && input != null && output != null
 
     override suspend fun connect(): Boolean = withContext(Dispatchers.IO) {
         disconnect()
         pendingRead = ByteArray(0)
-        val parsedSelector = selector ?: return@withContext false
-        val device = resolveUsbDevice(manager.deviceList.values, parsedSelector) ?: return@withContext false
-        val serialLine = lineConfiguration ?: return@withContext false
-        if (!manager.hasPermission(device) || baudRate <= 0) return@withContext false
-        val opened = manager.openDevice(device) ?: return@withContext false
+        lastIoFailure = null
+        val parsedSelector = selector ?: return@withContext connectionFailed("Invalid USB port selector")
+        val device = resolveUsbDevice(manager.deviceList.values, parsedSelector)
+            ?: return@withContext connectionFailed("Selected USB device is not attached or identity changed")
+        val serialLine = lineConfiguration ?: return@withContext connectionFailed("Unsupported stop-bit setting")
+        if (!manager.hasPermission(device)) return@withContext connectionFailed("USB permission not granted")
+        if (baudRate <= 0) return@withContext connectionFailed("Invalid USB baud rate")
+        val opened = manager.openDevice(device) ?: return@withContext connectionFailed("Android could not open USB device")
         val claimed = mutableListOf<UsbInterface>()
         try {
             val descriptors = opened.rawDescriptors ?: ByteArray(0)
@@ -293,7 +191,7 @@ class UsbSerialRadioTransport(
             }
             if (port == null) {
                 opened.close()
-                return@withContext false
+                return@withContext connectionFailed("Selected USB serial interface not found")
             }
             val interfaces = if (port.driver == UsbSerialDriverKind.CH34X) {
                 // Composite CH34x devices can expose a USB-audio function next to CAT.
@@ -308,7 +206,7 @@ class UsbSerialRadioTransport(
                 if (!opened.claimInterface(intf, true)) {
                     claimed.asReversed().forEach { opened.releaseInterface(it) }
                     opened.close()
-                    return@withContext false
+                    return@withContext connectionFailed("Could not claim USB interface ${intf.id}")
                 }
                 claimed += intf
             }
@@ -325,7 +223,7 @@ class UsbSerialRadioTransport(
             if (!configured) {
                 claimed.asReversed().forEach { opened.releaseInterface(it) }
                 opened.close()
-                return@withContext false
+                return@withContext connectionFailed("Serial configuration failed driver=${port.driver} portIndex=${port.portIndex}; check baud/line settings")
             }
             claimedInterfaces = claimed
             selectedPort = port
@@ -333,21 +231,30 @@ class UsbSerialRadioTransport(
             output = selectedOutput
             connection = opened
             connectedDevice = device
+            diagnostics.record(ControlDiagnosticSource.RADIO, "usb/connected",
+                "$connectionDescription portIndex=${port.portIndex} VID=%04X PID=%04X IN=${selectedInput.address} OUT=${selectedOutput.address}".format(device.vendorId, device.productId))
             true
         } catch (cancelled: CancellationException) {
             claimed.asReversed().forEach { runCatching { opened.releaseInterface(it) } }
             runCatching { opened.close() }
             throw cancelled
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             claimed.asReversed().forEach { runCatching { opened.releaseInterface(it) } }
             runCatching { opened.close() }
-            false
+            connectionFailed("${error.javaClass.simpleName}: ${error.message.orEmpty()}")
         }
+    }
+
+    private fun connectionFailed(reason: String): Boolean {
+        lastIoFailure = reason
+        diagnostics.record(ControlDiagnosticSource.RADIO, "usb/connect-failed", "$connectionDescription reason=$reason", ControlDiagnosticSeverity.ERROR)
+        return false
     }
 
     override suspend fun disconnect() = withContext(Dispatchers.IO) {
         val opened = connection
         val port = selectedPort
+        if (opened != null) diagnostics.record(ControlDiagnosticSource.RADIO, "usb/close", "origin=app $connectionDescription disconnect requested by caller")
         if (opened != null && port != null) runCatching {
             when (port.driver) {
                 UsbSerialDriverKind.CDC_ACM -> opened.controlTransfer(
@@ -430,7 +337,15 @@ class UsbSerialRadioTransport(
                     .coerceAtMost(MAX_USB_TRANSFER_BYTES)
             )
         }
-        val count = current.bulkTransfer(endpoint, buffer, buffer.size, READ_POLL_MILLIS)
+        val count = try {
+            current.bulkTransfer(endpoint, buffer, buffer.size, READ_POLL_MILLIS)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            lastIoFailure = "bulk IN ${error.javaClass.simpleName}: ${error.message.orEmpty()}"
+            diagnostics.record(ControlDiagnosticSource.RADIO, "usb/read-failed", "$connectionDescription $lastIoFailure", ControlDiagnosticSeverity.ERROR)
+            throw error
+        }
         if (count <= 0) return@withContext ByteArray(0)
         val payload = if (port.driver == UsbSerialDriverKind.FTDI) {
             filterFtdiStatusBytes(buffer, count, endpoint.maxPacketSize)
@@ -933,14 +848,15 @@ internal fun parseTcpEndpoint(value: String): RadioTcpEndpoint? = parseRadioTcpE
 
 class AndroidRadioTransportFactory(
     private val context: Context,
-    private val bluetoothManager: BluetoothManager?
+    private val bluetoothManager: BluetoothManager?,
+    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics
 ) {
     fun create(type: String, address: String, baudRate: Int, stopBits: Int): RadioTransport = when (type) {
-        "USB" -> UsbSerialRadioTransport(context, address, baudRate, stopBits)
+        "USB" -> UsbSerialRadioTransport(context, address, baudRate, stopBits, diagnostics)
         "TCP" -> {
             val endpoint = parseTcpEndpoint(address)
             TcpRadioTransport(endpoint?.host.orEmpty(), endpoint?.port ?: 0)
         }
-        else -> BluetoothSppRadioTransport(bluetoothManager, address)
+        else -> BluetoothSppRadioTransport(bluetoothManager, address, diagnostics)
     }
 }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 interface IRadioController {
+    val commandTimeoutMillis: Long get() = 3_000L
 
     val remoteState: kotlinx.coroutines.flow.StateFlow<RemoteRadioState>? get() = null
     val supportsAtomicPair: Boolean get() = false

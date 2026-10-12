@@ -19,6 +19,10 @@ package com.rtbishop.look4sat.core.data.framework
 
 import android.bluetooth.BluetoothManager
 import android.util.Log
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSeverity
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSource
+import com.rtbishop.look4sat.core.domain.control.IControlDiagnostics
+import com.rtbishop.look4sat.core.domain.control.NoOpControlDiagnostics
 import com.rtbishop.look4sat.core.domain.repository.IRadioController
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
@@ -48,7 +52,8 @@ class Ic705Controller(
         deviceAddress
     ),
     private val variant: IcomCivVariant = IcomCivVariant.IC705,
-    dedicatedSatelliteMode: Boolean = variant != IcomCivVariant.IC705
+    dedicatedSatelliteMode: Boolean = variant != IcomCivVariant.IC705,
+    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics
 ) : IRadioController {
 
     private val tag = when (variant) {
@@ -62,52 +67,107 @@ class Ic705Controller(
     private val usesManualVfoSelection = usesDedicatedSatelliteMode ||
         variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820
     private val ioMutex = Mutex()
+    private var civSession: Ic705CivSession? = null
     private var duplexModeEnabled = false
-    private var ctcssModeEnabled = false
 
     /** Time budget (ms) to wait for a response amid broadcast noise. */
-    private val responseTimeoutMs = if (variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820) 1_000L else 500L
+    private var handshaking = false
+    private var responseRejected = false
+    private val responseTimeoutMs get() = when {
+        handshaking -> 2_000L
+        variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820 -> 1_000L
+        else -> 500L
+    }
     /** Polling interval while draining the input buffer. */
     private val POLL_INTERVAL_MS = 20L
     /** Small pause after writing a command before reading the response. */
     private val WRITE_SETTLE_MS = 50L
 
-    override var isConnected: Boolean = false
+    @Volatile override var isConnected: Boolean = false
         private set
+    override val commandTimeoutMillis get() = if (variant == IcomCivVariant.IC705) 15_000L else 3_000L
 
     // ── Connection ──────────────────────────────────────────────────────────
 
     override suspend fun connect(): Boolean = withContext(Dispatchers.IO) {
         if (isConnected) return@withContext true
-        if (deviceAddress.isBlank()) return@withContext false
+        if (deviceAddress.isBlank()) {
+            diagnose("connect/invalid", "No radio endpoint configured", ControlDiagnosticSeverity.ERROR)
+            return@withContext false
+        }
         try {
+            if (variant == IcomCivVariant.IC705) transport.configureBluetoothConnection(true, 10_000L)
+            diagnose("connect/transport", "model=$tag opening ${transport.connectionDescription}")
             isConnected = transport.connect()
-            if (!isConnected) return@withContext false
-            // Enter VFO mode — frequency/mode commands return FA if the radio
-            // is in memory-channel mode. Safe to send regardless of current state.
-            Log.i(tag, "Connected to $deviceAddress — entering VFO mode")
-            val vfoCmd = IcomCivProtocol.buildEnterVfoModeCommand()
-            Log.d(tag, "CMD enterVfoMode → ${commandHex(vfoCmd)}")
-            val ready = ioMutex.withLock { sendAndWaitAck(vfoCmd) } && readFrequencyAndMode() != null
-            if (!ready) {
-                Log.e(tag, "Connected transport did not return a valid CI-V acknowledgement")
-                transport.disconnect()
-                isConnected = false
+            if (!isConnected) {
+                diagnose("connect/transport-failed", transport.lastIoFailure ?: "Transport could not connect", ControlDiagnosticSeverity.ERROR)
+                return@withContext false
             }
-            ready
+            handshaking = variant == IcomCivVariant.IC705
+            do {
+                if (variant == IcomCivVariant.IC705) {
+                    civSession = Ic705CivSession(transport, civAddress, diagnostics, disconnected = { isConnected = false })
+                }
+                diagnose("connect/probe", "model=$tag mode=${transport.connectionDescription} address=0x${"%02X".format(civAddress.toInt() and 0xFF)}")
+                val ready = if (variant == IcomCivVariant.IC705) {
+                    probeReadOnlyConnection()
+                } else {
+                    // Preserve legacy setup; IC-705 probing never changes radio state.
+                    ioMutex.withLock { sendAndWaitAck(IcomCivProtocol.buildEnterVfoModeCommand()) } &&
+                        readFrequencyAndMode() != null
+                }
+                if (ready && isConnected && transport.isConnected) {
+                    diagnose("connect/ready", "model=$tag mode=${transport.connectionDescription} CI-V verified")
+                    return@withContext true
+                }
+                isConnected = false
+                civSession?.close()
+                civSession = null
+                if (variant != IcomCivVariant.IC705 || !transport.canTryAlternativeConnection) break
+                diagnose("connect/fallback", "Read-only handshake failed; trying remaining RFCOMM mode", ControlDiagnosticSeverity.WARNING)
+                isConnected = transport.connectAlternative()
+            } while (isConnected)
+            closeFailedConnection("CI-V handshake failed after bounded attempts")
+            false
         } catch (cancelled: CancellationException) {
-            runCatching { transport.disconnect() }
-            isConnected = false
+            withContext(NonCancellable) { closeFailedConnection("connection cancelled by app") }
             throw cancelled
         } catch (e: Exception) {
             Log.e(tag, "Connect error: ${e.message}")
-            runCatching { transport.disconnect() }
-            isConnected = false
+            diagnose("connect/exception", "${e.javaClass.simpleName}: ${e.message}", ControlDiagnosticSeverity.ERROR)
+            closeFailedConnection("connection exception")
             false
+        } finally {
+            handshaking = false
         }
     }
 
+    private suspend fun probeReadOnlyConnection(): Boolean {
+        delay(500L)
+        repeat(3) { attempt ->
+            diagnose("connect/probe-attempt", "attempt=${attempt + 1}/3 mode=${transport.connectionDescription} command=03 (read frequency)")
+            val frequency = ioMutex.withLock { readFrequencyLocked() }
+            if (frequency != null && frequency > 0L) {
+                diagnose("connect/frequency", "frequencyHz=$frequency")
+                return true
+            }
+            if (frequency != null) diagnose("reply/invalid", "Read frequency returned non-positive value", ControlDiagnosticSeverity.ERROR)
+            if (responseRejected || !isConnected || !transport.isConnected) return false
+            if (attempt < 2) delay(150L)
+        }
+        return false
+    }
+
+    private suspend fun closeFailedConnection(reason: String) {
+        diagnose("disconnect", "origin=app reason=$reason", ControlDiagnosticSeverity.WARNING)
+        civSession?.close()
+        civSession = null
+        runCatching { transport.disconnect() }
+        isConnected = false
+    }
+
     override suspend fun disconnect(): Unit = withContext(Dispatchers.IO + NonCancellable) {
+        diagnose("disconnect", "origin=app reason=disconnect requested by caller")
         try {
             if (isConnected && variant != IcomCivVariant.IC820) {
                 withTimeoutOrNull(PTT_OFF_TIMEOUT_MS) { pttOff() }
@@ -115,13 +175,16 @@ class Ic705Controller(
             if (isConnected && duplexModeEnabled) {
                 withTimeoutOrNull(DUPLEX_OFF_TIMEOUT_MS) { setSplitMode(enabled = false) }
             }
+            civSession?.close()
+            civSession = null
             transport.disconnect()
         } catch (e: Exception) {
             Log.e(tag, "Disconnect error: ${e.message}")
+            civSession?.close()
+            civSession = null
             runCatching { transport.disconnect() }
         } finally {
             duplexModeEnabled = false
-            ctcssModeEnabled = false
             isConnected = false
             Log.i(tag, "Disconnected from $deviceAddress")
         }
@@ -135,7 +198,7 @@ class Ic705Controller(
         ioMutex.withLock {
             val cmd = IcomCivProtocol.buildSetFreqCommand(frequencyHz)
             Log.d(tag, "CMD setFreq → ${commandHex(cmd)}")
-            sendAndWaitAck(cmd) && reenableIc705ToneLocked() &&
+            sendAndWaitAck(cmd) &&
                 (variant != IcomCivVariant.IC820 || readFrequencyLocked() == frequencyHz)
         }
     }
@@ -144,6 +207,10 @@ class Ic705Controller(
         if (!isModeSupported(mode)) {
             Log.w(tag, "setMode: mode '$mode' is not supported by $variant")
             return@withContext false
+        }
+        if (variant == IcomCivVariant.IC705) return@withContext ioMutex.withLock {
+            val command = IcomCivProtocol.buildSetVfoModeCommand(true, mode, completeFields = true) ?: return@withLock false
+            sendAndWaitAck(command) && verifyIc705ModeLocked(true, mode, IcomCivProtocol.isDataMode(mode))
         }
         val cmd = IcomCivProtocol.buildSetModeCommand(mode) ?: run {
             Log.w(tag, "setMode: unknown mode '$mode'")
@@ -160,6 +227,9 @@ class Ic705Controller(
     override suspend fun setDataMode(enabled: Boolean, baseMode: String): Boolean =
         withContext(Dispatchers.IO) {
             if (variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820) return@withContext !enabled
+            if (variant == IcomCivVariant.IC705) return@withContext ioMutex.withLock {
+                setIc705DataModeLocked(true, enabled, baseMode)
+            }
             val command = IcomCivProtocol.buildDataModeCommand(enabled)
             Log.d(tag, "CMD DATA ${if (enabled) "ON" else "OFF"} → ${commandHex(command)}")
             ioMutex.withLock { sendAndWaitAck(command) }
@@ -168,6 +238,9 @@ class Ic705Controller(
     override suspend fun setTxDataMode(enabled: Boolean, baseMode: String): Boolean =
         withContext(Dispatchers.IO) {
             if (variant == IcomCivVariant.IC910 || variant == IcomCivVariant.IC820) return@withContext !enabled
+            if (variant == IcomCivVariant.IC705) return@withContext ioMutex.withLock {
+                setIc705DataModeLocked(false, enabled, baseMode)
+            }
             ioMutex.withLock {
                 var rxRestored = false
                 val configured = try {
@@ -187,7 +260,6 @@ class Ic705Controller(
         Log.d(tag, "CMD ctcssMode → ${commandHex(cmd)}")
         ioMutex.withLock {
             val acknowledged = sendAndWaitAck(cmd)
-            if (acknowledged) ctcssModeEnabled = enabled
             acknowledged
         }
     }
@@ -304,8 +376,8 @@ class Ic705Controller(
         if (usesManualVfoSelection) {
             return@withContext setManualVfoModes(rxMode, txMode)
         }
-        val rxCommand = rxMode?.let { IcomCivProtocol.buildSetVfoModeCommand(selected = true, it) }
-        val txCommand = txMode?.let { IcomCivProtocol.buildSetVfoModeCommand(selected = false, it) }
+        val rxCommand = rxMode?.let { IcomCivProtocol.buildSetVfoModeCommand(selected = true, it, completeFields = variant == IcomCivVariant.IC705) }
+        val txCommand = txMode?.let { IcomCivProtocol.buildSetVfoModeCommand(selected = false, it, completeFields = variant == IcomCivVariant.IC705) }
         if (rxMode != null && rxCommand == null || txMode != null && txCommand == null) {
             Log.w(tag, "setSplitModes: unsupported rx=$rxMode tx=$txMode")
             return@withContext false
@@ -314,6 +386,10 @@ class Ic705Controller(
             if (!sendAndWaitAck(IcomCivProtocol.buildSelectVfoACommand())) return@withLock false
             if (rxCommand != null && !sendAndWaitAck(rxCommand)) return@withLock false
             if (txCommand != null && !sendAndWaitAck(txCommand)) return@withLock false
+            if (variant == IcomCivVariant.IC705) {
+                return@withLock (rxMode == null || verifyIc705ModeLocked(true, rxMode, IcomCivProtocol.isDataMode(rxMode))) &&
+                    (txMode == null || verifyIc705ModeLocked(false, txMode, IcomCivProtocol.isDataMode(txMode)))
+            }
             if (rxMode != null && readVfoModeLocked(selected = true) != normalizedMode(rxMode)) {
                 return@withLock false
             }
@@ -336,13 +412,11 @@ class Ic705Controller(
                     val toneCommand = IcomCivProtocol.buildSetCtcssToneCommand(toneHz)
                     val modeCommand = IcomCivProtocol.buildCtcssModeCommand(enabled = true)
                     val acknowledged = sendAndWaitAck(toneCommand) && sendAndWaitAck(modeCommand)
-                    if (acknowledged) ctcssModeEnabled = true
                     acknowledged
                 } else {
                     val acknowledged = sendAndWaitAck(
                         IcomCivProtocol.buildCtcssModeCommand(enabled = false)
                     )
-                    if (acknowledged) ctcssModeEnabled = false
                     acknowledged
                 }
             } finally {
@@ -394,20 +468,7 @@ class Ic705Controller(
         val cmd = IcomCivProtocol.buildSetUnselectedVfoFreqCommand(frequencyHz)
         Log.d(tag, "CMD setTxVfoFreq → ${commandHex(cmd)}")
         ioMutex.withLock {
-            if (!sendAndWaitAck(cmd)) return@withLock false
-            if (variant != IcomCivVariant.IC705 || !ctcssModeEnabled) return@withLock true
-
-            // IC-705 firmware can clear TONE on the VFO whose frequency changes.
-            // The 0x25/01 command targets VFO-B while VFO-A remains selected, so
-            // briefly select B to restore its TX tone and always return to A/RX.
-            var rxRestored = false
-            val toneRestored = try {
-                sendAndWaitAck(IcomCivProtocol.buildSelectVfoBCommand()) &&
-                    reenableIc705ToneLocked()
-            } finally {
-                rxRestored = restoreRxVfo()
-            }
-            toneRestored && rxRestored
+            sendAndWaitAck(cmd)
         }
     }
 
@@ -479,13 +540,17 @@ class Ic705Controller(
      * [responseTimeoutMs], looking for an OK/NG acknowledgement frame.
      */
     private suspend fun sendAndWaitAck(cmd: ByteArray): Boolean {
+        civSession?.let { session ->
+            return session.request(addressCommand(cmd), IcomCivProtocol.ACK_OK,
+                timeoutMillis = commandReplyTimeout(cmd), trace = handshaking)?.cmd == IcomCivProtocol.ACK_OK
+        }
         if (!write(cmd)) return false
         delay(WRITE_SETTLE_MS)
         val buf = drainWithTimeout(responseTimeoutMs) {
             IcomCivProtocol.ackStatus(it, civAddress) != null
         }
         val ok = IcomCivProtocol.ackStatus(buf, civAddress) == true
-        if (!ok) Log.w(tag, "ACK not found in ${buf.size} bytes: ${IcomCivProtocol.toHex(buf)}")
+        if (!ok) reportReplyFailure(cmd, buf)
         return ok
     }
 
@@ -503,17 +568,65 @@ class Ic705Controller(
         expectCmd: Byte,
         payloadMatches: (ByteArray) -> Boolean
     ): ByteArray? {
+        responseRejected = false
+        civSession?.let { session ->
+            val response = session.request(addressCommand(cmd), expectCmd,
+                timeoutMillis = commandReplyTimeout(cmd), trace = handshaking, payloadMatches = payloadMatches)
+            responseRejected = response?.cmd == IcomCivProtocol.ACK_NG
+            return response?.takeIf { it.cmd == expectCmd }?.payload
+        }
         if (!write(cmd)) return null
         delay(WRITE_SETTLE_MS)
         val buf      = drainWithTimeout(responseTimeoutMs) {
-            IcomCivProtocol.parseResponse(it, expectCmd, civAddress, payloadMatches) != null
+            IcomCivProtocol.parseResponse(it, expectCmd, civAddress, payloadMatches) != null ||
+                IcomCivProtocol.ackStatus(it, civAddress) == false
         }
         val response = IcomCivProtocol.parseResponse(buf, expectCmd, civAddress, payloadMatches)
         if (response == null) {
-            Log.w(tag, "No response for cmd 0x${String.format("%02X", expectCmd.toInt() and 0xFF)} " +
-                    "in ${buf.size} bytes: ${IcomCivProtocol.toHex(buf)}")
+            responseRejected = IcomCivProtocol.ackStatus(buf, civAddress) == false
+            reportReplyFailure(cmd, buf)
+        } else if (handshaking) {
+            diagnose("reply/received", "command=${commandHex(cmd)} bytes=${IcomCivProtocol.toHex(buf.take(96).toByteArray())}")
         }
         return response?.payload
+    }
+
+    private fun reportReplyFailure(cmd: ByteArray, buf: ByteArray) {
+        val stage = when {
+            IcomCivProtocol.ackStatus(buf, civAddress) == false -> "reply/rejected"
+            !isConnected || !transport.isConnected -> "reply/disconnected"
+            else -> "reply/timeout"
+        }
+        diagnose(stage, "command=${commandHex(cmd)} received=${buf.size} bytes=${IcomCivProtocol.toHex(buf.take(96).toByteArray())} " +
+            "io=${transport.lastIoFailure ?: "none"}", ControlDiagnosticSeverity.ERROR)
+    }
+
+    private fun diagnose(stage: String, message: String, severity: ControlDiagnosticSeverity = ControlDiagnosticSeverity.INFO) {
+        diagnostics.record(ControlDiagnosticSource.RADIO, "civ/$stage", message, severity)
+    }
+
+    private fun commandReplyTimeout(command: ByteArray): Long =
+        if (command.getOrNull(4) == IcomCivProtocol.CMD_TRANSCEIVER_STATUS) 500L else 2_000L
+
+    private suspend fun setIc705DataModeLocked(selected: Boolean, enabled: Boolean, baseMode: String): Boolean {
+        val command = IcomCivProtocol.buildSetVfoModeCommand(selected, baseMode, completeFields = true) ?: return false
+        command[7] = if (enabled) 1 else 0
+        return sendAndWaitAck(command) && verifyIc705ModeLocked(selected, baseMode, enabled)
+    }
+
+    private suspend fun verifyIc705ModeLocked(selected: Boolean, mode: String, dataEnabled: Boolean): Boolean {
+        val selector = if (selected) IcomCivProtocol.SUB_SELECTED_VFO else IcomCivProtocol.SUB_UNSELECTED_VFO
+        repeat(3) {
+            delay(50L)
+            val payload = sendAndReadResponse(IcomCivProtocol.buildReadVfoModeCommand(selected),
+                IcomCivProtocol.CMD_SELECTED_VFO_MODE) { it.firstOrNull() == selector }
+            if (payload != null && payload.size >= 3 &&
+                IcomCivProtocol.parseVfoModePayload(payload, selected) == normalizedMode(mode) &&
+                payload[2] == (if (dataEnabled) 1 else 0).toByte()) return true
+            if (!isConnected) return false
+        }
+        diagnose("mode/readback", "VFO=${if (selected) "RX" else "TX"} requested=$mode data=$dataEnabled readback did not match", ControlDiagnosticSeverity.ERROR)
+        return false
     }
 
     private suspend fun setPttAndConfirm(enabled: Boolean): Boolean {
@@ -600,7 +713,12 @@ class Ic705Controller(
             IcomCivProtocol.buildIc820SplitModeCommand(enabled)
         } else IcomCivProtocol.buildSplitModeCommand(enabled)
         Log.d(tag, "CMD split ${if (enabled) "ON" else "OFF"} → ${commandHex(command)}")
-        return sendAndWaitAck(command)
+        if (!sendAndWaitAck(command)) return false
+        if (variant != IcomCivVariant.IC705) return true
+        val payload = sendAndReadResponse(IcomCivProtocol.buildReadSplitModeCommand(), IcomCivProtocol.CMD_DUPLEX_SPLIT)
+        val verified = payload?.singleOrNull() == (if (enabled) 1 else 0).toByte()
+        if (!verified) diagnose("split/readback", "requested=$enabled readback=${payload?.let(IcomCivProtocol::toHex) ?: "missing"}", ControlDiagnosticSeverity.ERROR)
+        return verified
     }
 
     private suspend fun setDedicatedSatelliteModeLocked(enabled: Boolean): Boolean {
@@ -632,7 +750,9 @@ class Ic705Controller(
             IcomCivProtocol.buildReadFreqCommand(),
             IcomCivProtocol.CMD_READ_FREQ
         ) ?: return null
-        return parseModelFrequency(payload)
+        return parseModelFrequency(payload).also {
+            if (it == null) diagnose("reply/invalid", "Invalid frequency payload=${IcomCivProtocol.toHex(payload.take(16).toByteArray())}", ControlDiagnosticSeverity.ERROR)
+        }
     }
 
     private fun parseModelFrequency(payload: ByteArray): Long? =
@@ -652,14 +772,6 @@ class Ic705Controller(
             IcomCivProtocol.CMD_READ_MODE
         ) ?: return null
         return IcomCivProtocol.parseModePayload(payload)
-    }
-
-    /** Work around IC-705 firmware clearing TONE after a frequency change. */
-    private suspend fun reenableIc705ToneLocked(): Boolean {
-        if (variant != IcomCivVariant.IC705 || !ctcssModeEnabled) return true
-        val command = IcomCivProtocol.buildCtcssModeCommand(enabled = true)
-        Log.d(tag, "CMD restore CTCSS after frequency change → ${commandHex(command)}")
-        return sendAndWaitAck(command)
     }
 
     /**
@@ -690,6 +802,7 @@ class Ic705Controller(
                 throw cancelled
             } catch (e: Exception) {
                 Log.e(tag, "Drain error: ${e.message}")
+                diagnose("read/failed", "${e.javaClass.simpleName}: ${e.message}", ControlDiagnosticSeverity.ERROR)
                 isConnected = false
                 break
             }
@@ -699,13 +812,18 @@ class Ic705Controller(
 
     private suspend fun write(bytes: ByteArray): Boolean {
         return try {
+            if (handshaking) diagnose("write", "command=${commandHex(bytes)} mode=${transport.connectionDescription}")
             if (!isConnected) false else transport.write(addressCommand(bytes)).also {
-                if (!it) isConnected = false
+                if (!it) {
+                    isConnected = false
+                    diagnose("write/failed", "command=${commandHex(bytes)} io=${transport.lastIoFailure ?: "write returned false"}", ControlDiagnosticSeverity.ERROR)
+                }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
             Log.e(tag, "Write error: ${e.message}")
+            diagnose("write/failed", "${e.javaClass.simpleName}: ${e.message}", ControlDiagnosticSeverity.ERROR)
             isConnected = false
             false
         }

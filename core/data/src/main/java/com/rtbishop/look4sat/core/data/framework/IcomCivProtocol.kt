@@ -253,14 +253,18 @@ object IcomCivProtocol {
     }
 
     /** Set selected (0x00) or unselected (0x01) VFO mode via CMD 0x26. */
-    fun buildSetVfoModeCommand(selected: Boolean, mode: String): ByteArray? {
+    fun isDataMode(mode: String): Boolean = mode.uppercase(Locale.US) in
+        setOf("USB-D", "DATA-U", "PKTUSB", "DIG", "LSB-D", "DATA-L", "PKTLSB", "DATA-FM", "PKTFM", "PKT")
+
+    fun buildSetVfoModeCommand(selected: Boolean, mode: String, completeFields: Boolean = false): ByteArray? {
         val spec = modeSpec(mode) ?: return null
         val selector = if (selected) SUB_SELECTED_VFO else SUB_UNSELECTED_VFO
-        return if (spec.filter == null) {
+        return if (spec.filter == null && !completeFields) {
             frame(CMD_SELECTED_VFO_MODE, selector, spec.modeByte)
         } else {
             // CMD 0x26 is selector, mode, DATA, filter (unlike CMD 0x06).
-            frame(CMD_SELECTED_VFO_MODE, selector, spec.modeByte, 0x00, spec.filter)
+            val data: Byte = if (completeFields && isDataMode(mode)) 0x01 else 0x00
+            frame(CMD_SELECTED_VFO_MODE, selector, spec.modeByte, data, spec.filter ?: 0x01)
         }
     }
 
@@ -290,6 +294,8 @@ object IcomCivProtocol {
         val sub = if (enable) SUB_SPLIT_ON else SUB_SPLIT_OFF
         return frame(CMD_DUPLEX_SPLIT, sub)
     }
+
+    fun buildReadSplitModeCommand(): ByteArray = frame(CMD_DUPLEX_SPLIT)
 
     /** Enable or disable the IC-9700's dedicated satellite mode. */
     fun buildSatelliteModeCommand(enable: Boolean): ByteArray {

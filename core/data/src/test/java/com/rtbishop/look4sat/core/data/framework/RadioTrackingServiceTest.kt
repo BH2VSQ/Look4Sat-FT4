@@ -65,6 +65,43 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+    @Test fun ic705DopplerChangesBothFrequenciesWithoutSwitchingToTxVfo() = runTest {
+        val tx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_ICOM_IC705, splitMode = true)
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        assertTrue(fixture.service.state.value.isActive)
+        assertTrue(tx.operations.any { it.startsWith("tx-frequency:") })
+        tx.operations.clear()
+        repeat(4) { index ->
+            fixture.position.distanceRate = 1.2 + index * 0.4
+            advanceTimeBy(1_100L)
+            runCurrent()
+        }
+        assertTrue(tx.operations.count { it.startsWith("tx-frequency:") } >= 2)
+        assertTrue(tx.operations.count { it.startsWith("rx-frequency:") } >= 2)
+        assertFalse(tx.operations.any { it.startsWith("vfo:") })
+        assertFalse(tx.operations.any { it.startsWith("mode:") || it.startsWith("split-modes:") })
+        fixture.close()
+    }
+
+    @Test fun ic705ReceiveOnlyTrackingLeavesSplitOffAndOldTxVfoUntouched() = runTest {
+        val tx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_ICOM_IC705, splitMode = true)
+        fixture.transponder = fixture.transponder.copy(uplinkLow = null, uplinkHigh = null)
+        fixture.service.connectRadios()
+        fixture.startTracking(null)
+        runCurrent()
+        assertTrue(fixture.service.state.value.isActive)
+        assertFalse(tx.operations.contains("split:true"))
+        assertFalse(tx.operations.contains("vfo:tx"))
+        assertFalse(tx.operations.any { it.startsWith("tx-frequency:") })
+        fixture.close()
+    }
+
     private val legacyModels=listOf(RadioControlSettings.MODEL_YAESU_FT817,RadioControlSettings.MODEL_YAESU_FT857,
         RadioControlSettings.MODEL_ICOM_IC705,RadioControlSettings.MODEL_ICOM_IC9700,
         RadioControlSettings.MODEL_ICOM_IC910,RadioControlSettings.MODEL_ICOM_IC820)

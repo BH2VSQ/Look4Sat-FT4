@@ -156,7 +156,7 @@ class MainContainer(private val context: Context) : IMainContainer {
         }
     private val sharedRadioTrackingService: RadioTrackingService by lazy {
         val manager = context.getSystemService(BluetoothManager::class.java)
-        val transportFactory = AndroidRadioTransportFactory(context, manager)
+        val transportFactory = AndroidRadioTransportFactory(context, manager, controlDiagnostics)
         RadioTrackingService(
             appScope,
             manager,

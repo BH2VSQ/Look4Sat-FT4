@@ -10,6 +10,8 @@
 package com.rtbishop.look4sat.core.data.framework
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -17,6 +19,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Ic705ControllerTest {
+    @Test fun splitIsEnabledAndReadBackWithoutSwitchingToTxVfo() = runTest {
+        val transport = ScriptedCivTransport()
+        val radio = Ic705Controller(null, "USB", transport = transport)
+        assertTrue(radio.connect())
+        transport.payloads.clear()
+        assertTrue(radio.setSplitMode(true))
+        assertEquals(listOf("0F:01", "0F"), transport.payloads)
+    }
+
+    @Test fun txDataModeUsesUnselectedVfoCommandWithoutSelectingTx() = runTest {
+        val transport = ScriptedCivTransport()
+        val radio = Ic705Controller(null, "USB", transport = transport)
+        assertTrue(radio.connect())
+        transport.payloads.clear()
+        assertTrue(radio.setTxDataMode(true, "USB"))
+        assertTrue(radio.setTxDataMode(false, "USB"))
+        assertEquals(listOf("26:01:01:01:01", "26:01", "26:01:01:00:01", "26:01"), transport.payloads)
+    }
+
+    @After fun closeSimulatedTransports() = runBlocking {
+        ScriptedCivTransport.instances.forEach { it.disconnect() }
+        ScriptedCivTransport.instances.clear()
+    }
     @Test fun modernIcomReadPttUsesStatusQueryAndIc820NeverSendsIt()=runTest {
         for(variant in IcomCivVariant.entries) {
             val transport=ScriptedCivTransport()
@@ -125,7 +150,11 @@ class Ic705ControllerTest {
             assertTrue(radio.connect())
             transport.payloads.clear()
             assertEquals(supported, radio.setDataMode(true, "USB"))
-            if (supported) {
+            if (variant == IcomCivVariant.IC705) {
+                assertEquals(listOf("26:00:01:01:01", "26:00"), transport.payloads)
+                assertTrue(radio.setDataMode(false, "USB"))
+                assertEquals(listOf("26:00:01:00:01", "26:00"), transport.payloads.takeLast(2))
+            } else if (supported) {
                 assertEquals("1A:06:01:02", transport.payloads.single())
                 assertTrue(radio.setDataMode(false, "USB"))
                 assertEquals("1A:06:00:00", transport.payloads.last())
@@ -149,7 +178,7 @@ class Ic705ControllerTest {
             transport.payloads.clear()
             assertTrue(radio.setSplitModes("USB", "LSB"))
             if (variant == IcomCivVariant.IC705) {
-                assertEquals(listOf("07:00", "26:00:01", "26:01:00", "26:00", "26:01"), transport.payloads)
+                assertEquals(listOf("07:00", "26:00:01:00:01", "26:01:00:00:01", "26:00", "26:01"), transport.payloads)
             } else {
                 assertEquals(listOf("07:D0", "06:01", "04", "07:D1", "06:00", "04", "07:D0"), transport.payloads)
             }
@@ -183,11 +212,11 @@ class Ic705ControllerTest {
         assertTrue(controller.connect())
 
         assertEquals(145_590_000L to "USB", controller.readFrequencyAndMode())
-        assertEquals(listOf(0x07, 0x03, 0x04, 0x03, 0x04), transport.commandBytes)
+        assertEquals(listOf(0x03, 0x03, 0x04), transport.commandBytes)
     }
 
     @Test
-    fun connectionIsRejectedWhenCatDoesNotAcknowledge() = runTest {
+    fun ic705ConnectionUsesReadOnlyFrequencyWithoutRequiringVfoAck() = runTest {
         val transport = ScriptedCivTransport(acknowledgeConnect = false)
         val controller = Ic705Controller(
             bluetoothManager = null,
@@ -195,9 +224,9 @@ class Ic705ControllerTest {
             transport = transport
         )
 
-        assertFalse(controller.connect())
-        assertFalse(controller.isConnected)
-        assertFalse(transport.isConnected)
+        assertTrue(controller.connect())
+        assertTrue(controller.isConnected)
+        assertEquals(listOf(0x03), transport.commandBytes)
     }
 
     @Test
@@ -215,17 +244,17 @@ class Ic705ControllerTest {
         assertEquals(
             listOf(
                 "07:00",
-                "26:00:01",
-                "26:01:05",
+                "26:00:01:00:01",
+                "26:01:05:00:01",
                 "26:00",
                 "26:01"
             ),
-            transport.payloads.drop(3)
+            transport.payloads.drop(1)
         )
     }
 
     @Test
-    fun ic705ReenablesCtcssAfterFrequencyChange() = runTest {
+    fun ic705FrequencyChangeDoesNotRewriteToneOrSwitchVfo() = runTest {
         val transport = ScriptedCivTransport()
         val controller = Ic705Controller(
             bluetoothManager = null,
@@ -239,7 +268,7 @@ class Ic705ControllerTest {
         assertTrue(controller.setFrequency(145_900_000L))
 
         assertEquals(0x05, transport.payloads.first().substringBefore(':').toInt(16))
-        assertEquals("16:42:01", transport.payloads.last())
+        assertEquals(1, transport.payloads.size)
     }
 
     @Test
@@ -259,7 +288,7 @@ class Ic705ControllerTest {
     }
 
     @Test
-    fun ic705RestoresTxVfoToneAndReturnsToRxVfo() = runTest {
+    fun ic705TxFrequencyUpdateDoesNotSwitchAwayFromRxEvenWithToneEnabled() = runTest {
         val transport = ScriptedCivTransport()
         val controller = Ic705Controller(
             bluetoothManager = null,
@@ -275,10 +304,7 @@ class Ic705ControllerTest {
         assertTrue(controller.setTxVfoFrequency(435_100_000L))
 
         assertEquals("25:01", transport.payloads.first().take(5))
-        assertEquals(
-            listOf("07:01", "16:42:01", "07:00"),
-            transport.payloads.takeLast(3)
-        )
+        assertEquals(1, transport.payloads.size)
     }
 
     @Test
@@ -483,7 +509,9 @@ private class ScriptedCivTransport(
     private val ic820BandAccess: Boolean = false,
     private val frequencyPayloadOverride: ByteArray? = null
 ) : RadioTransport {
-    private val replies = ArrayDeque<ByteArray>()
+    companion object { val instances = mutableListOf<ScriptedCivTransport>() }
+    init { instances += this }
+    private val replies = java.util.concurrent.ConcurrentLinkedQueue<ByteArray>()
     val commandBytes = mutableListOf<Int>()
     val payloads = mutableListOf<String>()
     val destinations = mutableListOf<Int>()
@@ -492,7 +520,10 @@ private class ScriptedCivTransport(
     private var mainSelected = true
     private var mainMode = 0x01
     private var subMode = 0x05
+    private var mainDataMode = 0
+    private var subDataMode = 0
     private var satelliteMode = false
+    private var splitMode = false
     override var isConnected = false
         private set
 
@@ -537,7 +568,10 @@ private class ScriptedCivTransport(
                 }
                 replies += ack()
             }
-            0x0F -> replies += ack()
+            0x0F -> if (payload.size >= 2) {
+                splitMode = payload[1] == 1.toByte()
+                replies += ack()
+            } else replies += response(0x0F, if (splitMode) 1 else 0)
             0x16 -> when {
                 payload.size >= 3 && payload[1] == 0x5A.toByte() -> {
                     satelliteMode = payload[2] == 0x01.toByte()
@@ -561,7 +595,7 @@ private class ScriptedCivTransport(
                 else -> replies += ack()
             }
             0x1B -> replies += ack()
-            0x1C -> replies += response(0x1C,0x00,0x00)
+            0x1C -> if (payload.size >= 3) replies += ack() else replies += response(0x1C,0x00,0x00)
             0x25 -> replies += ack()
             0x06 -> {
                 if (payload.size >= 2) {
@@ -574,12 +608,16 @@ private class ScriptedCivTransport(
                 if (payload.size >= 3) {
                     if (payload[1].toInt() == 0) mainMode = payload[2].toInt() and 0xFF
                     else subMode = payload[2].toInt() and 0xFF
+                    if (payload.size >= 4) {
+                        if (payload[1].toInt() == 0) mainDataMode = payload[3].toInt() else subDataMode = payload[3].toInt()
+                    }
                     replies += ack()
                 } else {
                     val mode = modeReadbackOverride ?: if (payload[1].toInt() == 0) mainMode else subMode
                     val otherSelector = if (payload[1].toInt() == 0) 0x01 else 0x00
-                    replies += response(0x26, otherSelector, mode, 0x00, 0x01)
-                    replies += response(0x26, payload[1].toInt(), mode, 0x00, 0x01)
+                    val data = if (payload[1].toInt() == 0) mainDataMode else subDataMode
+                    replies += response(0x26, otherSelector, mode, data, 0x01)
+                    replies += response(0x26, payload[1].toInt(), mode, data, 0x01)
                 }
             }
         }
@@ -587,7 +625,7 @@ private class ScriptedCivTransport(
     }
 
     override suspend fun readAvailable(maxBytes: Int): ByteArray =
-        if (replies.isEmpty()) ByteArray(0) else replies.removeFirst().let { it.copyOf(minOf(it.size, maxBytes)) }
+        replies.poll()?.let { it.copyOf(minOf(it.size, maxBytes)) } ?: ByteArray(0)
 
     private fun ack(): ByteArray = response(0xFB)
 
