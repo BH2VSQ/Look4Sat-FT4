@@ -23,20 +23,25 @@ if (-not $GitPath) {
     $GitPath = $gitCommand.Source
 }
 
+$normalizedPatch = [IO.Path]::GetTempFileName()
+$patchText = [IO.File]::ReadAllText($patchFile).Replace("`r`n", "`n")
+[IO.File]::WriteAllText($normalizedPatch, $patchText, [Text.UTF8Encoding]::new($false))
 Push-Location $LlvmSourceRoot
 try {
-    & $GitPath apply --reverse --check $patchFile 2>$null
+    # Windows checkout can use CRLF while the pinned LLVM archive uses LF.
+    & $GitPath apply --reverse --check $normalizedPatch 2>$null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Flang ARM32 patch is already applied: $LlvmSourceRoot"
         return
     }
-    & $GitPath apply --check $patchFile
+    & $GitPath apply --check $normalizedPatch
     if ($LASTEXITCODE -ne 0) {
         throw "Flang ARM32 patch does not match this LLVM source: $LlvmSourceRoot"
     }
-    & $GitPath apply $patchFile
+    & $GitPath apply $normalizedPatch
     if ($LASTEXITCODE -ne 0) { throw 'Failed to apply the Flang ARM32 patch' }
     Write-Host "Flang ARM32 patch applied: $LlvmSourceRoot"
 } finally {
     Pop-Location
+    Remove-Item -LiteralPath $normalizedPatch -Force
 }

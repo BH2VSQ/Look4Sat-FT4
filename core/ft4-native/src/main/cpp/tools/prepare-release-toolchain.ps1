@@ -39,6 +39,27 @@ function Find-LlvmHostTools([string]$Root) {
     return $null
 }
 
+function Initialize-MsvcEnvironment {
+    if ($env:VSCMD_VER -and $env:INCLUDE -and $env:LIB -and
+        (Get-Command rc.exe -ErrorAction SilentlyContinue)) { return }
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio Installer is unavailable' }
+    $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if ($LASTEXITCODE -ne 0 -or -not $installation) { throw 'Visual Studio C++ build tools are unavailable' }
+    $developerCommand = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
+    $environmentLines = & $env:ComSpec /d /c "call `"$developerCommand`" -no_logo -arch=x64 -host_arch=x64 >nul && set"
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize the Visual Studio C++ environment' }
+    foreach ($line in $environmentLines) {
+        if ($line -match '^([^=]+)=(.*)$') {
+            [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
+        }
+    }
+    if (-not $env:INCLUDE -or -not $env:LIB -or
+        -not (Get-Command rc.exe -ErrorAction SilentlyContinue)) {
+        throw 'Visual Studio C++ headers, libraries or Windows SDK tools are unavailable'
+    }
+}
+
 function Get-PinnedArchive(
     [string]$Url,
     [string]$Destination,
@@ -126,8 +147,9 @@ $boostHeaders = Split-Path -Parent (Split-Path -Parent $boostVersionHeader.FullN
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 & (Join-Path $scriptRoot 'apply-flang-arm32-patch.ps1') -LlvmSourceRoot $llvmSourceRoot
 
-$flangPath = Join-Path $llvmBuildRoot 'bin\flang-new.exe'
+$flangPath = Join-Path $llvmBuildRoot 'bin\flang.exe'
 if (-not (Test-Arm32Flang $flangPath $probeRoot)) {
+    Initialize-MsvcEnvironment
     $androidCmakeRoot = if ($env:ANDROID_HOME) {
         Join-Path $env:ANDROID_HOME 'cmake\3.22.1\bin'
     } else {
@@ -169,7 +191,7 @@ if (-not (Test-Arm32Flang $flangPath $probeRoot)) {
     )
     & $cmake @configureArgs
     if ($LASTEXITCODE -ne 0) { throw 'Unable to configure the pinned Flang toolchain' }
-    & $cmake --build $llvmBuildRoot --target flang-new --parallel $ParallelJobs
+    & $cmake --build $llvmBuildRoot --target flang --parallel $ParallelJobs
     if ($LASTEXITCODE -ne 0) { throw 'Unable to build the pinned Flang toolchain' }
 }
 if (-not (Test-Arm32Flang $flangPath $probeRoot)) {
