@@ -98,8 +98,9 @@ $llvmHostTools = Find-LlvmHostTools $llvmHostRoot
 if ($null -eq $llvmHostTools) {
     $llvmHostInstaller = Join-Path $downloadRoot $llvmHostInstallerName
     Get-PinnedArchive $llvmHostInstallerUrl $llvmHostInstaller $llvmHostInstallerSha256
-    & $llvmHostInstaller /S "/D=$llvmHostRoot"
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to install the pinned LLVM host compiler' }
+    $installerProcess = Start-Process -FilePath $llvmHostInstaller -ArgumentList '/S', "/D=$llvmHostRoot" `
+        -Wait -PassThru -WindowStyle Hidden
+    if ($installerProcess.ExitCode -ne 0) { throw "Unable to install the pinned LLVM host compiler: $($installerProcess.ExitCode)" }
     $llvmHostTools = Find-LlvmHostTools $llvmHostRoot
 }
 if ($null -eq $llvmHostTools) {

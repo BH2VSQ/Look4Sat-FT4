@@ -200,7 +200,14 @@ jobs:
         run: |
           gh release view $env:TAG_NAME *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG_NAME $env:RELEASE_APK --clobber
+            $release = gh release view $env:TAG_NAME --json assets | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect existing release assets' }
+            $apkName = Split-Path -Leaf $env:RELEASE_APK
+            if ($release.assets.name -contains $apkName) {
+              Write-Output "Preserving existing release asset: $apkName"
+            } else {
+              gh release upload $env:TAG_NAME $env:RELEASE_APK
+            }
           } else {
             gh release create $env:TAG_NAME $env:RELEASE_APK `
               --title $env:TAG_NAME --generate-notes --verify-tag
