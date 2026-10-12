@@ -26,7 +26,7 @@ enum class RotatorProtocol(
     val supportsStop: Boolean
 ) {
     GS232(defaultPort = null, supportsPositionQuery = true, supportsStop = true),
-    EASYCOMM_I(defaultPort = null, supportsPositionQuery = true, supportsStop = true),
+    EASYCOMM_I(defaultPort = null, supportsPositionQuery = false, supportsStop = true),
     EASYCOMM_II(defaultPort = null, supportsPositionQuery = true, supportsStop = true),
     EASYCOMM_III(defaultPort = null, supportsPositionQuery = true, supportsStop = true),
     SPID_ROT2PROG(defaultPort = null, supportsPositionQuery = true, supportsStop = true),
@@ -83,8 +83,12 @@ data class RotatorSettings(
     val flipOverheadPasses: Boolean = false,
     val minimumElevationDegrees: Double = 0.0,
     val updateIntervalMillis: Long = 1_000L,
-    val sampleTimeoutMillis: Long = 3_000L
+    val sampleTimeoutMillis: Long = 3_000L,
+    val customResponseTemplate: String = ""
 ) {
+    val supportsPositionFeedback: Boolean get() = protocol.supportsPositionQuery || protocol == RotatorProtocol.PST_ROTATOR ||
+        protocol == RotatorProtocol.CUSTOM_TEMPLATE && RotatorCodec.validResponseTemplate(customResponseTemplate) &&
+        (customQueryTemplate.isNotBlank() || transport == RotatorTransport.UDP)
     val isConfigured: Boolean
         get() = enabled && protocol.supportsTransport(transport) && when (transport) {
             RotatorTransport.BLUETOOTH_SPP, RotatorTransport.USB_SERIAL -> deviceAddress.isNotBlank()
@@ -133,6 +137,9 @@ enum class RotatorTrackingPhase {
     ERROR
 }
 
+enum class RotatorCommandStatus { IDLE, SENT, ACCEPTED, FEEDBACK, AT_TARGET, UNCONFIRMED, REJECTED, TIMED_OUT }
+enum class RotatorFeedbackStatus { UNKNOWN, FRESH, STALE, UNSUPPORTED }
+
 data class RotatorTrackingState(
     val connectionState: RotatorConnectionState = RotatorConnectionState.DISCONNECTED,
     val trackingPhase: RotatorTrackingPhase = RotatorTrackingPhase.IDLE,
@@ -145,7 +152,15 @@ data class RotatorTrackingState(
     val reportedPosition: RotatorPosition? = null,
     val lastCommandSequence: Long = 0L,
     val lastCommandAtMillis: Long? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val passAosTimeMillis: Long? = null,
+    val commandStatus: RotatorCommandStatus = RotatorCommandStatus.IDLE,
+    val feedbackStatus: RotatorFeedbackStatus = RotatorFeedbackStatus.UNKNOWN,
+    val reportedAtMillis: Long? = null,
+    val acceptedCommandSequence: Long? = null,
+    val confirmedCommandSequence: Long? = null,
+    val commandedWirePosition: RotatorPosition? = null,
+    val trackingBlocked: Boolean = false
 )
 
 private fun Double.finiteOrZero(): Double = if (isFinite()) this else 0.0

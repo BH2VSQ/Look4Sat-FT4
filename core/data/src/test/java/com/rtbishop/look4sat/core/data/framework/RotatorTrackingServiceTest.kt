@@ -98,7 +98,7 @@ class RotatorTrackingServiceTest {
         advanceTimeBy(1_000L)
         runCurrent()
         assertEquals("P 180.0 10.0\n", transport.writes.last().decodeToString())
-        assertEquals(RotatorTrackingPhase.PARKED, service.state.value.trackingPhase)
+        assertEquals(RotatorTrackingPhase.PARKING, service.state.value.trackingPhase)
         service.disconnect()
     }
 
@@ -161,6 +161,7 @@ class RotatorTrackingServiceTest {
         assertEquals("S\r", transport.writes.last().decodeToString())
         assertEquals(writeCountAfterStop, transport.writes.size)
         assertFalse(service.state.value.isTrackingRequested)
+        assertTrue(service.state.value.trackingBlocked)
         assertEquals(RotatorTrackingPhase.HOLDING, service.state.value.trackingPhase)
         service.disconnect()
     }
@@ -266,6 +267,7 @@ private class FakeRotatorTransport(
     override var isConnected: Boolean = false
         private set
     val writes = mutableListOf<ByteArray>()
+    private val pending = ArrayDeque<ByteArray>()
     var connectCalls = 0
         private set
     var disconnectCalls = 0
@@ -286,11 +288,16 @@ private class FakeRotatorTransport(
         writes += bytes.copyOf()
         val success = writeResults.removeFirstOrNull() ?: true
         if (!success) isConnected = false
+        if(success && bytes.decodeToString()=="p\n") {
+            while(reads.isNotEmpty())pending.addLast(reads.removeFirst())
+        } else if(success && (bytes.decodeToString().startsWith("P ") || bytes.decodeToString()=="S\n")) {
+            pending.addLast("RPRT 0\n".encodeToByteArray())
+        }
         return success
     }
 
     override suspend fun readAvailable(maxBytes: Int): ByteArray {
-        val value = reads.removeFirstOrNull() ?: return ByteArray(0)
+        val value = pending.removeFirstOrNull() ?: return ByteArray(0)
         return value.copyOf(minOf(value.size, maxBytes))
     }
 }

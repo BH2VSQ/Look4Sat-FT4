@@ -67,7 +67,8 @@ class RotatorCodecTest {
         assertNull(RotatorCodec.stop(RotatorProtocol.OZ9AAR_URC))
 
         assertAscii("C2\r", RotatorCodec.positionQuery(RotatorProtocol.GS232))
-        assertAscii("AZ EL\r", RotatorCodec.positionQuery(RotatorProtocol.EASYCOMM_I))
+        assertNull(RotatorCodec.positionQuery(RotatorProtocol.EASYCOMM_I))
+        assertAscii("AZ\n", RotatorCodec.positionQuery(RotatorProtocol.EASYCOMM_II))
         assertAscii("p\n", RotatorCodec.positionQuery(RotatorProtocol.ROTCTLD))
         assertAscii("{\"POLL\"}", RotatorCodec.positionQuery(RotatorProtocol.OZ9AAR_URC))
         assertNull(RotatorCodec.positionQuery(RotatorProtocol.PST_ROTATOR))
@@ -96,8 +97,8 @@ class RotatorCodecTest {
 
         val echoedCommand = byteArrayOf(0x57, 0, 4, 8, 3, 1, 0, 4, 0, 6, 1, 0x2F, 0x20)
         val parsedEcho = RotatorCodec.parsePosition(RotatorProtocol.SPID_ROT2PROG, echoedCommand)
-        assertEquals(123.0, parsedEcho?.azimuthDegrees ?: Double.NaN, 0.0)
-        assertEquals(46.0, parsedEcho?.elevationDegrees ?: Double.NaN, 0.0)
+        assertNull(parsedEcho)
+        assertEquals(parsed,RotatorCodec.parsePosition(RotatorProtocol.SPID_ROT2PROG,echoedCommand+spid))
     }
 
     @Test

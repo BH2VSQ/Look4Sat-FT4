@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import java.io.File
 
 class SettingsViewModel(
@@ -367,12 +368,19 @@ class SettingsViewModel(
                 rotatorTrackingService.disconnect(park = false)
             }
             is SettingsAction.TestRotatorPoint -> viewModelScope.launch {
-                rotatorTrackingService.point(
+                try { rotatorTrackingService.point(
                     RotatorPosition(action.azimuthDegrees, action.elevationDegrees)
-                )
+                ) } catch(cancelled:CancellationException) {throw cancelled}
+                catch(error:Exception) {showToast(error.message ?: "Rotator movement failed")}
             }
-            SettingsAction.ParkRotator -> viewModelScope.launch { rotatorTrackingService.park() }
-            SettingsAction.StopRotator -> viewModelScope.launch { rotatorTrackingService.emergencyStop() }
+            SettingsAction.ParkRotator -> viewModelScope.launch {
+                try {rotatorTrackingService.park()} catch(cancelled:CancellationException){throw cancelled}
+                catch(error:Exception){showToast(error.message ?: "Rotator parking failed")}
+            }
+            SettingsAction.StopRotator -> viewModelScope.launch {
+                try {rotatorTrackingService.emergencyStop()} catch(cancelled:CancellationException){throw cancelled}
+                catch(error:Exception){showToast(error.message ?: "Rotator stop failed")}
+            }
             SettingsAction.ExportControlDiagnostics -> {
                 _uiState.update { it.copy(controlDiagnosticsExportText = controlDiagnostics.exportText()) }
             }

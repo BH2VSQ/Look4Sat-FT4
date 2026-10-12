@@ -33,7 +33,8 @@ data class RotatorCommandOutcome(
     val kind: RotatorCommandKind,
     val success: Boolean,
     val errorMessage: String? = null,
-    val superseded: Boolean = false
+    val superseded: Boolean = false,
+    val reconnectRecommended: Boolean = true
 )
 
 /**
@@ -200,7 +201,8 @@ class RotatorCommandActor(
                     kind = command.kind,
                     success = successful,
                     errorMessage = error,
-                    superseded = superseded
+                    superseded = superseded,
+                    reconnectRecommended = (result.exceptionOrNull() as? RotatorProtocolFailure)?.reconnect ?: true
                 )
             )
         }

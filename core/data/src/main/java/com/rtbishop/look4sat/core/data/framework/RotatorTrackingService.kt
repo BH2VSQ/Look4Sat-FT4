@@ -31,6 +31,10 @@ import com.rtbishop.look4sat.core.domain.rotator.RotatorProtocol
 import com.rtbishop.look4sat.core.domain.rotator.RotatorSettings
 import com.rtbishop.look4sat.core.domain.rotator.RotatorTrackingPhase
 import com.rtbishop.look4sat.core.domain.rotator.RotatorTrackingState
+import com.rtbishop.look4sat.core.domain.rotator.RotatorCommandStatus
+import com.rtbishop.look4sat.core.domain.rotator.RotatorFeedbackStatus
+import kotlin.math.abs
+import kotlin.math.max
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +49,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeoutOrNull
 
 class RotatorTrackingService(
     private val appScope: CoroutineScope,
@@ -54,7 +60,7 @@ class RotatorTrackingService(
     private val transportFactory: (RotatorSettings) -> ControlTransport,
     private val stationPosition: () -> GeoPos,
     private val magneticDeclinationDegrees: (GeoPos, Long) -> Double = { _, _ -> 0.0 },
-    private val responseAccumulator: ControlResponseAccumulator = ControlResponseAccumulator(),
+    responseAccumulator: ControlResponseAccumulator = ControlResponseAccumulator(),
     private val reconnectDelayMillis: Long = DEFAULT_RECONNECT_DELAY_MILLIS,
     private val maxReconnectAttempts: Int = DEFAULT_RECONNECT_ATTEMPTS,
     private val positionQueryIntervalMillis: Long = DEFAULT_POSITION_QUERY_INTERVAL_MILLIS,
@@ -66,6 +72,12 @@ class RotatorTrackingService(
     private val connectionMutex = Mutex()
     private val sequence = AtomicLong(0L)
     private val commandActor = RotatorCommandActor(appScope, ::handleCommandOutcome)
+    private val protocolClient = RotatorProtocolClient(responseAccumulator)
+    private val connectionGeneration = AtomicLong()
+    private val feedbackWake = Channel<Unit>(Channel.CONFLATED)
+    private val trackingWake = Channel<Unit>(Channel.CONFLATED)
+    private var feedbackJob: Job? = null
+    private var rejectedCommands = 0
 
     @Volatile
     private var transport: ControlTransport? = null
@@ -92,6 +104,7 @@ class RotatorTrackingService(
     }
 
     override suspend fun connect() {
+        _state.update { it.copy(trackingBlocked = false) }
         val settings = settingsProvider().normalized()
         diagnose("connect/start", "protocol=${settings.protocol} transport=${settings.transport}")
         reconnectJob?.cancelAndJoin()
@@ -106,6 +119,8 @@ class RotatorTrackingService(
     override suspend fun disconnect(park: Boolean) {
         diagnose("disconnect/start", "parkRequested=$park")
         wantConnection = false
+        feedbackJob?.cancelAndJoin()
+        feedbackJob = null
         reconnectJob?.cancelAndJoin()
         reconnectJob = null
         trackingJob?.cancelAndJoin()
@@ -117,6 +132,7 @@ class RotatorTrackingService(
             runCatching { parkInternal(settings) }
         }
         connectionMutex.withLock {
+            connectionGeneration.incrementAndGet()
             transport?.disconnect()
             transport = null
         }
@@ -132,16 +148,20 @@ class RotatorTrackingService(
     override fun startTracking(pass: OrbitalPass) {
         diagnose("tracking/start", "satellite=${pass.catNum}")
         activePass = pass
+        commandActor.cancelPendingTargets()
+        rejectedCommands = 0
         val settings = settingsProvider().normalized()
         _state.update {
             it.copy(
                 isTrackingRequested = true,
+                trackingBlocked = false,
                 trackingPhase = RotatorTrackingPhase.HOLDING,
                 satelliteCatalogNumber = pass.catNum,
                 satelliteName = pass.name,
+                passAosTimeMillis = pass.aosTime,
                 protocol = settings.protocol,
                 transport = settings.transport,
-                errorMessage = null
+                errorMessage = if (it.connectionState == RotatorConnectionState.CONNECTED) it.errorMessage else "Connect the rotator before tracking"
             )
         }
         trackingJob?.cancel()
@@ -175,8 +195,9 @@ class RotatorTrackingService(
             nextAzimuth450Precommitted = false
         )
         val commandSequence = sequence.incrementAndGet()
+        val generation = connectionGeneration.get()
         commandActor.executeImmediate(commandSequence, invalidateTargets = true) {
-            sendPosition(settings, decision, commandSequence)
+            sendPosition(settings, decision, commandSequence, generation)
         }
     }
 
@@ -187,6 +208,8 @@ class RotatorTrackingService(
     override suspend fun emergencyStop() {
         diagnose("emergency-stop/start", "canceling movement and tracking", ControlDiagnosticSeverity.WARNING)
         activePass = null
+        _state.update { it.copy(isTrackingRequested = false, trackingBlocked = true,
+            commandedPosition = null, commandedWirePosition = null, confirmedCommandSequence = null) }
         trackingJob?.cancelAndJoin()
         trackingJob = null
         azimuth450Precommitted = false
@@ -196,9 +219,11 @@ class RotatorTrackingService(
             settings.customStopTemplate
         )
         val commandSequence = sequence.incrementAndGet()
-        val sent = commandActor.executeStop(commandSequence) {
-            frame?.let { transport?.write(it) == true } ?: true
-        }
+        val sent = try { commandActor.executeStop(commandSequence) {
+            val link = transport
+            if (frame == null) throw RotatorProtocolFailure(RotatorFailureKind.INVALID_REPLY,"No stop command for ${settings.protocol}")
+            if (link == null) false else protocolClient.stop(link, settings)
+        } } catch(cancelled:CancellationException) { throw cancelled } catch(_:Exception) { false }
         _state.update {
             it.copy(
                 trackingPhase = RotatorTrackingPhase.HOLDING,
@@ -207,6 +232,8 @@ class RotatorTrackingService(
                 satelliteName = "",
                 lastCommandSequence = commandSequence,
                 lastCommandAtMillis = nowMillis(),
+                commandStatus = if(frame == null) RotatorCommandStatus.UNCONFIRMED else if(sent && settings.protocol == RotatorProtocol.ROTCTLD) RotatorCommandStatus.ACCEPTED
+                    else if(sent) RotatorCommandStatus.UNCONFIRMED else RotatorCommandStatus.TIMED_OUT,
                 errorMessage = when {
                     !sent -> "Rotator stop command failed"
                     frame == null -> "${settings.protocol} does not provide a stop command"
@@ -222,6 +249,9 @@ class RotatorTrackingService(
     }
 
     private suspend fun connectLocked(reconnecting: Boolean): Boolean {
+        connectionGeneration.incrementAndGet()
+        feedbackJob?.cancel()
+        feedbackJob = null
         val settings = settingsProvider().normalized()
         if (!settings.isConfigured) {
             diagnose("connect/validation", "rotator settings are incomplete", ControlDiagnosticSeverity.ERROR)
@@ -272,10 +302,19 @@ class RotatorTrackingService(
                     } else {
                         RotatorTrackingPhase.HOLDING
                     },
+                    commandedPosition = null,
+                    commandedWirePosition = null,
+                    reportedPosition = null,
+                    reportedAtMillis = null,
+                    acceptedCommandSequence = null,
+                    confirmedCommandSequence = null,
+                    commandStatus = RotatorCommandStatus.IDLE,
+                    feedbackStatus = if (feedbackEnabled(settings)) RotatorFeedbackStatus.UNKNOWN else RotatorFeedbackStatus.UNSUPPORTED,
                     errorMessage = null
                 )
             }
             diagnose("connect/result", "connected protocol=${settings.protocol} transport=${settings.transport}")
+            startFeedbackMonitor(candidate, connectionGeneration.get())
         } else {
             candidate.disconnect()
             if (transport === candidate) transport = null
@@ -318,7 +357,7 @@ class RotatorTrackingService(
             } else {
                 _state.update { it.copy(trackingPhase = RotatorTrackingPhase.HOLDING) }
             }
-            delay(settings.updateIntervalMillis)
+            withTimeoutOrNull(settings.updateIntervalMillis) { trackingWake.receive() }
         }
     }
 
@@ -328,7 +367,11 @@ class RotatorTrackingService(
         requiresFlip: Boolean
     ) {
         val now = nowMillis()
-        maybeQueryPosition(settings, now)
+        expireFeedback(settings, now)
+        if (feedbackEnabled(settings) && _state.value.feedbackStatus != RotatorFeedbackStatus.FRESH) {
+            _state.update { it.copy(trackingPhase = RotatorTrackingPhase.HOLDING) }
+            return
+        }
         val current = orbitSource.look(pass, now)
         val lead = settings.trackingLeadSeconds.takeIf { it > 0 }?.let {
             orbitSource.look(pass, now + it * MILLIS_PER_SECOND)
@@ -370,7 +413,9 @@ class RotatorTrackingService(
                 if (_state.value.trackingPhase != decision.phase) {
                     diagnose("tracking/phase", decision.phase.name)
                 }
-                _state.update { it.copy(trackingPhase = decision.phase, errorMessage = null) }
+                _state.update { it.copy(trackingPhase = if(decision.phase == RotatorTrackingPhase.PARKING &&
+                    lastWirePosition == decision.wirePosition && it.commandStatus == RotatorCommandStatus.AT_TARGET)
+                    RotatorTrackingPhase.PARKED else decision.phase) }
                 if (
                     RotatorPointingPolicy.shouldSend(
                         previousPosition = lastWirePosition,
@@ -381,47 +426,41 @@ class RotatorTrackingService(
                     )
                 ) {
                     val commandSequence = sequence.incrementAndGet()
+                    val generation = connectionGeneration.get()
                     commandActor.submitTarget(commandSequence) {
-                        sendPosition(settings, decision, commandSequence)
+                        sendPosition(settings, decision, commandSequence, generation)
                     }
-                } else if (decision.phase == RotatorTrackingPhase.PARKING) {
-                    _state.update { it.copy(trackingPhase = RotatorTrackingPhase.PARKED) }
                 }
             }
         }
     }
 
     private suspend fun sendPosition(
-        settings: RotatorSettings,
-        decision: RotatorPointingDecision.Point,
-        commandSequence: Long
+        settings: RotatorSettings, decision: RotatorPointingDecision.Point, commandSequence: Long, generation: Long
     ): Boolean {
-        val currentTransport = transport ?: return false
-        val frame = com.rtbishop.look4sat.core.domain.rotator.RotatorCodec.point(
-            settings.protocol,
-            decision.wirePosition,
-            settings.customPointTemplate
-        )
-        val success = currentTransport.write(frame)
-        if (success) {
-            val sentAt = nowMillis()
-            lastWirePosition = decision.wirePosition
-            lastSendAtMillis = sentAt
-            _state.update {
-                it.copy(
-                    trackingPhase = if (decision.phase == RotatorTrackingPhase.PARKING) {
-                        RotatorTrackingPhase.PARKED
-                    } else {
-                        decision.phase
-                    },
-                    commandedPosition = decision.truePosition,
-                    lastCommandSequence = commandSequence,
-                    lastCommandAtMillis = sentAt,
-                    errorMessage = null
-                )
-            }
-        }
-        return success
+        if (generation != connectionGeneration.get()) return true
+        val link = transport ?: return false
+        expireFeedback(settings, nowMillis())
+        if (feedbackEnabled(settings) && _state.value.feedbackStatus != RotatorFeedbackStatus.FRESH)
+            throw RotatorProtocolFailure(RotatorFailureKind.INVALID_REPLY, "Position feedback is unavailable; movement held")
+        val accepted = try { protocolClient.point(link, settings, decision.wirePosition) {
+            _state.update { if(generation != connectionGeneration.get() || transport !== link) it else it.copy(trackingPhase=decision.phase, commandedPosition=decision.truePosition,
+                commandedWirePosition=decision.wirePosition, commandStatus=RotatorCommandStatus.SENT,
+                confirmedCommandSequence=null, lastCommandSequence=commandSequence, lastCommandAtMillis=nowMillis()) }
+        } } catch(error:Exception) { if(generation!=connectionGeneration.get())return true else throw error }
+        if (generation != connectionGeneration.get() || transport !== link) return true
+        lastWirePosition = decision.wirePosition
+        lastSendAtMillis = nowMillis()
+        rejectedCommands = 0
+        _state.update { it.copy(commandStatus=when {
+            accepted -> RotatorCommandStatus.ACCEPTED
+            feedbackEnabled(settings) -> RotatorCommandStatus.SENT
+            else -> RotatorCommandStatus.UNCONFIRMED
+        }, acceptedCommandSequence=if(accepted) commandSequence else null, errorMessage=null) }
+        lastQueryAtMillis = null
+        feedbackWake.trySend(Unit)
+        diagnose("command/sent", "sequence=$commandSequence accepted=$accepted feedback=${feedbackEnabled(settings)}")
+        return true
     }
 
     private suspend fun parkInternal(settings: RotatorSettings) {
@@ -435,51 +474,109 @@ class RotatorTrackingService(
         ) as? RotatorPointingDecision.Point ?: return
         _state.update { it.copy(trackingPhase = RotatorTrackingPhase.PARKING) }
         val commandSequence = sequence.incrementAndGet()
+        val generation = connectionGeneration.get()
         commandActor.executeImmediate(commandSequence, invalidateTargets = true) {
-            sendPosition(settings, decision, commandSequence)
+            sendPosition(settings, decision, commandSequence, generation)
         }
         azimuth450Precommitted = false
     }
 
-    private suspend fun maybeQueryPosition(settings: RotatorSettings, now: Long) {
-        if (positionQueryIntervalMillis == 0L) return
-        if (!settings.protocol.supportsPositionQuery && settings.protocol != RotatorProtocol.PST_ROTATOR) return
-        val previousQuery = lastQueryAtMillis
-        if (previousQuery != null && now - previousQuery < positionQueryIntervalMillis) return
-        lastQueryAtMillis = now
-        val commandSequence = sequence.incrementAndGet()
-        runCatching {
-            commandActor.executeQuery(commandSequence) {
-                val currentTransport = transport ?: return@executeQuery false
-                val query = com.rtbishop.look4sat.core.domain.rotator.RotatorCodec.positionQuery(
-                    settings.protocol,
-                    settings.customQueryTemplate
-                )
-                if (query != null && !currentTransport.write(query)) return@executeQuery false
-                val response = responseAccumulator.readUntilQuiet(
-                    transport = currentTransport,
-                    maxBytes = MAX_RESPONSE_BYTES,
-                    timeoutMillis = RESPONSE_TIMEOUT_MILLIS
-                )
-                val position = com.rtbishop.look4sat.core.domain.rotator.RotatorCodec.parsePosition(
-                    settings.protocol,
-                    response
-                )
-                if (position != null) _state.update { it.copy(reportedPosition = position) }
-                true
+    private fun feedbackEnabled(settings: RotatorSettings) =
+        positionQueryIntervalMillis > 0 && settings.supportsPositionFeedback
+
+    private fun startFeedbackMonitor(link: ControlTransport, generation: Long) {
+        feedbackJob = appScope.launch {
+            while (isActive && transport === link && connectionGeneration.get() == generation) {
+                val settings = settingsProvider().normalized()
+                if (!feedbackEnabled(settings)) return@launch
+                expireFeedback(settings, nowMillis())
+                maybeQueryPosition(settings, nowMillis(), generation)
+                withTimeoutOrNull(positionQueryIntervalMillis.coerceAtLeast(200L)) { feedbackWake.receive() }
             }
         }
+    }
+
+    private fun expireFeedback(settings: RotatorSettings, now: Long) {
+        val state = _state.value
+        val receivedAt = state.reportedAtMillis ?: return
+        val limit = max(settings.sampleTimeoutMillis, positionQueryIntervalMillis*2+500L)
+        if (now-receivedAt > limit && state.feedbackStatus == RotatorFeedbackStatus.FRESH)
+            markFeedbackMissing("Rotator position feedback is stale")
+    }
+
+    private fun markFeedbackMissing(message: String) {
+        _state.update { it.copy(feedbackStatus=RotatorFeedbackStatus.STALE, confirmedCommandSequence=null,
+            commandStatus=if(it.commandStatus in setOf(RotatorCommandStatus.FEEDBACK, RotatorCommandStatus.AT_TARGET))
+                if(it.acceptedCommandSequence==it.lastCommandSequence) RotatorCommandStatus.ACCEPTED else RotatorCommandStatus.SENT
+                else it.commandStatus,
+            trackingPhase=if(it.isTrackingRequested) RotatorTrackingPhase.HOLDING else
+                if(it.trackingPhase==RotatorTrackingPhase.PARKED) RotatorTrackingPhase.PARKING else it.trackingPhase,
+            errorMessage=message) }
+    }
+
+    private suspend fun maybeQueryPosition(settings: RotatorSettings, now: Long, generation: Long) {
+        if (lastQueryAtMillis?.let { now-it < positionQueryIntervalMillis } == true) return
+        lastQueryAtMillis = now
+        val querySequence = sequence.incrementAndGet()
+        try {
+            commandActor.executeQuery(querySequence) {
+                if (connectionGeneration.get()!=generation) return@executeQuery true
+                val link = transport ?: return@executeQuery false
+                val commandSequence = _state.value.lastCommandSequence
+                val position = try { protocolClient.position(link, settings) }
+                    catch(error:Exception) { if(connectionGeneration.get()!=generation)return@executeQuery true else throw error }
+                if(connectionGeneration.get()!=generation || transport !== link) return@executeQuery true
+                publishPosition(position, settings, commandSequence, generation)
+                diagnose("position/received", "az=${position.azimuthDegrees} el=${position.elevationDegrees} command=$commandSequence")
+                true
+            }
+        } catch(cancelled: CancellationException) { throw cancelled }
+        catch(_: Exception) { /* Command outcomes publish failures, including missing feedback. */ }
+    }
+
+    private fun publishPosition(position: RotatorPosition, settings: RotatorSettings, sequence: Long, generation: Long) {
+        val shouldWake = _state.value.feedbackStatus != RotatorFeedbackStatus.FRESH
+        _state.update { current ->
+            if (generation != connectionGeneration.get()) return@update current
+            val target = current.commandedWirePosition
+            val confirms = target!=null && sequence==current.lastCommandSequence &&
+                current.commandStatus !in setOf(RotatorCommandStatus.REJECTED,RotatorCommandStatus.TIMED_OUT)
+            val delta = target?.let { abs(position.azimuthDegrees-it.azimuthDegrees) } ?: Double.MAX_VALUE
+            val azError = if(settings.azimuthRange==com.rtbishop.look4sat.core.domain.rotator.RotatorAzimuthRange.ZERO_TO_360)
+                minOf(delta, abs(360.0-delta)) else delta
+            val tolerance = max(1.0, settings.deadbandDegrees)
+            val atTarget = confirms && azError<=tolerance && abs(position.elevationDegrees-target.elevationDegrees)<=tolerance
+            current.copy(reportedPosition=position, reportedAtMillis=nowMillis(), feedbackStatus=RotatorFeedbackStatus.FRESH,
+                confirmedCommandSequence=if(confirms) sequence else current.confirmedCommandSequence,
+                commandStatus=if(atTarget) RotatorCommandStatus.AT_TARGET else if(confirms) RotatorCommandStatus.FEEDBACK else current.commandStatus,
+                trackingPhase=if(atTarget && current.trackingPhase==RotatorTrackingPhase.PARKING) RotatorTrackingPhase.PARKED
+                    else if(!atTarget && current.trackingPhase==RotatorTrackingPhase.PARKED) RotatorTrackingPhase.PARKING else current.trackingPhase,
+                errorMessage=if(current.commandStatus in setOf(RotatorCommandStatus.REJECTED,RotatorCommandStatus.TIMED_OUT))
+                    current.errorMessage else null)
+        }
+        if (shouldWake) trackingWake.trySend(Unit)
     }
 
     private fun handleCommandOutcome(outcome: RotatorCommandOutcome) {
         if (outcome.superseded) return
         _state.update {
             it.copy(
-                lastCommandSequence = maxOf(it.lastCommandSequence, outcome.sequence),
                 errorMessage = if (outcome.success) it.errorMessage else outcome.errorMessage
             )
         }
-        if (!outcome.success && wantConnection) scheduleReconnect(outcome.errorMessage)
+        if (!outcome.success && outcome.kind == RotatorCommandKind.QUERY)
+            markFeedbackMissing(outcome.errorMessage ?: "Position feedback unavailable")
+        if (!outcome.success && outcome.kind in setOf(RotatorCommandKind.TARGET, RotatorCommandKind.IMMEDIATE)) {
+            lastWirePosition = null
+            _state.update { it.copy(commandStatus=if(outcome.reconnectRecommended) RotatorCommandStatus.TIMED_OUT else RotatorCommandStatus.REJECTED,
+                confirmedCommandSequence=null, trackingPhase=RotatorTrackingPhase.ERROR) }
+            if (!outcome.reconnectRecommended && ++rejectedCommands >= 3) {
+                activePass = null
+                trackingJob?.cancel()
+                _state.update { it.copy(isTrackingRequested=false, trackingBlocked=true, errorMessage="Rotator rejected 3 commands; tracking paused") }
+            }
+        }
+        if (!outcome.success && outcome.reconnectRecommended && wantConnection) scheduleReconnect(outcome.errorMessage)
         if (!outcome.success) {
             diagnose(
                 "command/failure",
@@ -502,10 +599,14 @@ class RotatorTrackingService(
                 it.copy(
                     connectionState = RotatorConnectionState.RECONNECTING,
                     trackingPhase = RotatorTrackingPhase.HOLDING,
+                    feedbackStatus = RotatorFeedbackStatus.STALE,
+                    confirmedCommandSequence = null,
                     errorMessage = reason
                 )
             }
             connectionMutex.withLock {
+                connectionGeneration.incrementAndGet()
+                feedbackJob?.cancel()
                 transport?.disconnect()
                 transport = null
             }
@@ -547,8 +648,6 @@ class RotatorTrackingService(
 
     private companion object {
         const val MILLIS_PER_SECOND = 1_000L
-        const val RESPONSE_TIMEOUT_MILLIS = 500L
-        const val MAX_RESPONSE_BYTES = 4_096
         const val DEFAULT_RECONNECT_DELAY_MILLIS = 2_000L
         const val DEFAULT_RECONNECT_ATTEMPTS = 3
         const val DEFAULT_POSITION_QUERY_INTERVAL_MILLIS = 2_000L

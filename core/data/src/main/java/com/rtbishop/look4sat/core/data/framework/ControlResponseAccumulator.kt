@@ -16,6 +16,28 @@ class ControlResponseAccumulator(
     private val nowMillis: () -> Long = { System.nanoTime() / NANOS_PER_MILLI },
     private val waitMillis: suspend (Long) -> Unit = { delay(it) }
 ) {
+    suspend fun readUntil(
+        transport: ControlTransport,
+        maxBytes: Int,
+        timeoutMillis: Long,
+        complete: (ByteArray) -> Boolean
+    ): ByteArray {
+        require(maxBytes > 0 && timeoutMillis > 0)
+        val output = ByteArrayOutputStream(minOf(maxBytes, INITIAL_CAPACITY))
+        val start = nowMillis()
+        while (nowMillis() - start < timeoutMillis && output.size() < maxBytes) {
+            val chunk = transport.readAvailable(maxBytes-output.size())
+            if (chunk.isEmpty()) {
+                if (!transport.isConnected) break
+                waitMillis(DEFAULT_POLL_MILLIS)
+            } else {
+                output.write(chunk, 0, minOf(chunk.size, maxBytes-output.size()))
+                val bytes = output.toByteArray()
+                if (complete(bytes)) return bytes
+            }
+        }
+        return output.toByteArray()
+    }
     suspend fun readUntilQuiet(
         transport: ControlTransport,
         maxBytes: Int,

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rotator_confirmation_label">指令确认：%1$s</string>
+    <string name="rotator_command_idle">尚未发送运动指令</string>
+    <string name="rotator_command_sent">已发送，等待回传</string>
+    <string name="rotator_command_accepted">控制器已受理，尚未确认到位</string>
+    <string name="rotator_command_feedback">已收到位置，运动中／未到位</string>
+    <string name="rotator_command_at_target">已到位：由新鲜位置回传确认</string>
+    <string name="rotator_command_unconfirmed">仅已发送，无法确认实际执行</string>
+    <string name="rotator_command_rejected">指令被拒绝，不视为已应用</string>
+    <string name="rotator_command_timeout">指令应答超时</string>
+    <string name="rotator_feedback_waiting">等待位置回传</string>
+    <string name="rotator_feedback_fresh">位置回传有效</string>
+    <string name="rotator_feedback_stale">位置回传缺失或过期：暂停运动指令</string>
+    <string name="rotator_feedback_unsupported">单向协议／未配置回传：无法确认执行</string>
+    <string name="rotator_response_template">位置回传格式</string>
+    <string name="rotator_response_hint">例如 AZ$AZ EL$EL\\r\\n；$AZ、$EL 各出现一次；留空时明确只发送、不确认执行。</string>
+</resources>

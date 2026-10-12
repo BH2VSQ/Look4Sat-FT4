@@ -100,9 +100,9 @@ object RotatorCodec {
 
     fun positionQuery(protocol: RotatorProtocol, customTemplate: String = ""): ByteArray? = when (protocol) {
         RotatorProtocol.GS232 -> ascii("C2\r")
-        RotatorProtocol.EASYCOMM_I,
+        RotatorProtocol.EASYCOMM_I -> null
         RotatorProtocol.EASYCOMM_II,
-        RotatorProtocol.EASYCOMM_III -> ascii("AZ EL\r")
+        RotatorProtocol.EASYCOMM_III -> ascii("AZ\n")
         RotatorProtocol.SPID_ROT2PROG -> spidFrame(command = SPID_QUERY)
         RotatorProtocol.SAEBRTRACK, RotatorProtocol.PST_ROTATOR -> null
         RotatorProtocol.ROTCTLD -> ascii("p\n")
@@ -112,7 +112,7 @@ object RotatorCodec {
             ?.let(::ascii)
     }
 
-    fun parsePosition(protocol: RotatorProtocol, bytes: ByteArray): RotatorPosition? {
+    fun parsePosition(protocol: RotatorProtocol, bytes: ByteArray, customResponseTemplate: String = ""): RotatorPosition? {
         if (bytes.isEmpty()) return null
         return when (protocol) {
             RotatorProtocol.SPID_ROT2PROG -> parseSpidPosition(bytes)
@@ -124,8 +124,37 @@ object RotatorCodec {
             RotatorProtocol.ROTCTLD -> parseRotctldPosition(bytes.decodeToString())
             RotatorProtocol.PST_ROTATOR -> parsePstRotatorPosition(bytes.decodeToString())
             RotatorProtocol.OZ9AAR_URC -> parseUrcPosition(bytes.decodeToString())
-            RotatorProtocol.CUSTOM_TEMPLATE -> null
-        }?.takeIf { it.azimuthDegrees.isFinite() && it.elevationDegrees.isFinite() }
+            RotatorProtocol.CUSTOM_TEMPLATE -> parseCustomPosition(bytes.decodeToString(), customResponseTemplate)
+        }?.takeIf { it.azimuthDegrees.isFinite() && it.elevationDegrees.isFinite() &&
+            it.azimuthDegrees in -360.0..450.0 && it.elevationDegrees in -90.0..180.0 }
+    }
+
+    fun parseEasyCommAxis(text: String, azimuth: Boolean): Double? {
+        val prefix = if (azimuth) "AZ" else "EL"
+        return Regex("^$prefix\\s*=?\\s*$NUMBER$", RegexOption.IGNORE_CASE)
+            .matchEntire(text.trim())?.groupValues?.get(1)?.toDoubleOrNull()?.takeIf {
+                it.isFinite() && if (azimuth) it in -360.0..450.0 else it in -90.0..180.0
+            }
+    }
+
+    fun validResponseTemplate(template: String): Boolean = template.length <= 256 &&
+        Regex("\\\$AZ").findAll(template).count() == 1 && Regex("\\\$EL").findAll(template).count() == 1
+
+    private fun parseCustomPosition(text: String, template: String): RotatorPosition? {
+        if (!validResponseTemplate(template)) return null
+        val format = template.unescapeControlCharacters()
+        val tokens = Regex("\\\$AZ|\\\$EL").findAll(format).toList()
+        var offset = 0
+        val pattern = buildString {
+            for (token in tokens) {
+                append(Regex.escape(format.substring(offset, token.range.first)))
+                append(NUMBER)
+                offset = token.range.last + 1
+            }
+            append(Regex.escape(format.substring(offset)))
+        }
+        val values = Regex(pattern).find(text)?.groupValues ?: return null
+        return if (tokens[0].value == "\$AZ") position(values[1], values[2]) else position(values[2], values[1])
     }
 
     private fun parseGs232Position(text: String): RotatorPosition? {
@@ -167,17 +196,17 @@ object RotatorCodec {
     }
 
     private fun parseSpidPosition(bytes: ByteArray): RotatorPosition? {
-        val start = bytes.indexOfFirst { it.toInt() and 0xFF == SPID_START }
-        if (start < 0 || bytes.size < start + SPID_REPLY_SIZE) return null
-        val hasReplyTerminator = unsigned(bytes[start + SPID_REPLY_SIZE - 1]) == SPID_END
-        val hasEchoTerminator = bytes.size >= start + SPID_FRAME_SIZE &&
-            unsigned(bytes[start + SPID_FRAME_SIZE - 1]) == SPID_END
-        if (!hasReplyTerminator && !hasEchoTerminator) return null
-        val azimuthResolution = unsigned(bytes[start + 5]).coerceAtLeast(1)
-        val elevationResolution = unsigned(bytes[start + 10]).coerceAtLeast(1)
-        val azimuth = spidDigits(bytes, start + 1) / azimuthResolution.toDouble() - 360.0
-        val elevation = spidDigits(bytes, start + 6) / elevationResolution.toDouble() - 360.0
-        return RotatorPosition(azimuth, elevation)
+        for (start in 0..bytes.size-SPID_REPLY_SIZE) {
+            if (unsigned(bytes[start])!=SPID_START || unsigned(bytes[start+11])!=SPID_END) continue
+            if ((1..4).any { unsigned(bytes[start+it]) !in 0..9 } ||
+                (6..9).any { unsigned(bytes[start+it]) !in 0..9 }) continue
+            val azimuthResolution = unsigned(bytes[start+5])
+            val elevationResolution = unsigned(bytes[start+10])
+            if (azimuthResolution !in 1..100 || elevationResolution !in 1..100) continue
+            return RotatorPosition(spidDigits(bytes,start+1)/azimuthResolution.toDouble()-360.0,
+                spidDigits(bytes,start+6)/elevationResolution.toDouble()-360.0)
+        }
+        return null
     }
 
     private fun spidFrame(

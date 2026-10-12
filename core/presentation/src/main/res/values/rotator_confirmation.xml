@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rotator_confirmation_label">Command confirmation: %1$s</string>
+    <string name="rotator_command_idle">No movement command</string>
+    <string name="rotator_command_sent">Sent — waiting for feedback</string>
+    <string name="rotator_command_accepted">Accepted by controller — not yet at target</string>
+    <string name="rotator_command_feedback">Position received — moving / outside tolerance</string>
+    <string name="rotator_command_at_target">At target — verified by fresh position feedback</string>
+    <string name="rotator_command_unconfirmed">Sent only — execution cannot be confirmed</string>
+    <string name="rotator_command_rejected">Command rejected; not treated as applied</string>
+    <string name="rotator_command_timeout">Command response timed out</string>
+    <string name="rotator_feedback_waiting">Waiting for position feedback</string>
+    <string name="rotator_feedback_fresh">Position feedback is fresh</string>
+    <string name="rotator_feedback_stale">Position feedback missing or stale — movement held</string>
+    <string name="rotator_feedback_unsupported">One-way / unconfigured feedback: execution is unconfirmed</string>
+    <string name="rotator_response_template">Position response template</string>
+    <string name="rotator_response_hint">Example: AZ$AZ EL$EL\\r\\n. Include $AZ and $EL once each; leave blank for explicitly unconfirmed operation.</string>
+</resources>

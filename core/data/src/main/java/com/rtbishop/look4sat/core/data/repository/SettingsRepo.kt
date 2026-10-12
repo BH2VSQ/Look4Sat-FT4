@@ -87,6 +87,7 @@ class SettingsRepo(
     private val keyRotatorCustomPoint = "rotator.customPoint"
     private val keyRotatorCustomStop = "rotator.customStop"
     private val keyRotatorCustomQuery = "rotator.customQuery"
+    private val keyRotatorCustomResponse = "rotator.customResponse"
     private val keyRotatorPrepositionLead = "rotator.prepositionLead"
     private val keyRotatorTrackingLead = "rotator.trackingLead"
     private val keyRotatorAzimuthLookAhead = "rotator.azimuthLookAhead"
@@ -814,6 +815,8 @@ class SettingsRepo(
                 ?: defaults.customStopTemplate,
             customQueryTemplate = preferences.getString(keyRotatorCustomQuery, null)
                 ?: defaults.customQueryTemplate,
+            customResponseTemplate = preferences.getString(keyRotatorCustomResponse, null)
+                ?: defaults.customResponseTemplate,
             prepositionLeadSeconds = preferences.getInt(
                 keyRotatorPrepositionLead,
                 defaults.prepositionLeadSeconds
@@ -876,6 +879,7 @@ class SettingsRepo(
             putString(keyRotatorCustomPoint, settings.customPointTemplate)
             putString(keyRotatorCustomStop, settings.customStopTemplate)
             putString(keyRotatorCustomQuery, settings.customQueryTemplate)
+            putString(keyRotatorCustomResponse, settings.customResponseTemplate)
             putInt(keyRotatorPrepositionLead, settings.prepositionLeadSeconds)
             putInt(keyRotatorTrackingLead, settings.trackingLeadSeconds)
             putInt(keyRotatorAzimuthLookAhead, settings.azimuthLookAheadSeconds)

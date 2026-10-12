@@ -60,6 +60,8 @@ import com.rtbishop.look4sat.core.domain.rotator.RotatorSettings
 import com.rtbishop.look4sat.core.domain.rotator.RotatorTrackingPhase
 import com.rtbishop.look4sat.core.domain.rotator.RotatorTrackingState
 import com.rtbishop.look4sat.core.domain.rotator.RotatorTransport
+import com.rtbishop.look4sat.core.domain.rotator.RotatorCommandStatus
+import com.rtbishop.look4sat.core.domain.rotator.RotatorFeedbackStatus
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
 
@@ -349,6 +351,14 @@ fun RotatorControlDialog(
                         enabled = editable,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    OutlinedTextField(
+                        value = draft.customResponseTemplate,
+                        onValueChange = { draft = draft.copy(customResponseTemplate = it.take(256)) },
+                        label = { Text(stringResource(R.string.rotator_response_template)) },
+                        supportingText = { Text(stringResource(R.string.rotator_response_hint)) },
+                        enabled = editable,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
 
                 Text(stringResource(R.string.rotator_pointing), fontWeight = FontWeight.Bold)
@@ -473,6 +483,23 @@ fun RotatorControlDialog(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
+                Text(stringResource(R.string.rotator_confirmation_label, stringResource(when(trackingState.commandStatus) {
+                    RotatorCommandStatus.IDLE -> R.string.rotator_command_idle
+                    RotatorCommandStatus.SENT -> R.string.rotator_command_sent
+                    RotatorCommandStatus.ACCEPTED -> R.string.rotator_command_accepted
+                    RotatorCommandStatus.FEEDBACK -> R.string.rotator_command_feedback
+                    RotatorCommandStatus.AT_TARGET -> R.string.rotator_command_at_target
+                    RotatorCommandStatus.UNCONFIRMED -> R.string.rotator_command_unconfirmed
+                    RotatorCommandStatus.REJECTED -> R.string.rotator_command_rejected
+                    RotatorCommandStatus.TIMED_OUT -> R.string.rotator_command_timeout
+                })),style=MaterialTheme.typography.bodySmall)
+                Text(stringResource(when(trackingState.feedbackStatus) {
+                    RotatorFeedbackStatus.UNKNOWN -> R.string.rotator_feedback_waiting
+                    RotatorFeedbackStatus.FRESH -> R.string.rotator_feedback_fresh
+                    RotatorFeedbackStatus.STALE -> R.string.rotator_feedback_stale
+                    RotatorFeedbackStatus.UNSUPPORTED -> R.string.rotator_feedback_unsupported
+                }),color=if(trackingState.feedbackStatus==RotatorFeedbackStatus.STALE)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style=MaterialTheme.typography.bodySmall)
                 trackingState.reportedPosition?.let { position ->
                     Text(
                         stringResource(

@@ -285,7 +285,8 @@ class RadarViewModel(
                 lastRotatorConnectionState = serviceState.connectionState
                 _uiState.update { state ->
                     state.copy(
-                        rotatorPosition = (serviceState.reportedPosition ?: serviceState.commandedPosition)
+                        rotatorPosition = serviceState.reportedPosition
+                            .takeIf { serviceState.feedbackStatus == com.rtbishop.look4sat.core.domain.rotator.RotatorFeedbackStatus.FRESH }
                             .takeIf { state.rotatorEnabled }
                         )
                 }
@@ -298,18 +299,19 @@ class RadarViewModel(
 
     private fun syncRotatorTracking(enabled: Boolean, pass: OrbitalPass?) {
         val serviceState = rotatorTrackingService.state.value
+        if (serviceState.trackingBlocked) return
         if (!enabled) {
             if (serviceState.isTrackingRequested) rotatorTrackingService.stopTracking(park = false)
             return
         }
         if (pass == null) return
-        if (!serviceState.isTrackingRequested || serviceState.satelliteCatalogNumber != pass.catNum) {
+        if (!serviceState.isTrackingRequested || serviceState.satelliteCatalogNumber != pass.catNum || serviceState.passAosTimeMillis != pass.aosTime) {
             rotatorTrackingService.startTracking(pass)
         }
     }
 
     private fun preferredRotatorPosition() = rotatorTrackingService.state.value.let {
-        it.reportedPosition ?: it.commandedPosition
+        it.reportedPosition.takeIf { _ -> it.feedbackStatus == com.rtbishop.look4sat.core.domain.rotator.RotatorFeedbackStatus.FRESH }
     }
 
     override fun onCleared() {
