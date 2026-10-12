@@ -351,6 +351,7 @@ fun SharedDialog(
     onAccept: () -> Unit,
     acceptText: String? = null,
     acceptEnabled: Boolean = true,
+    cancelText: String? = null,
     content: @Composable () -> Unit
 ) {
     SharedDialog(
@@ -359,7 +360,8 @@ fun SharedDialog(
         onCancel = onCancel,
         onAccept = onAccept,
         acceptText = acceptText,
-        acceptEnabled = acceptEnabled
+        acceptEnabled = acceptEnabled,
+        cancelText = cancelText
     ) { _ ->
         content()
     }
@@ -373,6 +375,8 @@ fun SharedDialog(
     onAccept: (() -> Unit)? = null,
     acceptText: String? = null,
     acceptEnabled: Boolean = true,
+    /** Label of the leading button; [R.string.btn_cancel] when null. */
+    cancelText: String? = null,
     titleFontSize: Int = 16,
     titleTextAlign: TextAlign = if (onCancel != null && onAccept != null) TextAlign.Center else TextAlign.Start,
     content: @Composable (padding: Dp) -> Unit
@@ -385,7 +389,7 @@ fun SharedDialog(
                 .padding(start = padding, top = padding, end = padding)
         ) {
             if (onCancel != null) {
-                CardButton(onClick = onCancel, text = stringResource(R.string.btn_cancel))
+                CardButton(onClick = onCancel, text = cancelText ?: stringResource(R.string.btn_cancel))
             }
             Text(
                 text = title,

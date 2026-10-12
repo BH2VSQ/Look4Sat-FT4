@@ -67,7 +67,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
+import com.rtbishop.look4sat.core.domain.logbook.QsoStatus
 import com.rtbishop.look4sat.core.domain.model.DataSourcesSettings
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.model.OtherSettings
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 
@@ -102,6 +105,7 @@ fun SettingsDestination(onOpenGridFinder: () -> Unit = {}) {
     SettingsScreen(
         uiState = uiState,
         onAction = viewModel::onAction,
+        nominalFrequencies = viewModel::nominalFrequencies,
         onOpenGridFinder = onOpenGridFinder,
         pendingStationGrid = pendingStationGrid.orEmpty(),
         onFixStationGrid = { grids ->
@@ -115,6 +119,7 @@ fun SettingsDestination(onOpenGridFinder: () -> Unit = {}) {
 private fun SettingsScreen(
     uiState: SettingsState,
     onAction: (SettingsAction) -> Unit,
+    nominalFrequencies: suspend (String) -> NominalFrequencies? = { null },
     onOpenGridFinder: () -> Unit,
     pendingStationGrid: String = "",
     onFixStationGrid: (List<String>) -> Unit = {},
@@ -292,6 +297,22 @@ private fun SettingsScreen(
         LogbookDialog(
             records = uiState.logbookRecords.filter { stationFilter == null || it.wavelogStation == stationFilter },
             satelliteCandidates = uiState.satelliteCatalog,
+            newRecord = {
+                // Blank draft: minute-truncated "now" (the radar Log tab's granularity), the
+                // certificate's callsign and the station location's first grid, so the record
+                // is uploadable as it stands.
+                val now = System.currentTimeMillis() / 60_000L * 60_000L
+                QsoRecord(
+                    startUtcMillis = now,
+                    endUtcMillis = now,
+                    theirCallsign = "",
+                    myCallsign = uiState.lotwCertificate?.callsign.orEmpty(),
+                    myGrid = uiState.lotwStation?.grid?.substringBefore(',')?.trim()
+                        ?.uppercase(Locale.US).orEmpty(),
+                    status = QsoStatus.COMPLETE
+                )
+            },
+            nominalFrequencies = nominalFrequencies,
             uploadBusy = uiState.logbookUploadBusy,
             uploadMessage = uiState.logbookUploadMessage,
             preview = uiState.logbookPreview,

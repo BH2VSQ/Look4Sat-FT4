@@ -23,8 +23,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.rtbishop.look4sat.core.domain.repository.IDatabaseRepo
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
+import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.ISensorsRepo
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import com.rtbishop.look4sat.core.domain.repository.IUpdateRepository
@@ -72,6 +74,7 @@ class SettingsViewModel(
     private val lotwRepo: com.rtbishop.look4sat.core.domain.repository.ILoTWRepository,
     private val qsoRepository: com.rtbishop.look4sat.core.domain.logbook.IQsoRepository,
     private val lotwUploadRepository: com.rtbishop.look4sat.core.domain.repository.ILoTWUploadRepository,
+    private val satelliteRepo: ISatelliteRepo,
     private val sensorsRepo: ISensorsRepo,
     private val apkFile: File,
     private val showToast: IShowToast
@@ -569,6 +572,13 @@ class SettingsViewModel(
 
     // region Logbook + LoTW upload configuration
 
+    /**
+     * Nominal (no Doppler) uplink/downlink of the satellite [name] is logged through — the
+     * logbook's Create draft fills them into a blank record, so the operator does not have to
+     * look the pair up and a record without a frequency (which LoTW rejects) cannot be saved.
+     */
+    suspend fun nominalFrequencies(name: String): NominalFrequencies? = satelliteRepo.nominalFrequencies(name)
+
     private fun refreshLogbook() {
         viewModelScope.launch {
             _uiState.update { it.copy(logbookRecords = qsoRepository.records.first()) }
@@ -1030,6 +1040,7 @@ class SettingsViewModel(
                     lotwRepo = container.lotwRepo,
                     qsoRepository = container.qsoRepository,
                     lotwUploadRepository = container.lotwUploadRepository,
+                    satelliteRepo = container.satelliteRepo,
                     sensorsRepo = container.provideSensorsRepo(),
                     apkFile = File(context.cacheDir, "look4sat-update.apk"),
                     showToast = container.provideShowToast()

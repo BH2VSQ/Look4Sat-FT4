@@ -17,6 +17,7 @@
  */
 package com.rtbishop.look4sat.core.domain.repository
 
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.model.SatRadio
 import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
@@ -65,6 +66,15 @@ interface ISatelliteRepo {
 
     /** Fetch radio transceivers for a satellite by its catalog number. */
     suspend fun getRadiosWithId(id: Int): List<SatRadio>
+
+    /**
+     * Nominal (no Doppler) uplink/downlink of the transceiver a contact on [name] is made
+     * through: the FM voice repeater when the bird has one, else the first live transceiver
+     * publishing both bands. Names match through satellite identities, so the tracker spelling
+     * ("SAUDISAT 1C") finds the same entry as the ARRL name ("SO-50"). Null when the name
+     * resolves to no satellite, or the satellite publishes no usable pair.
+     */
+    suspend fun nominalFrequencies(name: String): NominalFrequencies?
 
     /** Satellite catnums whose radios carry any of the given downlink modes.
      *  Empty modes -> empty result; used to filter the mutual-match satellite
