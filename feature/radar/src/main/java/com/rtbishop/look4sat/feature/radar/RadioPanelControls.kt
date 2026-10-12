@@ -77,28 +77,29 @@ internal fun ReferenceFrequencyControls(control: RadioControlSubState, onAction:
     ) {
         Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FlowRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(stringResource(if (control.calculatorLinked) R.string.rc_panel_linked else R.string.rc_panel_independent),
-                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    control.remoteRadio?.takeIf { it.capabilities?.satelliteProfiles == true }?.let { remote ->
-                        Text(stringResource(if (control.referenceDirty || remote.profileStore?.dirty == true || !remote.nativeProfileValid)
-                            R.string.rc_panel_unsaved else R.string.rc_panel_saved), style = MaterialTheme.typography.labelSmall)
-                    }
-                    if (control.referenceRxHz == null) Text(stringResource(R.string.rc_panel_waiting),
-                        style = MaterialTheme.typography.labelSmall)
-                }
+                Text(title, maxLines = 1, softWrap = false,
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    stringResource(R.string.rc_panel_reference_pair,
+                        control.referenceRxHz?.let(::referenceFrequencyText) ?: "—",
+                        control.txBaseFrequencyHz?.let(::referenceFrequencyText) ?: "—"),
+                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    maxLines = 1, softWrap = false,
+                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace
+                )
                 Icon(painterResource(R.drawable.ic_edit), contentDescription = null, modifier = Modifier.size(20.dp),
                     tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(
-                stringResource(R.string.rc_panel_reference_pair,
-                    control.referenceRxHz?.let(::referenceFrequencyText) ?: "—",
-                    control.txBaseFrequencyHz?.let(::referenceFrequencyText) ?: "—"),
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                maxLines = 1, softWrap = false,
-                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace
-            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (control.calculatorLinked) Text(stringResource(R.string.rc_panel_linked),
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                control.remoteRadio?.takeIf { it.capabilities?.satelliteProfiles == true }?.let { remote ->
+                    Text(stringResource(if (control.referenceDirty || remote.profileStore?.dirty == true || !remote.nativeProfileValid)
+                        R.string.rc_panel_unsaved else R.string.rc_panel_saved), style = MaterialTheme.typography.labelSmall)
+                }
+                if (control.referenceRxHz == null) Text(stringResource(R.string.rc_panel_waiting),
+                    style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
     if (showEditor) {
