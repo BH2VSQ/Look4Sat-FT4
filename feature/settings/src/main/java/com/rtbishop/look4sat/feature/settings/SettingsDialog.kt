@@ -1419,7 +1419,7 @@ fun RadioControlDialog(
         ) return@accept
         val parsedL4sStep=l4sDopplerStepHz.value.toLongOrNull()
         if(isL4s && (parsedL4sStep==null || parsedL4sStep !in 10L..10_000L || parsedL4sStep%10!=0L)) return@accept
-        if(isL4s && frequencyLocked)return@accept
+        if(frequencyLocked)return@accept
         val correctionStep=l4sCorrectionStepHz.value.toLongOrNull()
         if(isL4s && (correctionStep==null || correctionStep !in 10L..1000L || correctionStep%10!=0L))return@accept
         onSave(

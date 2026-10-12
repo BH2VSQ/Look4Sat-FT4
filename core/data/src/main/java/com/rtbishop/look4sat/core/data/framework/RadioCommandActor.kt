@@ -208,6 +208,8 @@ class SerialRadioController(
         actor.execute { delegate.updateTrackingBases(bases) }
     override suspend fun profileStoreCommand(data:ByteArray)=actor.execute {delegate.profileStoreCommand(data)}
     override val isConnected: Boolean get() = delegate.isConnected
+    override val supportsPttReadback get() = delegate.supportsPttReadback
+    override suspend fun readPttState() = actor.execute(operation = delegate::readPttState)
     override suspend fun connect() = actor.execute(CONNECT_TIMEOUT_MILLIS, delegate::connect)
     override suspend fun disconnect() = actor.execute(operation = delegate::disconnect)
     override suspend fun setFrequency(frequencyHz: Long) = actor.execute { delegate.setFrequency(frequencyHz) }

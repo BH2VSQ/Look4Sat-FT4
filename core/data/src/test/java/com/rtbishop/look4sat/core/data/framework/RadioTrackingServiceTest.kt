@@ -65,6 +65,128 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+    private val legacyModels=listOf(RadioControlSettings.MODEL_YAESU_FT817,RadioControlSettings.MODEL_YAESU_FT857,
+        RadioControlSettings.MODEL_ICOM_IC705,RadioControlSettings.MODEL_ICOM_IC9700,
+        RadioControlSettings.MODEL_ICOM_IC910,RadioControlSettings.MODEL_ICOM_IC820)
+
+    @Test fun connectionSettingsChangeClosesOldControllersAndRequiresExplicitReconnect()=runTest {
+        val fixture=Fixture(backgroundScope,FakeRadioController(),FakeRadioController())
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        assertTrue(fixture.service.applyRadioControlSettings(fixture.settings.radioControlSettings.value.copy(baudRate=38400)))
+        assertFalse(fixture.service.state.value.txConnected)
+        assertFalse(fixture.service.state.value.rxConnected)
+        assertFalse(fixture.service.state.value.isActive)
+        assertNull(fixture.service.state.value.nominalRxFrequencyHz)
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        assertTrue(fixture.service.state.value.isActive);fixture.close()
+    }
+
+    @Test fun receiveOnlyConnectionQueriesOnlyTheConfiguredRadio()=runTest {
+        val tx=FakeRadioController(pttReadbackSupported=true)
+        val rx=FakeRadioController(pttReadbackSupported=true)
+        val fixture=Fixture(backgroundScope,tx,rx)
+        fixture.settings.radioControlSettings.value=fixture.settings.radioControlSettings.value.copy(txRadioAddress="")
+        fixture.transponder=fixture.transponder.copy(uplinkLow=null,uplinkHigh=null)
+        fixture.service.connectRadios();fixture.startTracking(null);runCurrent()
+        assertTrue(fixture.service.state.value.isActive)
+        assertTrue(fixture.service.state.value.catTransmitStateKnown)
+        assertNull(fixture.service.state.value.errorMessage)
+        rx.physicalPtt=true;advanceTimeBy(1100);runCurrent()
+        assertTrue(fixture.service.state.value.frequencyEditingLocked);fixture.close()
+    }
+
+    @Test fun noConnectedRadioCannotReportTrackingReady()=runTest {
+        val fixture=Fixture(backgroundScope,FakeRadioController(),FakeRadioController())
+        fixture.startTracking();runCurrent()
+        assertFalse(fixture.service.state.value.isActive)
+        assertEquals(TrackingPhase.ERROR,fixture.service.state.value.trackingPhase)
+        fixture.close()
+    }
+
+    @Test fun independentBasesAndExplicitCalculatorLinkWorkForEveryLegacyModel()=runTest {
+        for(model in legacyModels) for(split in listOf(false,true)) {
+            val fixture=Fixture(backgroundScope,FakeRadioController(),FakeRadioController(),radioModel=model,splitMode=split)
+            fixture.transponder=fixture.transponder.copy(uplinkHigh=fixture.nominalTxHz+10000)
+            fixture.service.connectRadios();fixture.startTracking();runCurrent()
+            val rx=fixture.service.state.value.nominalRxFrequencyHz
+            fixture.service.adjustTxBaseFrequency(1000);runCurrent()
+            assertEquals("$model RX must not follow TX",rx,fixture.service.state.value.nominalRxFrequencyHz)
+            val tx=fixture.service.state.value.txBaseFrequencyHz
+            fixture.service.setRxBaseFrequency(435108000);runCurrent()
+            assertEquals(tx,fixture.service.state.value.txBaseFrequencyHz)
+            val tuning=CalculatorTuning(fixture.transponder.uuid,CalculatorFrequencyAnchor.GROUND_RX,435105000)
+            fixture.service.tuneFromCalculator(fixture.transponder,tuning);runCurrent()
+            assertTrue("$model calculator must explicitly link",fixture.service.state.value.calculatorLinked)
+            val linkedRx=fixture.service.state.value.nominalRxFrequencyHz
+            fixture.service.adjustTxBaseFrequency(500);runCurrent()
+            assertFalse(fixture.service.state.value.calculatorLinked)
+            assertEquals(linkedRx,fixture.service.state.value.nominalRxFrequencyHz)
+            fixture.close()
+        }
+    }
+
+    @Test fun legacyTransmitLeaseRejectsAllEditsWithoutStoppingOrDeferringThem()=runTest {
+        for(model in legacyModels.filter {it!=RadioControlSettings.MODEL_ICOM_IC820}) {
+            val tx=FakeRadioController();val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=model)
+            fixture.transponder=fixture.transponder.copy(uplinkHigh=fixture.nominalTxHz+10000)
+            fixture.service.connectRadios();fixture.startTracking();runCurrent()
+            val before=fixture.service.state.value
+            val lease=fixture.service.beginTransmit(fixture.request(701))
+            assertTrue(fixture.service.state.value.frequencyEditingLocked)
+            val off=tx.operations.count {it=="ptt:off"}
+            fixture.service.setTxBaseFrequency(145905000);fixture.service.setRxBaseFrequency(435109000)
+            fixture.service.setMode("CW","CW");fixture.service.setCtcssTone(88.5)
+            fixture.service.tuneFromCalculator(fixture.transponder,CalculatorTuning(fixture.transponder.uuid,
+                CalculatorFrequencyAnchor.GROUND_RX,435105000))
+            assertFalse(fixture.service.applyRadioControlSettings(fixture.settings.radioControlSettings.value.copy(baudRate=9600)))
+            runCurrent()
+            assertEquals(off,tx.operations.count {it=="ptt:off"})
+            assertEquals(before.txBaseFrequencyHz,fixture.service.state.value.txBaseFrequencyHz)
+            fixture.service.confirmTransmitReady(lease);fixture.service.endTransmit(lease)
+            advanceTimeBy(1100);runCurrent()
+            assertEquals(before.txBaseFrequencyHz,fixture.service.state.value.txBaseFrequencyHz)
+            assertFalse(fixture.service.state.value.calculatorLinked)
+            fixture.close()
+        }
+    }
+
+    @Test fun legacyPhysicalPttAndUnknownStatusFreezeTuningThenResumeAtCurrentTime()=runTest {
+        val tx=FakeRadioController(pttReadbackSupported=true)
+        val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=RadioControlSettings.MODEL_ICOM_IC705,splitMode=true)
+        fixture.service.connectRadios();fixture.startTracking();runCurrent()
+        val base=fixture.service.state.value.txBaseFrequencyHz
+        tx.physicalPtt=true;advanceTimeBy(1100);runCurrent()
+        assertTrue(fixture.service.state.value.frequencyEditingLocked)
+        val writes=tx.operations.size
+        fixture.service.adjustTxBaseFrequency(1000);runCurrent();advanceTimeBy(1100);runCurrent()
+        assertEquals(writes,tx.operations.size)
+        tx.physicalPtt=null;advanceTimeBy(1100);runCurrent()
+        assertFalse(fixture.service.state.value.catTransmitStateKnown)
+        assertEquals(writes,tx.operations.size)
+        tx.physicalPtt=false;advanceTimeBy(1100);runCurrent()
+        assertFalse(fixture.service.state.value.frequencyEditingLocked)
+        assertTrue(tx.operations.size>writes)
+        assertEquals(base,fixture.service.state.value.txBaseFrequencyHz)
+        fixture.close()
+    }
+
+    @Test fun receiveOnlyAndReconnectionNeverReuseAnOldTransmitTarget()=runTest {
+        for(model in legacyModels) {
+            val tx=FakeRadioController();val fixture=Fixture(backgroundScope,tx,FakeRadioController(),radioModel=model,splitMode=true)
+            fixture.service.connectRadios();fixture.startTracking();runCurrent()
+            fixture.service.setRxBaseFrequency(435108000);runCurrent()
+            fixture.service.connectRadios();runCurrent()
+            assertNull(fixture.service.state.value.nominalRxFrequencyHz)
+            fixture.transponder=fixture.transponder.copy(uuid="beacon",uplinkLow=null,uplinkHigh=null,downlinkMode="FM")
+            val writes=tx.operations.count {it.startsWith("frequency:") || it.startsWith("tx-frequency:")}
+            fixture.startTracking();runCurrent()
+            assertNull(fixture.service.state.value.txBaseFrequencyHz)
+            fixture.service.setTxBaseFrequency(145905000);runCurrent()
+            assertNull(fixture.service.state.value.txBaseFrequencyHz)
+            if(!fixture.service.state.value.splitMode)assertEquals(writes,tx.operations.count {it.startsWith("frequency:") || it.startsWith("tx-frequency:")})
+            fixture.close()
+        }
+    }
     @Test fun localPhysicalPttIsReleasedAtLosWithoutASeparateRemoteOwner()=runTest {
         var now=System.currentTimeMillis()
         val remote=remoteFixtureState();val tx=FakeRadioController(remote=remote)
@@ -786,7 +908,7 @@ class RadioTrackingServiceTest {
     }
 
     @Test
-    fun modeChangeEndsActiveLeaseBeforeSendingModeCommand() = runTest {
+    fun modeChangeDuringActiveLeaseIsRejectedWithoutStoppingTransmission() = runTest {
         val tx = FakeRadioController()
         val fixture = Fixture(backgroundScope, tx, FakeRadioController())
         fixture.service.connectRadios()
@@ -795,11 +917,16 @@ class RadioTrackingServiceTest {
         val lease = fixture.service.beginTransmit(fixture.request(generation = 10L))
         fixture.service.confirmTransmitReady(lease)
 
+        val offCount=tx.operations.count { it=="ptt:off" }
+        val modeCount=tx.operations.count { it=="mode:USB" }
+
         fixture.service.setMode("USB", "USB")
         runCurrent()
 
-        assertTrue(tx.operations.lastIndexOf("ptt:off") < tx.operations.lastIndexOf("mode:USB"))
-        assertEquals(PttState.OFF, fixture.service.state.value.pttState)
+        assertEquals(offCount,tx.operations.count { it=="ptt:off" })
+        assertEquals(modeCount,tx.operations.count { it=="mode:USB" })
+        assertEquals(PttState.ON, fixture.service.state.value.pttState)
+        fixture.service.endTransmit(lease)
         fixture.close()
     }
 
@@ -886,7 +1013,7 @@ class RadioTrackingServiceTest {
     }
 
     @Test
-    fun satelliteOffsetAndRxDialTuningRoundTripForBothInversionDirections() = runTest {
+    fun rxDialTuningKeepsTxIndependentForBothInversionDirections() = runTest {
         for (split in listOf(false, true)) for (inverted in listOf(false, true)) {
             val tx = FakeRadioController()
             val rx = FakeRadioController()
@@ -908,8 +1035,7 @@ class RadioTrackingServiceTest {
             receiver.frequencyHz += 1_000L
             advanceTimeBy(3_100L)
             runCurrent()
-            assertEquals(fixture.nominalTxHz + if (inverted) -1_000L else 1_000L,
-                fixture.service.state.value.txBaseFrequencyHz)
+            assertEquals(fixture.nominalTxHz, fixture.service.state.value.txBaseFrequencyHz)
             assertEquals(initialRx + 1_000L, fixture.service.state.value.rxFrequencyHz)
             fixture.settings.setSatelliteOffset(12_345, "-2")
             advanceTimeBy(1_100L)
@@ -1198,8 +1324,12 @@ private class FakeRadioController(
     private val pttOnSucceeds: Boolean = true,
     private val setModeSucceeds: Boolean = true,
     private val ctcssStepDelayMillis: Long = 0L,
-    private val remote: MutableStateFlow<RemoteRadioState>? = null
+    private val remote: MutableStateFlow<RemoteRadioState>? = null,
+    private val pttReadbackSupported:Boolean=false
 ) : IRadioController {
+    override val supportsPttReadback get()=pttReadbackSupported
+    var physicalPtt:Boolean?=false
+    override suspend fun readPttState()=physicalPtt
     override val remoteState get() = remote
     override val supportsAtomicPair get() = remote != null
     override suspend fun updateTrackingBases(bases: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies):Boolean {

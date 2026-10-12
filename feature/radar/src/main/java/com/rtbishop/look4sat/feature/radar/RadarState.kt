@@ -53,11 +53,12 @@ data class RadioControlSubState(
     val referenceRxHz:Long?=null,
     val calculatorLinked:Boolean=false,
     val txDopplerHz:Long?=null,val rxDopplerHz:Long?=null,
-    val referenceDirty:Boolean=false
+    val referenceDirty:Boolean=false,
+    val serviceEditingLocked:Boolean=false
 ) {
-    val frequencyEditingLocked get()=isL4sModel && (isTracking && !isReady || pttState!=com.rtbishop.look4sat.core.domain.repository.PttState.OFF ||
+    val frequencyEditingLocked get()=serviceEditingLocked || isTracking && !isReady || pttState!=com.rtbishop.look4sat.core.domain.repository.PttState.OFF ||
         transmitOwner!=com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner.NONE || remoteRadio?.txSource?.let {it!=0}==true ||
-        remoteRadio?.nativeMenuOpen==true || remoteRadio?.profileStore?.busy==true || remoteRadio?.let {!it.connected || !it.transmitStateKnown}==true)
+        remoteRadio?.nativeMenuOpen==true || remoteRadio?.profileStore?.busy==true || remoteRadio?.let {!it.connected || !it.transmitStateKnown}==true
 }
 
 data class TransceiverSubState(

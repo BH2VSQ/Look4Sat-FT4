@@ -35,6 +35,10 @@ interface IRadioController {
 
     val isConnected: Boolean
 
+    /** Null means a supported query failed, not a confirmed receive state. */
+    val supportsPttReadback: Boolean get() = false
+    suspend fun readPttState(): Boolean? = null
+
     suspend fun connect(): Boolean
 
     suspend fun disconnect()

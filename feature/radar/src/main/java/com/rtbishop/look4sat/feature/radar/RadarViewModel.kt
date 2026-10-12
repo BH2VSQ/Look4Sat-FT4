@@ -268,7 +268,8 @@ class RadarViewModel(
                             referenceRxHz=svc.nominalRxFrequencyHz,
                             calculatorLinked=svc.calculatorLinked,
                             txDopplerHz=svc.txDopplerCorrectionHz,rxDopplerHz=svc.rxDopplerCorrectionHz,
-                            referenceDirty=svc.referenceDirty
+                            referenceDirty=svc.referenceDirty,
+                            serviceEditingLocked=svc.frequencyEditingLocked
                         )
                     )
                 }

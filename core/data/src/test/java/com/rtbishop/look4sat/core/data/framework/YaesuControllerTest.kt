@@ -12,9 +12,26 @@ package com.rtbishop.look4sat.core.data.framework
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class YaesuControllerTest {
+    @Test fun txStatusReadbackHandlesBothLegacyVariants()=runTest {
+        for(variant in YaesuCatVariant.entries) {
+            val transport=ScriptedYaesuTransport()
+            val radio=Ft817Controller(null,"USB",transport,variant)
+            assertTrue(radio.connect());assertTrue(radio.supportsPttReadback)
+            assertEquals(false,radio.readPttState())
+            assertTrue(radio.pttOn());assertEquals(true,radio.readPttState())
+            assertTrue(radio.pttOff());assertEquals(false,radio.readPttState())
+        }
+    }
+    @Test fun failedWriteDoesNotLeaveYaesuFalselyConnected()=runTest {
+        val transport=ScriptedYaesuTransport()
+        val radio=Ft817Controller(null,"USB",transport)
+        assertTrue(radio.connect());transport.disconnect()
+        assertFalse(radio.setFrequency(145500000));assertFalse(radio.isConnected)
+    }
     @Test
     fun ft817AcceptsUndocumentedAckValueAndConfirmsPttState() = runTest {
         val transport = ScriptedYaesuTransport(ack = 0x55)

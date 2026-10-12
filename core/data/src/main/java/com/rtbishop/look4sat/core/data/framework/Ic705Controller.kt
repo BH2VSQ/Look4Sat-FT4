@@ -228,6 +228,16 @@ class Ic705Controller(
         ioMutex.withLock { setPttAndConfirm(enabled = true) }
     }
 
+    override val supportsPttReadback get() = variant != IcomCivVariant.IC820
+    override suspend fun readPttState(): Boolean? = withContext(Dispatchers.IO) {
+        if (!supportsPttReadback) return@withContext null
+        ioMutex.withLock {
+            val payload = sendAndReadResponse(IcomCivProtocol.buildReadPttCommand(),
+                IcomCivProtocol.CMD_TRANSCEIVER_STATUS) { it.firstOrNull() == IcomCivProtocol.SUB_PTT }
+            payload?.let(IcomCivProtocol::parsePttState)
+        }
+    }
+
     override suspend fun pttOff(): Boolean = withContext(Dispatchers.IO) {
         // Cannot stop or confirm a transmission keyed by an external interface.
         if (variant == IcomCivVariant.IC820) return@withContext false
@@ -474,7 +484,7 @@ class Ic705Controller(
         val buf = drainWithTimeout(responseTimeoutMs) {
             IcomCivProtocol.ackStatus(it, civAddress) != null
         }
-        val ok  = IcomCivProtocol.ackStatus(buf, civAddress) == true
+        val ok = IcomCivProtocol.ackStatus(buf, civAddress) == true
         if (!ok) Log.w(tag, "ACK not found in ${buf.size} bytes: ${IcomCivProtocol.toHex(buf)}")
         return ok
     }
@@ -670,7 +680,10 @@ class Ic705Controller(
                 if (chunk.isNotEmpty()) {
                     result.addAll(chunk.toList())
                     if (responseComplete(result.toByteArray())) break
+                    // Bound unsolicited scope/broadcast traffic without losing a trailing partial frame.
+                    if(result.size>4096) result.subList(0,result.size-4096).clear()
                 } else {
+                    if(!transport.isConnected) { isConnected=false;break }
                     delay(POLL_INTERVAL_MS)
                 }
             } catch (cancelled: CancellationException) {
@@ -686,7 +699,9 @@ class Ic705Controller(
 
     private suspend fun write(bytes: ByteArray): Boolean {
         return try {
-            transport.write(addressCommand(bytes))
+            if (!isConnected) false else transport.write(addressCommand(bytes)).also {
+                if (!it) isConnected = false
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {

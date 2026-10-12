@@ -131,13 +131,28 @@ class Ft817Controller(
         ioMutex.withLock {
             val sent = sendCommand(Ft817CatProtocol.buildReadFreqModeCommand())
             if (!sent) return@withContext null
-            val response = readExact(RESPONSE_SIZE, responseTimeoutMs) ?: return@withContext null
-            Ft817CatProtocol.parseReadResponse(response)
+            val response = readExact(RESPONSE_SIZE, responseTimeoutMs)
+            val parsed=response?.let(Ft817CatProtocol::parseReadResponse)
+            if(parsed==null) {
+                isConnected=false
+                withContext(NonCancellable) { runCatching { transport.disconnect() } }
+            }
+            parsed
         }
     }
 
     override suspend fun pttOn(): Boolean = withContext(Dispatchers.IO) {
         ioMutex.withLock { setPttAndConfirm(enabled = true) }
+    }
+
+    override val supportsPttReadback get() = true
+    override suspend fun readPttState(): Boolean? = withContext(Dispatchers.IO) {
+        ioMutex.withLock {
+            if (!sendCommand(Ft817CatProtocol.buildReadTxStatusCommand())) return@withLock null
+            readExact(1, PTT_STATUS_TIMEOUT_MS)?.singleOrNull()?.let {
+                Ft817CatProtocol.parsePttState(it, variant)
+            }
+        }
     }
 
     override suspend fun pttOff(): Boolean = withContext(Dispatchers.IO) {
@@ -147,7 +162,10 @@ class Ft817Controller(
     private suspend fun sendCommand(bytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
-                if (!transport.write(bytes)) return@withContext false
+                if (!isConnected || !transport.write(bytes)) {
+                    isConnected = false
+                    return@withContext false
+                }
                 true
             } catch (cancelled: CancellationException) {
                 throw cancelled

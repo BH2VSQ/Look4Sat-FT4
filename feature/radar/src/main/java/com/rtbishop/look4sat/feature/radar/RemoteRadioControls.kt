@@ -94,14 +94,6 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         Text(stringResource(R.string.rc_l4s_target,
             control.targetTxHz?.let(::formatFrequency) ?: "—", control.targetRxHz?.let(::formatFrequency) ?: "—"),
             style = MaterialTheme.typography.bodySmall)
-        Text(stringResource(if(control.calculatorLinked)R.string.rc_l4s_calculator_linked else R.string.rc_l4s_independent),style=MaterialTheme.typography.bodySmall)
-        if(control.txDopplerHz!=null && control.rxDopplerHz!=null)Text(stringResource(R.string.rc_l4s_doppler_values,control.txDopplerHz,control.rxDopplerHz),style=MaterialTheme.typography.bodySmall)
-        Text(stringResource(if(control.referenceDirty || remote.profileStore?.dirty==true || !remote.nativeProfileValid)R.string.rc_l4s_unsaved else R.string.rc_l4s_saved),style=MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick={showReferences=true},enabled=!control.frequencyEditingLocked && control.referenceRxHz!=null) {
-            Text(stringResource(R.string.rc_l4s_frequency_settings))
-        }
-        if(control.referenceRxHz==null)Text(stringResource(R.string.rc_l4s_wait_reference),style=MaterialTheme.typography.bodySmall)
-        if(control.frequencyEditingLocked)Text(stringResource(R.string.rc_l4s_edit_locked),color=MaterialTheme.colorScheme.primary)
         if (control.transmitOwner != RadioTransmitOwner.NONE || remote.txSource != 0) {
             Text(stringResource(R.string.rc_l4s_frozen), color = MaterialTheme.colorScheme.primary)
         }
@@ -145,27 +137,6 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
             Text(stringResource(R.string.rc_l4s_stop))
         }
         remote.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-    }
-    if(showReferences) {
-        var rx by rememberSaveable {mutableStateOf(control.referenceRxHz?.toBigDecimal()?.movePointLeft(6)?.toPlainString().orEmpty())}
-        var tx by rememberSaveable {mutableStateOf(control.txBaseFrequencyHz?.toBigDecimal()?.movePointLeft(6)?.toPlainString().orEmpty())}
-        var error by remember {mutableStateOf(false)}
-        fun hz(value:String):Long?=runCatching {value.toBigDecimal().movePointRight(6).longValueExact()}.getOrNull()?.takeIf {it in 18000000L..1300000000L}
-        SharedDialog(title=stringResource(R.string.rc_l4s_frequency_settings),onCancel={showReferences=false},onDismissRequest={showReferences=false},
-            acceptEnabled=!control.frequencyEditingLocked,onAccept={
-                val rxHz=hz(rx);val txHz=if(control.txBaseFrequencyHz==null)null else hz(tx)
-                if(rxHz==null || control.txBaseFrequencyHz!=null && txHz==null)error=true
-                else {action(RadarAction.SetBaseFrequencies(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(rxHz,txHz)));showReferences=false}
-            }) {padding->
-            Column(modifier=Modifier.fillMaxWidth().padding(padding),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value=rx,onValueChange={rx=it;error=false},label={Text(stringResource(R.string.rc_l4s_rx_reference))},
-                    enabled=!control.frequencyEditingLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
-                OutlinedTextField(value=tx,onValueChange={tx=it;error=false},label={Text(stringResource(R.string.rc_l4s_tx_reference))},
-                    enabled=!control.frequencyEditingLocked && control.txBaseFrequencyHz!=null,singleLine=true,modifier=Modifier.fillMaxWidth())
-                Text(stringResource(R.string.rc_l4s_reference_hint),style=MaterialTheme.typography.bodySmall)
-                if(error)Text(stringResource(R.string.rc_l4s_invalid_reference),color=MaterialTheme.colorScheme.error)
-            }
-        }
     }
     if (showCw) {
         var text by rememberSaveable { mutableStateOf("") }
@@ -241,6 +212,51 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                     Text(stringResource(R.string.rc_l4s_preset_save_hint),style=MaterialTheme.typography.bodySmall)
                     presetError?.let {Text(it,color=MaterialTheme.colorScheme.error)}
                 }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ReferenceFrequencyControls(control: RadioControlSubState, onAction: (RadarAction) -> Unit) {
+    var showReferences by rememberSaveable(control.selectedTransponderUuid) { mutableStateOf(false) }
+    val action by rememberUpdatedState(onAction)
+    Column(verticalArrangement=Arrangement.spacedBy(6.dp)) {
+        Text(stringResource(if(control.calculatorLinked)R.string.rc_l4s_calculator_linked else R.string.rc_l4s_independent),
+            style=MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.rc_l4s_bases,control.txBaseFrequencyHz?.let(::formatFrequency) ?: "—",
+            control.referenceRxHz?.let(::formatFrequency) ?: "—"),style=MaterialTheme.typography.bodySmall)
+        if(control.txDopplerHz!=null && control.rxDopplerHz!=null)
+            Text(stringResource(R.string.rc_l4s_doppler_values,control.txDopplerHz,control.rxDopplerHz),style=MaterialTheme.typography.bodySmall)
+        if(control.remoteRadio?.capabilities?.satelliteProfiles==true) {
+            val remote=control.remoteRadio
+            Text(stringResource(if(control.referenceDirty || remote.profileStore?.dirty==true || !remote.nativeProfileValid)
+                R.string.rc_l4s_unsaved else R.string.rc_l4s_saved),style=MaterialTheme.typography.bodySmall)
+        } else Text(stringResource(R.string.rc_cat_runtime_reference),style=MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick={showReferences=true},enabled=!control.frequencyEditingLocked && control.referenceRxHz!=null) {
+            Text(stringResource(R.string.rc_l4s_frequency_settings))
+        }
+        if(control.referenceRxHz==null) Text(stringResource(R.string.rc_l4s_wait_reference),style=MaterialTheme.typography.bodySmall)
+        if(control.frequencyEditingLocked) Text(stringResource(R.string.rc_l4s_edit_locked),color=MaterialTheme.colorScheme.primary)
+    }
+    if(showReferences) {
+        var rx by rememberSaveable {mutableStateOf(control.referenceRxHz?.toBigDecimal()?.movePointLeft(6)?.toPlainString().orEmpty())}
+        var tx by rememberSaveable {mutableStateOf(control.txBaseFrequencyHz?.toBigDecimal()?.movePointLeft(6)?.toPlainString().orEmpty())}
+        var error by remember {mutableStateOf(false)}
+        fun hz(value:String):Long?=runCatching {value.toBigDecimal().movePointRight(6).longValueExact()}.getOrNull()?.takeIf {it in (if(control.isL4sModel)18000000L..1300000000L else 1L..9999999999L)}
+        SharedDialog(title=stringResource(R.string.rc_l4s_frequency_settings),onCancel={showReferences=false},onDismissRequest={showReferences=false},
+            acceptEnabled=!control.frequencyEditingLocked,onAccept={
+                val rxHz=hz(rx);val txHz=if(control.txBaseFrequencyHz==null)null else hz(tx)
+                if(rxHz==null || control.txBaseFrequencyHz!=null && txHz==null)error=true
+                else {action(RadarAction.SetBaseFrequencies(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(rxHz,txHz)));showReferences=false}
+            }) {padding->
+            Column(modifier=Modifier.fillMaxWidth().padding(padding),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value=rx,onValueChange={rx=it;error=false},label={Text(stringResource(R.string.rc_l4s_rx_reference))},
+                    enabled=!control.frequencyEditingLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(value=tx,onValueChange={tx=it;error=false},label={Text(stringResource(R.string.rc_l4s_tx_reference))},
+                    enabled=!control.frequencyEditingLocked && control.txBaseFrequencyHz!=null,singleLine=true,modifier=Modifier.fillMaxWidth())
+                Text(stringResource(if(control.isL4sModel)R.string.rc_l4s_reference_hint else R.string.rc_cat_reference_hint),style=MaterialTheme.typography.bodySmall)
+                if(error)Text(stringResource(R.string.rc_cat_invalid_reference),color=MaterialTheme.colorScheme.error)
             }
         }
     }

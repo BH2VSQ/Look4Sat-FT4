@@ -25,7 +25,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** Radio controller for Hamlib's line-oriented rigctld TCP protocol. */
 class HamlibRigctldController(
     private val endpoint: String,
-    private val transport: RadioTransport
+    private val transport: RadioTransport,
+    private val pttReadbackSupported: Boolean = true
 ) : IRadioController {
 
     private val ioMutex = Mutex()
@@ -65,7 +66,7 @@ class HamlibRigctldController(
 
     override suspend fun disconnect(): Unit = withContext(Dispatchers.IO + NonCancellable) {
         try {
-            if (isConnected) withTimeoutOrNull(DISCONNECT_PTT_TIMEOUT_MS) {
+            if (isConnected && pttReadbackSupported) withTimeoutOrNull(DISCONNECT_PTT_TIMEOUT_MS) {
                 ioMutex.withLock { setPttLocked(false) }
             }
             transport.disconnect()
@@ -124,6 +125,12 @@ class HamlibRigctldController(
 
     override suspend fun pttOn(): Boolean = withContext(Dispatchers.IO) {
         ioMutex.withLock { setPttLocked(true) }
+    }
+
+    override val supportsPttReadback get() = pttReadbackSupported
+    override suspend fun readPttState(): Boolean? = withContext(Dispatchers.IO) {
+        if(!supportsPttReadback)return@withContext null
+        ioMutex.withLock { readPttLocked() }
     }
 
     override suspend fun pttOff(): Boolean = withContext(Dispatchers.IO) {
@@ -205,12 +212,17 @@ class HamlibRigctldController(
     }
 
     private suspend fun setPttLocked(enabled: Boolean): Boolean {
+        if(!pttReadbackSupported)return false
         if (!setCommandLocked("\\set_ptt ${if (enabled) 1 else 0}")) return false
-        return commandLocked("\\get_ptt", expectedLines = 1)
+        return readPttLocked() == enabled
+    }
+
+    private suspend fun readPttLocked(): Boolean? =
+        commandLocked("\\get_ptt", expectedLines = 1)
             ?.singleOrNull()
             ?.toIntOrNull()
-            ?.let { it != 0 } == enabled
-    }
+            ?.takeIf { it in 0..3 }
+            ?.let { it != 0 }
 
     private suspend fun readFrequencyLocked(): Long? =
         commandLocked("\\get_freq", expectedLines = 1)
@@ -240,8 +252,11 @@ class HamlibRigctldController(
     private suspend fun commandLocked(command: String, expectedLines: Int): List<String>? {
         if (!isConnected || expectedLines <= 0) return null
         val bytes = "$command\n".toByteArray(Charsets.US_ASCII)
-        if (!transport.write(bytes)) {
-            isConnected = false
+        val written=try { transport.write(bytes) }
+        catch(cancelled:CancellationException) { throw cancelled }
+        catch(error:Exception) { Log.e(TAG,"Write error: ${error.message}");false }
+        if (!written) {
+            dropConnection()
             return null
         }
         val lines = mutableListOf<String>()
@@ -255,27 +270,36 @@ class HamlibRigctldController(
                 lines += line
                 continue
             }
-            if (System.nanoTime() >= deadline) return null
+            if (System.nanoTime() >= deadline) {
+                dropConnection()
+                return null
+            }
             val chunk = try {
                 transport.readAvailable(MAX_RESPONSE_BYTES - pendingInput.size)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 Log.e(TAG, "Read error: ${error.message}")
-                isConnected = false
+                dropConnection()
                 return null
             }
             if (chunk.isEmpty()) {
                 delay(POLL_INTERVAL_MS)
             } else {
                 if (pendingInput.size + chunk.size > MAX_RESPONSE_BYTES) {
-                    pendingInput = ByteArray(0)
+                    dropConnection()
                     return null
                 }
                 pendingInput += chunk
             }
         }
         return lines
+    }
+
+    private suspend fun dropConnection() {
+        isConnected=false
+        pendingInput=ByteArray(0)
+        withContext(NonCancellable) { runCatching { transport.disconnect() } }
     }
 
     private fun ByteArray.indexOf(value: Byte): Int {

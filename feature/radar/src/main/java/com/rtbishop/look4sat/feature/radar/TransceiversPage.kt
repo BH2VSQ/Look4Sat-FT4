@@ -465,6 +465,7 @@ private fun ExpandedRadioControl(
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
         )
 
+        ReferenceFrequencyControls(radioControl, onAction)
         if (radioControl.isL4sModel || radioControl.remoteRadio != null) {
             RemoteRadioControls(radioControl, onAction)
         }

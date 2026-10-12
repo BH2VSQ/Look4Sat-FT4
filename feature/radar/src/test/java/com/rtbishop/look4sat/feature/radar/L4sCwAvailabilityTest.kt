@@ -9,6 +9,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class L4sCwAvailabilityTest {
+    @Test fun legacyModelsUseTheSameFrequencyEditingLock() {
+        val legacy=RadioControlSubState(isL4sModel=false,isTracking=true,isReady=true)
+        assertFalse(legacy.frequencyEditingLocked)
+        assertTrue(legacy.copy(serviceEditingLocked=true).frequencyEditingLocked)
+        assertTrue(legacy.copy(pttState=PttState.ARMING).frequencyEditingLocked)
+        assertTrue(legacy.copy(pttState=PttState.ON).frequencyEditingLocked)
+        assertTrue(legacy.copy(transmitOwner=RadioTransmitOwner.FT4).frequencyEditingLocked)
+    }
     private val capabilities = RemoteRadioCapabilities(10,92,10,45,1500,18000000,1300000000,15,9,
         true,true,true,true,false,false)
     private val ready = RadioControlSubState(isL4sModel=true, isReady=true,

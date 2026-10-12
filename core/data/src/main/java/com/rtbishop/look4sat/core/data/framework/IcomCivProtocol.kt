@@ -259,7 +259,8 @@ object IcomCivProtocol {
         return if (spec.filter == null) {
             frame(CMD_SELECTED_VFO_MODE, selector, spec.modeByte)
         } else {
-            frame(CMD_SELECTED_VFO_MODE, selector, spec.modeByte, spec.filter)
+            // CMD 0x26 is selector, mode, DATA, filter (unlike CMD 0x06).
+            frame(CMD_SELECTED_VFO_MODE, selector, spec.modeByte, 0x00, spec.filter)
         }
     }
 
