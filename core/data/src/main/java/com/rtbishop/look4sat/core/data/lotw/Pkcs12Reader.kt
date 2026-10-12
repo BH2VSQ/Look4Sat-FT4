@@ -174,24 +174,7 @@ internal object Pkcs12Reader {
         val finalKeyBits = if (keyBits > 0) keyBits else aesKeyBits
         require(finalKeyBits in 128..512) { "implausible PBKDF2 key size" }
 
-        val spec = PBEKeySpec(password, salt, iterations, finalKeyBits)
-        val keyBytes = try {
-            try {
-                SecretKeyFactory.getInstance(prfName).generateSecret(spec).encoded
-            } catch (e: java.security.NoSuchAlgorithmException) {
-                if (prfName != "PBKDF2WithHmacSHA256") {
-                    error(prfName.replace("PBKDF2WithHmac", "PBKDF2-HMAC-") + " (needs Android 8.0+)")
-                }
-                val passwordBytes = password.concatToString().toByteArray(Charsets.UTF_8)
-                try {
-                    pbkdf2HmacSha256(passwordBytes, salt, iterations, finalKeyBits / 8)
-                } finally {
-                    passwordBytes.fill(0)
-                }
-            }
-        } finally {
-            spec.clearPassword()
-        }
+        val keyBytes = derivePkcs12Key(prfName, password, salt, iterations, finalKeyBits)
         return try {
             val cipher = Cipher.getInstance(cipherName)
             cipher.init(
@@ -317,18 +300,62 @@ internal object Pkcs12Reader {
     }
 }
 
+/** Isolated provider selection lets tests reproduce Android without JVM provider failover. */
+internal fun derivePkcs12Key(
+    prfName: String,
+    password: CharArray,
+    salt: ByteArray,
+    iterations: Int,
+    keyBits: Int,
+    factory: (String) -> SecretKeyFactory = { SecretKeyFactory.getInstance(it) }
+): ByteArray {
+    val spec = PBEKeySpec(password, salt, iterations, keyBits)
+    return try {
+        try {
+            // Android's BC PBKDF2 factory rejects empty passwords. They are valid
+            // in PKCS#12: use the HMAC compatibility path, not a dummy password.
+            if (password.isEmpty()) {
+                pbkdf2Hmac(byteArrayOf(), salt, iterations, keyBits / 8, prfName.removePrefix("PBKDF2With"))
+            } else {
+                factory(prfName).generateSecret(spec).encoded
+            }
+        } catch (e: java.security.NoSuchAlgorithmException) {
+            if (prfName != "PBKDF2WithHmacSHA256") {
+                error(prfName.replace("PBKDF2WithHmac", "PBKDF2-HMAC-") + " (needs Android 8.0+)")
+            }
+            val passwordBytes = password.concatToString().toByteArray(Charsets.UTF_8)
+            try {
+                pbkdf2HmacSha256(passwordBytes, salt, iterations, keyBits / 8)
+            } finally {
+                passwordBytes.fill(0)
+            }
+        }
+    } finally {
+        spec.clearPassword()
+    }
+}
+
 /** PBKDF2-HMAC-SHA256 compatibility path for Android API 24-25. */
 internal fun pbkdf2HmacSha256(
     password: ByteArray,
     salt: ByteArray,
     iterations: Int,
     keyLengthBytes: Int
+): ByteArray = pbkdf2Hmac(password, salt, iterations, keyLengthBytes, "HmacSHA256")
+
+/** PBKDF2 using JCA HMAC; also supports empty passwords for every accepted PBES2 PRF. */
+internal fun pbkdf2Hmac(
+    password: ByteArray,
+    salt: ByteArray,
+    iterations: Int,
+    keyLengthBytes: Int,
+    hmacAlgorithm: String
 ): ByteArray {
     require(iterations > 0 && keyLengthBytes > 0)
-    val mac = Mac.getInstance("HmacSHA256")
+    val mac = Mac.getInstance(hmacAlgorithm)
     // Some providers reject an empty SecretKeySpec. One zero byte has the same
     // zero-padded HMAC key block as an empty password.
-    mac.init(SecretKeySpec(password.takeUnless(ByteArray::isEmpty) ?: byteArrayOf(0), "HmacSHA256"))
+    mac.init(SecretKeySpec(password.takeUnless(ByteArray::isEmpty) ?: byteArrayOf(0), hmacAlgorithm))
     val output = ByteArray(keyLengthBytes)
     val input = ByteArray(salt.size + 4)
     salt.copyInto(input)
