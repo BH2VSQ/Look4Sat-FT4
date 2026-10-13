@@ -17,6 +17,7 @@
  */
 package com.rtbishop.look4sat.core.data.repository
 
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.model.SatRadio
 import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
@@ -25,8 +26,12 @@ import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import com.rtbishop.look4sat.core.domain.source.ILocalSource
+import com.rtbishop.look4sat.core.domain.utility.catNumForName
+import com.rtbishop.look4sat.core.domain.utility.downlinkHz
+import com.rtbishop.look4sat.core.domain.utility.nominalTransceiver
 import com.rtbishop.look4sat.core.domain.utility.round
 import com.rtbishop.look4sat.core.domain.utility.toDegrees
+import com.rtbishop.look4sat.core.domain.utility.uplinkHz
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -73,6 +78,12 @@ class SatelliteRepo(
     }
 
     override suspend fun getRadiosWithId(id: Int) = localStorage.getRadiosWithId(id)
+
+    override suspend fun nominalFrequencies(name: String): NominalFrequencies? {
+        val catnum = localStorage.getEntriesNames().catNumForName(name) ?: return null
+        val radio = localStorage.getRadiosWithId(catnum).nominalTransceiver() ?: return null
+        return NominalFrequencies(radio.uplinkHz(), radio.downlinkHz())
+    }
 
     override suspend fun getSatelliteIdsWithModes(modes: List<String>) = localStorage.getIdsWithModes(modes)
 

@@ -36,6 +36,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rtbishop.look4sat.core.domain.logbook.LoTWSatelliteAliases
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
 import com.rtbishop.look4sat.core.domain.logbook.displayMode
 import com.rtbishop.look4sat.core.domain.logbook.frequencyBand
@@ -61,10 +63,13 @@ private const val DATE_PATTERN = "yyyy-MM-dd"
 private const val TIME_PATTERN = "HH:mm:ss"
 
 /**
- * Edit every field of a recorded QSO (the record list rows in the radar Log tab and
- * the logbook dialog both open this). Frequencies are entered in MHz and the band is
- * re-derived from them, because that derivation is what LoTW validates: a record with
- * no uplink frequency has no BAND and cannot be signed.
+ * Edit a recorded QSO — the record list rows in the radar Log tab and the logbook dialog
+ * both open this, and the logbook's Create button opens it on a blank draft. The opposite
+ * grid is read-only: an unconfirmed QSO has no opposite grid of its own, LoTW's confirmation
+ * is what brings the real one in. The sent/received reports and the comment are not part of
+ * the log any more, so they are neither shown nor rewritten here. Frequencies are entered in
+ * MHz and the band is re-derived from them, because that derivation is what LoTW validates:
+ * a record with no uplink frequency has no BAND and cannot be signed.
  *
  * The satellite name is restricted to ARRL's catalogue ([satelliteCandidates], from
  * config.tq6): typing shows fuzzy suggestions, the picker lists the whole catalogue, and
@@ -75,6 +80,8 @@ private const val TIME_PATTERN = "HH:mm:ss"
 fun QsoEditDialog(
     record: QsoRecord,
     satelliteCandidates: List<String> = emptyList(),
+    /** Nominal (no Doppler) uplink/downlink of a named satellite, prefilled into a blank draft. */
+    nominalFrequencies: suspend (String) -> NominalFrequencies? = { null },
     onDismiss: () -> Unit,
     onSave: (QsoRecord) -> Unit
 ) {
@@ -90,10 +97,6 @@ fun QsoEditDialog(
     var modeText by remember(record.id) { mutableStateOf(record.displayMode) }
     var satelliteText by remember(record.id) { mutableStateOf(record.satelliteName) }
     var pickerOpen by remember(record.id) { mutableStateOf(false) }
-    var sentText by remember(record.id) { mutableStateOf(record.sentReport) }
-    var receivedText by remember(record.id) { mutableStateOf(record.receivedReport) }
-    var gridText by remember(record.id) { mutableStateOf(record.theirGrid) }
-    var commentText by remember(record.id) { mutableStateOf(record.comment) }
     var error by remember(record.id) { mutableStateOf("") }
 
     // ARRL name the typed tracker name resolves to ("SAUDISAT 1C" -> "SO-50"), if any.
@@ -102,6 +105,28 @@ fun QsoEditDialog(
     }
     val satelliteSuggestions = remember(satelliteText, satelliteCandidates) {
         LoTWSatelliteAliases.suggestions(satelliteText, satelliteCandidates)
+    }
+
+    // A blank draft gets the satellite's nominal pair as soon as its name resolves — the same
+    // frequencies the radar Log tab logs through, with no Doppler shift applied. Listed records
+    // keep whatever they were logged with, and a pair the operator edited by hand survives a
+    // satellite change: AO-7 is worked on either band, so a manual band switch must stick.
+    var autoTx by remember(record.id) { mutableStateOf("") }
+    var autoRx by remember(record.id) { mutableStateOf("") }
+    val fillName = officialSatellite ?: satelliteText.trim()
+    LaunchedEffect(record.id, fillName) {
+        if (record.id != 0L || fillName.isBlank()) return@LaunchedEffect
+        val nominal = nominalFrequencies(fillName) ?: return@LaunchedEffect
+        val tx = formatMhz(nominal.uplinkHz)
+        val rx = formatMhz(nominal.downlinkHz)
+        if (tx.isNotBlank() && (txText.isBlank() || txText == autoTx)) {
+            txText = tx
+            autoTx = tx
+        }
+        if (rx.isNotBlank() && (rxText.isBlank() || rxText == autoRx)) {
+            rxText = rx
+            autoRx = rx
+        }
     }
 
     val txHz = parseMhz(txText)
@@ -207,22 +232,7 @@ fun QsoEditDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                    EditField(stringResource(R.string.qso_edit_sent), sentText, KeyboardCapitalization.Characters, Modifier.weight(1f)) {
-                        sentText = it
-                    }
-                    EditField(stringResource(R.string.qso_edit_received), receivedText, KeyboardCapitalization.Characters, Modifier.weight(1f)) {
-                        receivedText = it
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                    EditField(stringResource(R.string.qso_edit_grid), gridText, KeyboardCapitalization.Characters, Modifier.weight(1f)) {
-                        gridText = it.uppercase(Locale.US)
-                    }
-                    EditField(stringResource(R.string.qso_edit_comment), commentText, KeyboardCapitalization.None, Modifier.weight(1f)) {
-                        commentText = it
-                    }
-                }
+                ReadOnlyField(stringResource(R.string.qso_edit_grid), record.theirGrid)
                 if (txHz == null) {
                     Text(
                         text = stringResource(R.string.qso_edit_warn_no_freq),
@@ -256,9 +266,6 @@ fun QsoEditDialog(
                                 theirCallsign = callsign.trim().uppercase(Locale.US),
                                 startUtcMillis = millis,
                                 endUtcMillis = record.endUtcMillis?.let { millis },
-                                theirGrid = gridText.trim().uppercase(Locale.US),
-                                sentReport = sentText.trim(),
-                                receivedReport = receivedText.trim(),
                                 txFrequencyHz = txHz,
                                 rxFrequencyHz = rxHz,
                                 band = frequencyBand(txHz),
@@ -266,8 +273,7 @@ fun QsoEditDialog(
                                 mode = if (mode == "FT4") "MFSK" else mode,
                                 submode = if (mode == "FT4") "FT4" else "",
                                 satelliteName = satellite,
-                                propagationMode = if (satellite.isBlank()) record.propagationMode else "SAT",
-                                comment = commentText.trim()
+                                propagationMode = if (satellite.isBlank()) record.propagationMode else "SAT"
                             )
                         )
                     }
@@ -346,6 +352,21 @@ internal fun filteredCandidates(query: String, candidates: List<String>): List<S
     if (query.isBlank()) return candidates
     val matches = LoTWSatelliteAliases.suggestions(query, candidates, limit = 500)
     return matches.ifEmpty { candidates }
+}
+
+/** Non-editable look-alike of [EditField], for values the operator must not rewrite. */
+@Composable
+private fun ReadOnlyField(label: String, value: String, modifier: Modifier = Modifier.fillMaxWidth()) {
+    OutlinedTextField(
+        value = value.ifBlank { "—" },
+        onValueChange = {},
+        label = { Text(label, fontSize = 12.sp) },
+        singleLine = true,
+        readOnly = true,
+        enabled = false,
+        textStyle = MaterialTheme.typography.bodyMedium,
+        modifier = modifier.padding(vertical = 1.dp)
+    )
 }
 
 @Composable

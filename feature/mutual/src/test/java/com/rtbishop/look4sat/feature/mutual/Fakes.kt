@@ -34,6 +34,7 @@ import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,6 +65,7 @@ class FakeSatelliteRepo(
     override suspend fun getTrack(sat: OrbitalObject, pos: GeoPos, start: Long, end: Long): List<OrbitalPos> = TODO()
     override suspend fun getRadios(sat: OrbitalObject, pos: GeoPos, radios: List<SatRadio>, time: Long): List<SatRadio> = TODO()
     override suspend fun getRadiosWithId(id: Int): List<SatRadio> = TODO()
+    override suspend fun nominalFrequencies(name: String): NominalFrequencies? = null
     override suspend fun getSatelliteIdsWithModes(modes: List<String>): List<Int> = emptyList()
     override suspend fun getSatelliteIdsWithModesAndUplink(modes: List<String>): List<Int> = emptyList()
     override suspend fun getSatelliteIdsWithModesAndAmateur(modes: List<String>): List<Int> = emptyList()

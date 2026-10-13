@@ -251,6 +251,8 @@
 
     <string name="prefs_logbook_title">Logbook</string>
     <string name="prefs_logbook_count">%1$d records — local QSOs and LoTW confirmations</string>
+    <string name="prefs_logbook_new">New</string>
+    <string name="prefs_logbook_exit_selection">Exit selection</string>
     <string name="prefs_logbook_empty">No records yet — record QSOs from the Radar Log tab</string>
     <string name="prefs_logbook_close">Close</string>
     <string name="prefs_logbook_upload">Upload</string>

@@ -220,6 +220,8 @@
 
     <string name="prefs_logbook_title">日志本</string>
     <string name="prefs_logbook_count">%1$d 条记录 — 本地通联与 LoTW 确认</string>
+    <string name="prefs_logbook_new">新建</string>
+    <string name="prefs_logbook_exit_selection">退出选择</string>
     <string name="prefs_logbook_empty">暂无记录 — 在雷达页 Log 标签记录通联</string>
     <string name="prefs_logbook_close">关闭</string>
     <string name="prefs_logbook_upload">上传</string>

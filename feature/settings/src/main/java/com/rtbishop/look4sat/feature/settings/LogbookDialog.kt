@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.logbook.displayMode
 import com.rtbishop.look4sat.core.domain.logbook.frequencyBand
 import com.rtbishop.look4sat.core.domain.logbook.unavailableUploadSummary
@@ -90,6 +91,10 @@ fun LogbookCard(recordCount: Int, showLogbookDialog: () -> Unit) {
 fun LogbookDialog(
     records: List<QsoRecord>,
     satelliteCandidates: List<String>,
+    /** Blank draft the header's Create button opens (own callsign/grid come from the certificate). */
+    newRecord: () -> QsoRecord,
+    /** Nominal frequencies handed to the edit dialog, which prefills a blank draft with them. */
+    nominalFrequencies: suspend (String) -> NominalFrequencies? = { null },
     uploadBusy: Boolean,
     uploadMessage: String,
     preview: com.rtbishop.look4sat.core.domain.repository.LoTWUploadPreview?,
@@ -125,12 +130,21 @@ fun LogbookDialog(
     val swipeController = rememberSwipeController()
     // Entering selection mode closes any row left swiped open — reveals are off there.
     LaunchedEffect(selectionMode) { if (selectionMode) swipeController.close() }
-    // Record currently open in the edit dialog (null when closed).
+    // Record currently open in the edit dialog — a listed row, or the blank draft the Create
+    // button just made. A draft carries id = 0, so saving it inserts a new row.
     var editTarget by remember { mutableStateOf<QsoRecord?>(null) }
+    // Header leading button: Create while idle, Leave-selection while rows are checked.
+    // Cancel is gone; its two jobs are split over those two labels.
+    val onHeader = if (selectionMode) onExitSelection else ({ editTarget = newRecord() })
     SharedDialog(
         title = stringResource(R.string.prefs_logbook_title),
         onDismissRequest = onDismiss,
-        onCancel = if (selectionMode) onExitSelection else onDismiss,
+        onCancel = onHeader,
+        cancelText = if (selectionMode) {
+            stringResource(R.string.prefs_logbook_exit_selection)
+        } else {
+            stringResource(R.string.prefs_logbook_new)
+        },
         onAccept = if (selectionMode) onResubmitSelected else onUpload,
         acceptText = if (selectionMode) {
             stringResource(R.string.prefs_logbook_resubmit, selectedIds.size)
@@ -272,6 +286,7 @@ fun LogbookDialog(
         QsoEditDialog(
             record = target,
             satelliteCandidates = satelliteCandidates,
+            nominalFrequencies = nominalFrequencies,
             onDismiss = { editTarget = null },
             onSave = { updated ->
                 onEdit(updated)

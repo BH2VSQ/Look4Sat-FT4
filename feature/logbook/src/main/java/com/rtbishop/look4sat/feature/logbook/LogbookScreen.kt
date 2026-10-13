@@ -36,10 +36,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
 import com.rtbishop.look4sat.core.domain.logbook.QsoStatus
 import com.rtbishop.look4sat.core.domain.logbook.displayMode
+import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.IconCard
@@ -171,7 +174,8 @@ fun LogbookScreenDestination(navigateUp: () -> Unit, navigateToMap: () -> Unit =
             navigateToMap()
         },
         exportComplete = exportComplete,
-        dismissExportComplete = { exportComplete = false }
+        dismissExportComplete = { exportComplete = false },
+        nominalFrequencies = container.satelliteRepo::nominalFrequencies
     )
 }
 
@@ -184,9 +188,10 @@ private fun LogbookScreen(
     onExport: () -> Unit,
     onMap: () -> Unit,
     exportComplete: Boolean,
-    dismissExportComplete: () -> Unit
+    dismissExportComplete: () -> Unit,
+    nominalFrequencies: suspend (String) -> NominalFrequencies? = { null }
 ) {
-    state.editor?.let { LogbookEditorDialog(it, onAction, state.isBusy, state.error) }
+    state.editor?.let { LogbookEditorDialog(it, onAction, state.isBusy, state.error, nominalFrequencies) }
     if (state.showLoTW) LoTWDialog(state, onAction)
     if (state.showStation) LogbookStationDialog(state, onAction)
     state.deleteCandidate?.let { record ->
@@ -377,9 +382,31 @@ private fun LogbookEditorDialog(
     editor: LogbookEditor,
     onAction: (LogbookAction) -> Unit,
     busy: Boolean,
-    error: LogbookError?
+    error: LogbookError?,
+    nominalFrequencies: suspend (String) -> NominalFrequencies?
 ) {
     var showDetails by remember(editor.id) { mutableStateOf(false) }
+    val currentEditor by rememberUpdatedState(editor)
+    val currentAction by rememberUpdatedState(onAction)
+    var autoTx by remember(editor.id, editor.startUtcMillis) { mutableStateOf("") }
+    var autoRx by remember(editor.id, editor.startUtcMillis) { mutableStateOf("") }
+    val satelliteName = editor.satelliteName.trim()
+    LaunchedEffect(editor.id, editor.startUtcMillis, satelliteName) {
+        if (editor.id != 0L || satelliteName.isBlank()) return@LaunchedEffect
+        val nominal = nominalFrequencies(satelliteName) ?: return@LaunchedEffect
+        val current = currentEditor
+        if (current.id != 0L || current.satelliteName.trim() != satelliteName) return@LaunchedEffect
+        val tx = nominal.uplinkHz?.toString().orEmpty()
+        val rx = nominal.downlinkHz?.toString().orEmpty()
+        val fillTx = tx.isNotBlank() && (current.txFrequencyHz.isBlank() || current.txFrequencyHz == autoTx)
+        val fillRx = rx.isNotBlank() && (current.rxFrequencyHz.isBlank() || current.rxFrequencyHz == autoRx)
+        if (fillTx) autoTx = tx
+        if (fillRx) autoRx = rx
+        if (fillTx || fillRx) currentAction(LogbookAction.Update(current.copy(
+            txFrequencyHz = if (fillTx) tx else current.txFrequencyHz,
+            rxFrequencyHz = if (fillRx) rx else current.rxFrequencyHz
+        )))
+    }
     fun update(transform: (LogbookEditor) -> LogbookEditor) = onAction(LogbookAction.Update(transform(editor)))
     AlertDialog(
         onDismissRequest = { onAction(LogbookAction.DismissEditor) },
