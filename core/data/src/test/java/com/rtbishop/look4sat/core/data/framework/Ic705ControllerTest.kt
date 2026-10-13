@@ -19,6 +19,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Ic705ControllerTest {
+    @Test fun ic820NormalCwIncludesTheDocumentedFilterSelector() = runTest {
+        val link=ScriptedCivTransport(civAddress=0x42)
+        val radio=Ic705Controller(null,"USB",0x42,link,IcomCivVariant.IC820)
+        assertTrue(radio.connect());link.payloads.clear()
+        assertTrue(radio.setMode("CW"))
+        assertEquals(listOf("06:03:01","04"),link.payloads)
+        radio.disconnect()
+    }
+    @Test fun ic910VerifiesTheManualFmCodeAndFallsBackForOtherFirmware() = runTest {
+        for (reject04 in listOf(false,true)) {
+            val link=ScriptedCivTransport(civAddress=0x60,rejectIc910Fm04=reject04)
+            val controller=Ic705Controller(null,"USB",0x60,link,IcomCivVariant.IC910)
+            assertTrue(controller.connect()); link.payloads.clear()
+            assertTrue(controller.setMode("FM"))
+            assertEquals("FM",controller.readFrequencyAndMode()!!.second)
+            assertTrue(link.payloads.contains("06:04"))
+            assertEquals(reject04,link.payloads.contains("06:05"))
+            controller.disconnect()
+        }
+    }
     @Test fun splitIsEnabledAndReadBackWithoutSwitchingToTxVfo() = runTest {
         val transport = ScriptedCivTransport()
         val radio = Ic705Controller(null, "USB", transport = transport)
@@ -507,7 +527,8 @@ private class ScriptedCivTransport(
     private val modeReadbackOverride: Int? = null,
     private val trackFrequencyWrites: Boolean = false,
     private val ic820BandAccess: Boolean = false,
-    private val frequencyPayloadOverride: ByteArray? = null
+    private val frequencyPayloadOverride: ByteArray? = null,
+    private val rejectIc910Fm04: Boolean = false
 ) : RadioTransport {
     companion object { val instances = mutableListOf<ScriptedCivTransport>() }
     init { instances += this }
@@ -598,6 +619,10 @@ private class ScriptedCivTransport(
             0x1C -> if (payload.size >= 3) replies += ack() else replies += response(0x1C,0x00,0x00)
             0x25 -> replies += ack()
             0x06 -> {
+                if (rejectIc910Fm04 && payload.getOrNull(1) == 0x04.toByte()) {
+                    replies += response(0xFA)
+                    return true
+                }
                 if (payload.size >= 2) {
                     if (mainSelected) mainMode = payload[1].toInt() and 0xFF
                     else subMode = payload[1].toInt() and 0xFF

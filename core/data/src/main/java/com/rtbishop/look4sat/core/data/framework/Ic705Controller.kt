@@ -212,7 +212,8 @@ class Ic705Controller(
             val command = IcomCivProtocol.buildSetVfoModeCommand(true, mode, completeFields = true) ?: return@withLock false
             sendAndWaitAck(command) && verifyIc705ModeLocked(true, mode, IcomCivProtocol.isDataMode(mode))
         }
-        val cmd = IcomCivProtocol.buildSetModeCommand(mode) ?: run {
+        if (variant == IcomCivVariant.IC910) return@withContext ioMutex.withLock { setIc910ModeLocked(mode) }
+        val cmd = buildModelModeCommand(mode) ?: run {
             Log.w(tag, "setMode: unknown mode '$mode'")
             return@withContext false
         }
@@ -289,7 +290,7 @@ class Ic705Controller(
                 modeCommand,
                 IcomCivProtocol.CMD_READ_MODE
             ) ?: return@withLock null
-            val mode = IcomCivProtocol.parseModePayload(modePayload) ?: return@withLock null
+            val mode = parseModelMode(modePayload) ?: return@withLock null
             Log.d(tag, "readFreqMode: ${frequency}Hz, $mode")
             frequency to mode
         }
@@ -684,18 +685,20 @@ class Ic705Controller(
     }
 
     private suspend fun setManualVfoModes(rxMode: String?, txMode: String?): Boolean {
-        val rxCommand = rxMode?.let(IcomCivProtocol::buildSetModeCommand)
-        val txCommand = txMode?.let(IcomCivProtocol::buildSetModeCommand)
+        val rxCommand = rxMode?.let(::buildModelModeCommand)
+        val txCommand = txMode?.let(::buildModelModeCommand)
         if (rxMode != null && rxCommand == null || txMode != null && txCommand == null) return false
         return ioMutex.withLock {
             var rxRestored = false
             val successful = try {
                 var successful = sendAndWaitAck(selectVfoCommand(vfoA = true))
-                if (successful && rxCommand != null) successful = sendAndWaitAck(rxCommand)
-                if (successful && rxMode != null) successful = readModeLocked() == normalizedMode(rxMode)
+                if (successful && rxMode != null) successful = if (variant == IcomCivVariant.IC910)
+                    setIc910ModeLocked(rxMode) else sendAndWaitAck(checkNotNull(rxCommand))
+                if (successful && rxMode != null && variant != IcomCivVariant.IC910) successful = readModeLocked() == normalizedMode(rxMode)
                 if (successful) successful = sendAndWaitAck(selectVfoCommand(vfoA = false))
-                if (successful && txCommand != null) successful = sendAndWaitAck(txCommand)
-                if (successful && txMode != null) successful = readModeLocked() == normalizedMode(txMode)
+                if (successful && txMode != null) successful = if (variant == IcomCivVariant.IC910)
+                    setIc910ModeLocked(txMode) else sendAndWaitAck(checkNotNull(txCommand))
+                if (successful && txMode != null && variant != IcomCivVariant.IC910) successful = readModeLocked() == normalizedMode(txMode)
                 successful
             } finally {
                 rxRestored = restoreRxVfo()
@@ -771,7 +774,28 @@ class Ic705Controller(
             IcomCivProtocol.buildReadModeCommand(),
             IcomCivProtocol.CMD_READ_MODE
         ) ?: return null
-        return IcomCivProtocol.parseModePayload(payload)
+        return parseModelMode(payload)
+    }
+
+    private fun parseModelMode(payload: ByteArray): String? =
+        if (variant == IcomCivVariant.IC910 && payload.firstOrNull()?.toInt() in setOf(0x04,0x05)) "FM"
+        else IcomCivProtocol.parseModePayload(payload)
+
+    private fun buildModelModeCommand(mode: String): ByteArray? {
+        val command=IcomCivProtocol.buildSetModeCommand(mode) ?: return null
+        return if(variant==IcomCivVariant.IC820 && normalizedMode(mode)=="CW")
+            command.dropLast(1).toByteArray()+byteArrayOf(0x01,IcomCivProtocol.END_OF_MSG) else command
+    }
+
+    private suspend fun setIc910ModeLocked(mode: String): Boolean {
+        val original = IcomCivProtocol.buildSetModeCommand(mode) ?: return false
+        // The IC-910 manual specifies FM=04; Hamlib records firmware also using 05.
+        val commands = if (normalizedMode(mode) == "FM") listOf(
+            original.copyOf().apply { this[5]=0x04 }, original
+        ) else listOf(original)
+        return commands.any { command ->
+            sendAndWaitAck(command) && readModeLocked() == normalizedMode(mode)
+        }
     }
 
     /**

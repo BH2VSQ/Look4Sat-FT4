@@ -27,6 +27,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class Ft817CatProtocolTest {
+    @Test fun narrowFmAndAfskAliasesUseTheDocumentedLegacyOpcodes() {
+        assertArrayEquals(Ft817CatProtocol.buildSetModeCommand("FM-N"),Ft817CatProtocol.buildSetModeCommand("NFM"))
+        assertArrayEquals(Ft817CatProtocol.buildSetModeCommand("FM-N"),Ft817CatProtocol.buildSetModeCommand("FMN"))
+        assertArrayEquals(Ft817CatProtocol.buildSetModeCommand("FM"),Ft817CatProtocol.buildSetModeCommand("AFSK"))
+    }
 
     @Test
     fun encodeFrequencyBcd_145500000() {

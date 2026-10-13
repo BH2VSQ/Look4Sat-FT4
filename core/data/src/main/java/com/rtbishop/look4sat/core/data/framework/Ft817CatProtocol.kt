@@ -104,7 +104,8 @@ object Ft817CatProtocol {
     }
 
     fun buildSetModeCommand(mode: String): ByteArray? {
-        val modeByte = MODE_TO_BYTE[mode.uppercase(Locale.US)] ?: return null
+        val normalized=when(val value=mode.uppercase(Locale.US)) { "NFM","FMN"->"FM-N"; "AFSK"->"FM"; else->value }
+        val modeByte = MODE_TO_BYTE[normalized] ?: return null
         return byteArrayOf(modeByte, 0x00, 0x00, 0x00, CMD_SET_MODE)
     }
 
