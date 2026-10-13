@@ -1,4 +1,5 @@
 <resources>
+    <string name="rc_ftx1_usb_hint">USB CAT-1 (Enhanced port) · MAIN firmware ≥ 1.08</string>
     <string name="rc_panel_reference">Reference frequencies</string>
     <string name="rc_panel_independent">Independent</string>
     <string name="rc_panel_linked">Linked</string>

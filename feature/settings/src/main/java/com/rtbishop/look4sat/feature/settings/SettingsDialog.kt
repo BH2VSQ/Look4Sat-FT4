@@ -1311,7 +1311,18 @@ fun RadioControlDialog(
     val modelDescriptor = radioModelDescriptor(radioModel.value)
     val isIcom = modelDescriptor.protocolFamily == RadioProtocolFamily.ICOM_CIV
     val isL4s = modelDescriptor.protocolFamily == RadioProtocolFamily.L4S
+    val isFtx1 = radioModel.value == RadioControlSettings.MODEL_YAESU_FTX1
     val isVox = catTransport.value == RadioControlSettings.TRANSPORT_VOX
+    LaunchedEffect(catTransport.value) {
+        val models=com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(catTransport.value)
+        if (!isVox && radioModel.value !in models) {
+            radioModel.value=models.first()
+            baudRate.intValue=radioBaudRates(radioModel.value).first()
+            defaultCivAddress(radioModel.value)?.let { civAddress.value="0x%02X".format(it) }
+            splitMode.value=false
+            txAddress.value=""; rxAddress.value=""; txName.value=""; rxName.value=""
+        }
+    }
     val supportsSatelliteMode = modelDescriptor.capabilities.satelliteMode &&
         !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
             tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
@@ -1481,7 +1492,7 @@ fun RadioControlDialog(
             Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 RadioControlSettings.SUPPORTED_TRANSPORTS.filter {
-                    !isL4s || it == RadioControlSettings.TRANSPORT_USB
+                    !(isL4s || isFtx1) || it == RadioControlSettings.TRANSPORT_USB
                 }.forEach { transport ->
                     FilterChip(
                         selected = catTransport.value == transport,
@@ -1541,7 +1552,7 @@ fun RadioControlDialog(
                 color      = androidx.compose.material3.MaterialTheme.colorScheme.primary
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                RadioControlSettings.SUPPORTED_RADIOS.forEach { model ->
+                com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.modelsForTransport(catTransport.value).forEach { model ->
                     FilterChip(
                         selected = radioModel.value == model,
                         onClick  = {
@@ -1549,7 +1560,8 @@ fun RadioControlDialog(
                             val currentAddress = parseCivAddress(civAddress.value)
                             val modelChanged = radioModel.value != model
                             radioModel.value = model
-                            if (radioModelDescriptor(model).protocolFamily == RadioProtocolFamily.L4S) {
+                            if (radioModelDescriptor(model).protocolFamily == RadioProtocolFamily.L4S ||
+                                model == RadioControlSettings.MODEL_YAESU_FTX1) {
                                 splitMode.value = true
                                 if (catTransport.value != RadioControlSettings.TRANSPORT_USB) {
                                     txAddressByTransport[catTransport.value] = txAddress.value
@@ -1565,7 +1577,7 @@ fun RadioControlDialog(
                                 duplexMode.value = RadioControlSettings.DUPLEX_MODE_SPLIT
                             }
                             val modelRates = radioBaudRates(model)
-                            if ((modelChanged && model == RadioControlSettings.MODEL_ICOM_IC820) || baudRate.intValue !in modelRates) {
+                            if ((modelChanged && model in setOf(RadioControlSettings.MODEL_ICOM_IC820,RadioControlSettings.MODEL_YAESU_FTX1)) || baudRate.intValue !in modelRates) {
                                 baudRate.intValue = modelRates.first()
                             }
                             if (
@@ -1585,6 +1597,7 @@ fun RadioControlDialog(
             }
             Spacer(modifier = Modifier.height(6.dp))
 
+            if (isFtx1) Text(stringResource(R.string.rc_ftx1_usb_hint),style=MaterialTheme.typography.bodySmall)
             if (
                 isIcom &&
                 !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&

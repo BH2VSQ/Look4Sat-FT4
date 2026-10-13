@@ -102,7 +102,7 @@ class RadioTrackingServiceTest {
         fixture.close()
     }
 
-    private val legacyModels=listOf(RadioControlSettings.MODEL_YAESU_FT817,RadioControlSettings.MODEL_YAESU_FT857,
+    private val legacyModels=listOf(RadioControlSettings.MODEL_YAESU_FT817,RadioControlSettings.MODEL_YAESU_FT857,RadioControlSettings.MODEL_YAESU_FTX1,
         RadioControlSettings.MODEL_ICOM_IC705,RadioControlSettings.MODEL_ICOM_IC9700,
         RadioControlSettings.MODEL_ICOM_IC910,RadioControlSettings.MODEL_ICOM_IC820)
 
@@ -1268,7 +1268,7 @@ class RadioTrackingServiceTest {
         radioModel: String = RadioControlSettings.MODEL_YAESU_FT817,
         splitMode: Boolean = false,
         duplexMode: String = RadioControlSettings.DUPLEX_MODE_SPLIT,
-        transport: String = RadioControlSettings.TRANSPORT_BLUETOOTH,
+        transport: String = RadioControlSettings.TRANSPORT_USB,
         diagnostics: IControlDiagnostics = NoOpControlDiagnostics
     ) {
         val nominalTxHz = 145_900_000L
@@ -1539,7 +1539,7 @@ private class FakeSettingsRepo(
     radioModel: String = RadioControlSettings.MODEL_YAESU_FT817,
     splitMode: Boolean = false,
     duplexMode: String = RadioControlSettings.DUPLEX_MODE_SPLIT,
-    transport: String = RadioControlSettings.TRANSPORT_BLUETOOTH
+    transport: String = RadioControlSettings.TRANSPORT_USB
 ) : ISettingsRepo {
     override val appVersionName = "test"
     override val selectedIds = MutableStateFlow<List<Int>>(emptyList())

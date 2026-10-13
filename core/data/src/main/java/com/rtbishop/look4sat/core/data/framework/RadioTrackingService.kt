@@ -195,6 +195,15 @@ class RadioTrackingService(
         val txAddr     = rcSettings.txRadioAddress
         val rxAddr     = rcSettings.rxRadioAddress
         val profile    = radioProfile(rcSettings.radioModel, rcSettings.civAddress)
+        if (profile.isFtx1 && rcSettings.catTransport != RadioControlSettings.TRANSPORT_USB) {
+            _state.update { it.copy(errorMessage = "FTX-1 requires USB CAT") }
+            return
+        }
+        if (rcSettings.catTransport == RadioControlSettings.TRANSPORT_BLUETOOTH &&
+            rcSettings.radioModel !in com.rtbishop.look4sat.core.domain.model.RadioModelCatalog.bluetoothModels) {
+            _state.update { it.copy(errorMessage = "Select USB or TCP for this radio") }
+            return
+        }
         if (profile.isL4s && rcSettings.catTransport != RadioControlSettings.TRANSPORT_USB) {
             _state.update { it.copy(errorMessage = "L4S radios require USB CDC/OTG") }
             return
@@ -407,6 +416,8 @@ class RadioTrackingService(
             L4sController(checkNotNull(transport) { "L4S USB transport is unavailable" }, appScope, diagnostics=diagnostics,
                 tuningStepHz={settingsRepo.radioControlSettings.value.l4sDopplerStepHz},
                 correctionStepHz={settingsRepo.radioControlSettings.value.l4sCorrectionEditStepHz})
+        } else if (profile.isFtx1) {
+            Ftx1Controller(checkNotNull(transport) { "FTX-1 USB transport is unavailable" }, diagnostics)
         } else if (usesHamlib) {
             HamlibRigctldController(
                 endpoint = address,

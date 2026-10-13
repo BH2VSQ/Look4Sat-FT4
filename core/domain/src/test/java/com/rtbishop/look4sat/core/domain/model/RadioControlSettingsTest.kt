@@ -30,12 +30,14 @@ class RadioControlSettingsTest {
         assertEquals(listOf(4800, 9600, 38400), supportedRadioBaudRates(RadioControlSettings.MODEL_YAESU_FT857))
         assertEquals(listOf(4800, 9600, 19200), supportedRadioBaudRates(RadioControlSettings.MODEL_ICOM_IC705))
         assertEquals(
-            listOf(4800, 9600, 19200, 38400),
+            listOf(4800, 9600, 19200, 38400, 57600, 115200),
             supportedRadioBaudRates(RadioControlSettings.MODEL_ICOM_IC9700)
         )
         assertEquals(
             listOf(9600, 19200, 4800, 1200, 300),
             supportedRadioBaudRates(RadioControlSettings.MODEL_ICOM_IC910)
         )
+        assertEquals(listOf(38400,4800,9600,19200,57600,115200),
+            supportedRadioBaudRates(RadioControlSettings.MODEL_YAESU_FTX1))
     }
 }

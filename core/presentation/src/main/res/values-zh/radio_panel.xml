@@ -1,4 +1,5 @@
 <resources>
+    <string name="rc_ftx1_usb_hint">USB CAT-1（增强端口）· MAIN 固件 ≥ 1.08</string>
     <string name="rc_panel_reference">基准频率</string>
     <string name="rc_panel_independent">独立</string>
     <string name="rc_panel_linked">联动</string>

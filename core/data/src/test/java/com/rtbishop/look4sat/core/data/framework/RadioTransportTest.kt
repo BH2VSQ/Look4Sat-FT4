@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RadioTransportTest {
@@ -73,6 +74,11 @@ class RadioTransportTest {
 
     @Test
     fun supportedRadioModelsResolveToTheirProtocolVariants() {
+        val ftx1=radioProfile(RadioControlSettings.MODEL_YAESU_FTX1)
+        assertTrue(ftx1.isFtx1)
+        assertNull(ftx1.yaesuVariant)
+        assertFalse(ftx1.isIcom)
+        assertEquals(1,ftx1.serialStopBits)
         assertEquals(
             YaesuCatVariant.FT817,
             radioProfile(RadioControlSettings.MODEL_YAESU_FT817).yaesuVariant

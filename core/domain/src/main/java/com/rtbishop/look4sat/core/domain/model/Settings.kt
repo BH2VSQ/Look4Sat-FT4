@@ -163,6 +163,7 @@ data class RadioControlSettings(
     companion object {
         const val MODEL_YAESU_FT817 = "Yaesu FT-817/818"
         const val MODEL_YAESU_FT857 = "Yaesu FT-857/897"
+        const val MODEL_YAESU_FTX1 = "Yaesu FTX-1"
         const val MODEL_ICOM_IC705 = "Icom IC-705"
         const val MODEL_ICOM_IC9700 = "Icom IC-9700"
         const val MODEL_ICOM_IC910 = "Icom IC-910/D/H"

@@ -32,7 +32,8 @@ data class RadioProfile(
     val civAddress: Byte? = null,
     val serialStopBits: Int = 1,
     val capabilities: RadioCapabilities,
-    val isL4s: Boolean = false
+    val isL4s: Boolean = false,
+    val isFtx1: Boolean = false
 ) {
     val isIcom: Boolean get() = icomVariant != null
     val supportsSatelliteMode: Boolean
@@ -44,6 +45,10 @@ data class RadioProfile(
 fun radioProfile(model: String, civAddressOverride: Int? = null): RadioProfile {
     val descriptor = radioModelDescriptor(model)
     val profile = when (descriptor.model) {
+        RadioControlSettings.MODEL_YAESU_FTX1 -> RadioProfile(
+            model=descriptor.model,capabilities=descriptor.capabilities,
+            serialStopBits=descriptor.serialStopBits,isFtx1=true
+        )
         RadioControlSettings.MODEL_YAESU_FT857 -> RadioProfile(
             model = descriptor.model,
             yaesuVariant = YaesuCatVariant.FT857,
