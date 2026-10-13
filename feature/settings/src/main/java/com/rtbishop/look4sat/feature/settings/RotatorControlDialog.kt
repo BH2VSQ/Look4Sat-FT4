@@ -229,7 +229,8 @@ fun RotatorControlDialog(
                                 draft = draft.copy(
                                     protocol = protocol,
                                     transport = transport,
-                                    port = protocol.defaultPort ?: draft.port
+                                    port = protocol.defaultPort ?: draft.port,
+                                    baudRate = if (draft.protocol != protocol && protocol == RotatorProtocol.SPID_ROT2PROG) 600 else draft.baudRate
                                 )
                             },
                             enabled = editable,
@@ -543,6 +544,14 @@ fun RotatorControlDialog(
                         Text(stringResource(R.string.rotator_park_now))
                     }
                 }
+                RotatorDirectionDial(
+                    target = testAzimuth.toDoubleOrNull()?.let { az -> testElevation.toDoubleOrNull()?.let { el ->
+                        com.rtbishop.look4sat.core.domain.rotator.RotatorPosition(az,el)
+                    } },
+                    reported = trackingState.reportedPosition.takeIf { connected && trackingState.feedbackStatus == RotatorFeedbackStatus.FRESH },
+                    range = draft.azimuthRange, enabled = connected,
+                    onSelect = { testAzimuth = it.azimuthDegrees.toPlainText(); testElevation = it.elevationDegrees.toPlainText() }
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     RotatorNumberField(
                         value = testAzimuth,
@@ -565,8 +574,12 @@ fun RotatorControlDialog(
                         val elevation = testElevation.toDoubleOrNull()
                         if (azimuth != null && elevation != null) onTestPoint(azimuth, elevation)
                     },
-                    enabled = connected && testAzimuth.toDoubleOrNull() != null &&
-                        testElevation.toDoubleOrNull() != null,
+                    enabled = connected && testAzimuth.toDoubleOrNull()?.let { az ->
+                        testElevation.toDoubleOrNull()?.let { el ->
+                            com.rtbishop.look4sat.core.domain.rotator.RotatorManualControl.valid(
+                                com.rtbishop.look4sat.core.domain.rotator.RotatorPosition(az,el),draft.azimuthRange)
+                        }
+                    } == true,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(stringResource(R.string.rotator_test_point))

@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="rotator_direction_dial">Direction dial</string>
+    <string name="rotator_dial_legend">Yellow: target · Red: measured</string>
     <string name="rotator_confirmation_label">Command confirmation: %1$s</string>
     <string name="rotator_command_idle">No movement command</string>
     <string name="rotator_command_sent">Sent — waiting for feedback</string>

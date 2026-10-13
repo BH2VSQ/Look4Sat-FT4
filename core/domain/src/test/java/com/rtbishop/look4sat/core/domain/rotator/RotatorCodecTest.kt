@@ -8,14 +8,23 @@ import org.junit.Test
 
 class RotatorCodecTest {
 
+    @Test fun spidCommandsUseAsciiPulsesButRepliesAlwaysUseTenthsOfDegrees() {
+        val response=byteArrayOf(0x57,3,7,2,5,2,3,9,4,0,2,0x20)
+        assertEquals(RotatorPosition(12.5,34.0),RotatorCodec.parsePosition(RotatorProtocol.SPID_ROT2PROG,response))
+        assertEquals(2 to 2,RotatorCodec.spidResolutions(response))
+        assertArrayEquals(byteArrayOf(0x57,0x30,0x37,0x34,0x35,2,0x30,0x37,0x38,0x38,2,0x2f,0x20),
+            RotatorCodec.point(RotatorProtocol.SPID_ROT2PROG,RotatorPosition(12.5,34.0),
+                spidAzimuthResolution=2,spidElevationResolution=2))
+    }
+
     @Test
     fun encodesTextPointCommandsByteForByte() {
         val position = RotatorPosition(12.6, 45.4)
 
         assertAscii("W013 045\r", RotatorCodec.point(RotatorProtocol.GS232, position))
-        assertAscii("AZ13 EL45\r", RotatorCodec.point(RotatorProtocol.EASYCOMM_I, position))
-        assertAscii("AZ12.6 EL45.4\r", RotatorCodec.point(RotatorProtocol.EASYCOMM_II, position))
-        assertAscii("AZ12.6 EL45.4\r", RotatorCodec.point(RotatorProtocol.EASYCOMM_III, position))
+        assertAscii("AZ12.6 EL45.4 UP000 XXX DN000 XXX\n", RotatorCodec.point(RotatorProtocol.EASYCOMM_I, position))
+        assertAscii("AZ12.6 EL45.4\n", RotatorCodec.point(RotatorProtocol.EASYCOMM_II, position))
+        assertAscii("AZ12.6 EL45.4\n", RotatorCodec.point(RotatorProtocol.EASYCOMM_III, position))
         assertAscii("AZ013EL045\n", RotatorCodec.point(RotatorProtocol.SAEBRTRACK, position))
         assertAscii("P 12.6 45.4\n", RotatorCodec.point(RotatorProtocol.ROTCTLD, position))
         assertAscii(
@@ -32,7 +41,7 @@ class RotatorCodecTest {
             RotatorCodec.point(RotatorProtocol.GS232, RotatorPosition(-10.0, 999.0))
         )
         assertAscii(
-            "AZ350.0 EL0.0\r",
+            "AZ350.0 EL0.0\n",
             RotatorCodec.point(RotatorProtocol.EASYCOMM_II, RotatorPosition(-10.0, -5.0))
         )
         assertAscii(
@@ -44,15 +53,15 @@ class RotatorCodecTest {
     @Test
     fun encodesSpidSetQueryAndStopFrames() {
         assertArrayEquals(
-            byteArrayOf(0x57, 0, 3, 7, 3, 1, 0, 4, 0, 5, 1, 0x2F, 0x20),
+            byteArrayOf(0x57, 0x30, 0x33, 0x37, 0x33, 1, 0x30, 0x34, 0x30, 0x35, 1, 0x2F, 0x20),
             RotatorCodec.point(RotatorProtocol.SPID_ROT2PROG, RotatorPosition(13.0, 45.0))
         )
         assertArrayEquals(
-            byteArrayOf(0x57, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0x1F, 0x20),
+            byteArrayOf(0x57, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1F, 0x20),
             RotatorCodec.positionQuery(RotatorProtocol.SPID_ROT2PROG)
         )
         assertArrayEquals(
-            byteArrayOf(0x57, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0x0F, 0x20),
+            byteArrayOf(0x57, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0F, 0x20),
             RotatorCodec.stop(RotatorProtocol.SPID_ROT2PROG)
         )
     }
@@ -60,7 +69,7 @@ class RotatorCodecTest {
     @Test
     fun encodesStopAndQueryCommandsOnlyWhenSupported() {
         assertAscii("S\r", RotatorCodec.stop(RotatorProtocol.GS232))
-        assertAscii("SA SE\r", RotatorCodec.stop(RotatorProtocol.EASYCOMM_III))
+        assertAscii("SA SE \n", RotatorCodec.stop(RotatorProtocol.EASYCOMM_III))
         assertAscii("S\n", RotatorCodec.stop(RotatorProtocol.ROTCTLD))
         assertAscii("<PST><STOP>1</STOP></PST>", RotatorCodec.stop(RotatorProtocol.PST_ROTATOR))
         assertNull(RotatorCodec.stop(RotatorProtocol.SAEBRTRACK))
@@ -90,7 +99,7 @@ class RotatorCodecTest {
         assertPosition(123.4, 45.6, RotatorProtocol.OZ9AAR_URC, "{\"AZ\":123.4,\"EL\":45.6}")
         assertPosition(123.4, 45.6, RotatorProtocol.OZ9AAR_URC, "{\"el\":45.6,\"az\":123.4}")
 
-        val spid = byteArrayOf(0x00, 0x57, 0, 4, 8, 3, 1, 0, 4, 0, 6, 1, 0x20)
+        val spid = byteArrayOf(0x00, 0x57, 4, 8, 3, 0, 1, 4, 0, 6, 0, 1, 0x20)
         val parsed = RotatorCodec.parsePosition(RotatorProtocol.SPID_ROT2PROG, spid)
         assertEquals(123.0, parsed?.azimuthDegrees ?: Double.NaN, 0.0)
         assertEquals(46.0, parsed?.elevationDegrees ?: Double.NaN, 0.0)

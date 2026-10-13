@@ -16,9 +16,12 @@ internal class RotatorProtocolFailure(
 
 /** The command actor owns serialization. This client never equates a write with an ACK. */
 internal class RotatorProtocolClient(private val reader: ControlResponseAccumulator) {
+    private var spidResolution = 1 to 1
     suspend fun point(link: ControlTransport, settings: RotatorSettings, target: RotatorPosition, onSent: () -> Unit): Boolean {
+        if (settings.protocol == RotatorProtocol.SPID_ROT2PROG) position(link,settings)
         if (settings.protocol == RotatorProtocol.ROTCTLD) discardBuffered(link)
-        write(link, RotatorCodec.point(settings.protocol, target, settings.customPointTemplate))
+        write(link, RotatorCodec.point(settings.protocol, target, settings.customPointTemplate,
+            spidResolution.first,spidResolution.second))
         onSent()
         if (settings.protocol != RotatorProtocol.ROTCTLD) return false
         readAck(link)
@@ -56,8 +59,12 @@ internal class RotatorProtocolClient(private val reader: ControlResponseAccumula
         checkLink(link)
         if (settings.protocol == RotatorProtocol.ROTCTLD) rejectNegative(response)
         if (!frameComplete(settings, response)) failReply(response)
-        return RotatorCodec.parsePosition(settings.protocol, response, settings.customResponseTemplate)
+        val position = RotatorCodec.parsePosition(settings.protocol, response, settings.customResponseTemplate)
             ?: failReply(response)
+        if (settings.protocol == RotatorProtocol.SPID_ROT2PROG) {
+            spidResolution = RotatorCodec.spidResolutions(response) ?: failReply(response)
+        }
+        return position
     }
 
     private suspend fun axis(link: ControlTransport, azimuth: Boolean): Double {

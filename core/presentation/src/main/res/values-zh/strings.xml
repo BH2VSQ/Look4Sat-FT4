@@ -350,9 +350,9 @@
     <string name="rotator_disconnect">断开</string>
     <string name="rotator_stop">急停</string>
     <string name="rotator_park_now">立即停泊</string>
-    <string name="rotator_test_azimuth">测试方位</string>
-    <string name="rotator_test_elevation">测试仰角</string>
-    <string name="rotator_test_point">发送测试位置</string>
+    <string name="rotator_test_azimuth">方位角</string>
+    <string name="rotator_test_elevation">仰角</string>
+    <string name="rotator_test_point">转到目标</string>
     <string name="rotator_save">保存</string>
     <string name="rotator_close">关闭</string>
 

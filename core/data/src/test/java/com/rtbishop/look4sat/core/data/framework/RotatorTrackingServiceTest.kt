@@ -25,6 +25,21 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class RotatorTrackingServiceTest {
 
+    @Test fun manualPointStopsAutomaticTrackingAndDoesNotGetOverwritten() = runTest {
+        val transport = FakeRotatorTransport()
+        val service = service(now = { 50_000L },
+            orbit = FakeRotatorOrbitSource(lookProvider = { time -> RotatorLook(100.0,30.0,time) }),
+            transports = ArrayDeque(listOf(transport)))
+        service.connect(); service.startTracking(pass(0L,100_000L)); runCurrent()
+        service.point(com.rtbishop.look4sat.core.domain.rotator.RotatorPosition(180.0,45.0))
+        val count = transport.writes.count { it.decodeToString().startsWith("P ") }
+        advanceTimeBy(5_000L); runCurrent()
+        assertFalse(service.state.value.isTrackingRequested)
+        assertEquals(count,transport.writes.count { it.decodeToString().startsWith("P ") })
+        assertEquals(180.0,service.state.value.commandedPosition!!.azimuthDegrees,0.0)
+        service.disconnect()
+    }
+
     @Test
     fun diagnosticsCaptureConnectionTrackingAndEmergencyStopStages() = runTest {
         val diagnostics = ControlDiagnosticsBuffer(nowMillis = { testScheduler.currentTime })

@@ -380,9 +380,9 @@
     <string name="rotator_disconnect">Disconnect</string>
     <string name="rotator_stop">STOP</string>
     <string name="rotator_park_now">Park now</string>
-    <string name="rotator_test_azimuth">Test azimuth</string>
-    <string name="rotator_test_elevation">Test elevation</string>
-    <string name="rotator_test_point">Send test position</string>
+    <string name="rotator_test_azimuth">Azimuth</string>
+    <string name="rotator_test_elevation">Elevation</string>
+    <string name="rotator_test_point">Go to target</string>
     <string name="rotator_save">Save</string>
     <string name="rotator_close">Close</string>
 

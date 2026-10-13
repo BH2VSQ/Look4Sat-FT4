@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="rotator_direction_dial">方向盘</string>
+    <string name="rotator_dial_legend">黄色：目标 · 红色：回传</string>
     <string name="rotator_confirmation_label">指令确认：%1$s</string>
     <string name="rotator_command_idle">尚未发送运动指令</string>
     <string name="rotator_command_sent">已发送，等待回传</string>

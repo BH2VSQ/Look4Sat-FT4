@@ -188,6 +188,15 @@ class RotatorTrackingService(
 
     override suspend fun point(position: RotatorPosition) {
         val settings = settingsProvider().normalized()
+        if (!com.rtbishop.look4sat.core.domain.rotator.RotatorManualControl.valid(position, settings.azimuthRange)) {
+            _state.update { it.copy(errorMessage = "Invalid manual azimuth/elevation") }
+            return
+        }
+        activePass = null
+        trackingJob?.cancelAndJoin()
+        trackingJob = null
+        azimuth450Precommitted = false
+        _state.update { it.copy(isTrackingRequested = false, trackingBlocked = false) }
         val decision = RotatorPointingDecision.Point(
             phase = RotatorTrackingPhase.HOLDING,
             truePosition = position,

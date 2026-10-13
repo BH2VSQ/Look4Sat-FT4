@@ -21,7 +21,9 @@ object RotatorCodec {
     fun point(
         protocol: RotatorProtocol,
         position: RotatorPosition,
-        customTemplate: String = ""
+        customTemplate: String = "",
+        spidAzimuthResolution: Int = 1,
+        spidElevationResolution: Int = 1
     ): ByteArray {
         require(position.azimuthDegrees.isFinite() && position.elevationDegrees.isFinite()) {
             "Rotator position must be finite"
@@ -35,19 +37,20 @@ object RotatorCodec {
                 ascii(String.format(Locale.US, "W%03d %03d\r", az, el))
             }
             RotatorProtocol.EASYCOMM_I -> {
-                val az = normalize360(azimuth).roundToInt()
-                val el = elevation.coerceIn(0.0, 180.0).roundToInt()
-                ascii(String.format(Locale.US, "AZ%d EL%d\r", az, el))
+                val az = normalize360(azimuth)
+                val el = elevation.coerceIn(0.0, 180.0)
+                ascii(String.format(Locale.US, "AZ%.1f EL%.1f UP000 XXX DN000 XXX\n", az, el))
             }
             RotatorProtocol.EASYCOMM_II, RotatorProtocol.EASYCOMM_III -> {
                 val az = normalize360(azimuth)
                 val el = elevation.coerceIn(0.0, 180.0)
-                ascii(String.format(Locale.US, "AZ%.1f EL%.1f\r", az, el))
+                ascii(String.format(Locale.US, "AZ%.1f EL%.1f\n", az, el))
             }
             RotatorProtocol.SPID_ROT2PROG -> {
                 val az = normalize360(azimuth)
                 val el = elevation.coerceIn(0.0, 180.0)
-                spidFrame(command = SPID_SET, azimuth = az, elevation = el)
+                spidFrame(command = SPID_SET, azimuth = az, elevation = el,
+                    azimuthResolution = spidAzimuthResolution, elevationResolution = spidElevationResolution)
             }
             RotatorProtocol.SAEBRTRACK -> {
                 val az = normalize360(azimuth).roundToInt()
@@ -88,7 +91,7 @@ object RotatorCodec {
         RotatorProtocol.GS232 -> ascii("S\r")
         RotatorProtocol.EASYCOMM_I,
         RotatorProtocol.EASYCOMM_II,
-        RotatorProtocol.EASYCOMM_III -> ascii("SA SE\r")
+        RotatorProtocol.EASYCOMM_III -> ascii("SA SE \n")
         RotatorProtocol.SPID_ROT2PROG -> spidFrame(command = SPID_STOP)
         RotatorProtocol.SAEBRTRACK, RotatorProtocol.OZ9AAR_URC -> null
         RotatorProtocol.ROTCTLD -> ascii("S\n")
@@ -203,8 +206,17 @@ object RotatorCodec {
             val azimuthResolution = unsigned(bytes[start+5])
             val elevationResolution = unsigned(bytes[start+10])
             if (azimuthResolution !in 1..100 || elevationResolution !in 1..100) continue
-            return RotatorPosition(spidDigits(bytes,start+1)/azimuthResolution.toDouble()-360.0,
-                spidDigits(bytes,start+6)/elevationResolution.toDouble()-360.0)
+            return RotatorPosition(spidDigits(bytes,start+1)/10.0-360.0,
+                spidDigits(bytes,start+6)/10.0-360.0)
+        }
+        return null
+    }
+
+    fun spidResolutions(bytes: ByteArray): Pair<Int, Int>? {
+        if (bytes.size < SPID_REPLY_SIZE) return null
+        for (start in 0..bytes.size-SPID_REPLY_SIZE) {
+            val frame = bytes.copyOfRange(start,start+SPID_REPLY_SIZE)
+            if (parseSpidPosition(frame) != null) return unsigned(frame[5]) to unsigned(frame[10])
         }
         return null
     }
@@ -212,34 +224,38 @@ object RotatorCodec {
     private fun spidFrame(
         command: Int,
         azimuth: Double = 0.0,
-        elevation: Double = 0.0
+        elevation: Double = 0.0,
+        azimuthResolution: Int = 1,
+        elevationResolution: Int = 1
     ): ByteArray {
-        val azimuthDigits = if (command == SPID_SET) spidDigits(azimuth) else IntArray(4)
-        val elevationDigits = if (command == SPID_SET) spidDigits(elevation) else IntArray(4)
+        val azimuthDigits = if (command == SPID_SET) spidDigits(azimuth,azimuthResolution) else IntArray(4)
+        val elevationDigits = if (command == SPID_SET) spidDigits(elevation,elevationResolution) else IntArray(4)
         return byteArrayOf(
             SPID_START.toByte(),
             azimuthDigits[0].toByte(),
             azimuthDigits[1].toByte(),
             azimuthDigits[2].toByte(),
             azimuthDigits[3].toByte(),
-            SPID_RESOLUTION.toByte(),
+            (if (command == SPID_SET) azimuthResolution else 0).toByte(),
             elevationDigits[0].toByte(),
             elevationDigits[1].toByte(),
             elevationDigits[2].toByte(),
             elevationDigits[3].toByte(),
-            SPID_RESOLUTION.toByte(),
+            (if (command == SPID_SET) elevationResolution else 0).toByte(),
             command.toByte(),
             SPID_END.toByte()
         )
     }
 
-    private fun spidDigits(degrees: Double): IntArray {
-        val value = ((degrees + 360.0) * SPID_RESOLUTION).roundToInt()
+    private fun spidDigits(degrees: Double, resolution: Int): IntArray {
+        require(resolution in 1..100) { "Invalid SPID resolution" }
+        val value = ((degrees + 360.0) * resolution).roundToInt()
+        require(value in 0..9999) { "SPID pulse count is outside the four-digit range" }
         return intArrayOf(
-            value / 1000 % 10,
-            value / 100 % 10,
-            value / 10 % 10,
-            value % 10
+            0x30 + value / 1000 % 10,
+            0x30 + value / 100 % 10,
+            0x30 + value / 10 % 10,
+            0x30 + value % 10
         )
     }
 
@@ -298,7 +314,6 @@ object RotatorCodec {
     private const val SPID_SET = 0x2F
     private const val SPID_QUERY = 0x1F
     private const val SPID_STOP = 0x0F
-    private const val SPID_RESOLUTION = 1
     private const val SPID_REPLY_SIZE = 12
     private const val SPID_FRAME_SIZE = 13
 }

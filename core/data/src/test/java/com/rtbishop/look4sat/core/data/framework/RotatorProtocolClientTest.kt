@@ -6,6 +6,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RotatorProtocolClientTest {
+    @Test fun spidLearnsPulsesPerDegreeBeforeSendingAsciiPointCommand()=runTest {
+        val response=byteArrayOf(0x57,3,7,2,5,2,3,9,4,0,2,0x20).decodeToString()
+        val link=ReplyLink { response }
+        assertFalse(client().point(link,RotatorSettings(protocol=RotatorProtocol.SPID_ROT2PROG),RotatorPosition(12.5,34.0)) {})
+        assertArrayEquals(byteArrayOf(0x57,0,0,0,0,0,0,0,0,0,0,0x1f,0x20),link.commands.first().encodeToByteArray())
+        assertArrayEquals(byteArrayOf(0x57,0x30,0x37,0x34,0x35,2,0x30,0x37,0x38,0x38,2,0x2f,0x20),link.commands.last().encodeToByteArray())
+    }
     @Test fun rotctldRequiresZeroAckAndReportsNegativeAck()=runTest {
         for(code in listOf(0,-1,-11)) {
             val link=ReplyLink {"RPRT $code\n"}

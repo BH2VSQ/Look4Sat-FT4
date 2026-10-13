@@ -109,9 +109,9 @@ private fun auditPass()=OrbitalPass(aosTime=0,losTime=200000,orbitalObject=Orbit
 
 private fun expectedPoint(protocol:RotatorProtocol):ByteArray = when(protocol) {
     RotatorProtocol.GS232 -> "W100 030\r".encodeToByteArray()
-    RotatorProtocol.EASYCOMM_I -> "AZ100 EL30\r".encodeToByteArray()
-    RotatorProtocol.EASYCOMM_II,RotatorProtocol.EASYCOMM_III -> "AZ100.0 EL30.0\r".encodeToByteArray()
-    RotatorProtocol.SPID_ROT2PROG -> byteArrayOf(0x57,0,4,6,0,1,0,3,9,0,1,0x2f,0x20)
+    RotatorProtocol.EASYCOMM_I -> "AZ100.0 EL30.0 UP000 XXX DN000 XXX\n".encodeToByteArray()
+    RotatorProtocol.EASYCOMM_II,RotatorProtocol.EASYCOMM_III -> "AZ100.0 EL30.0\n".encodeToByteArray()
+    RotatorProtocol.SPID_ROT2PROG -> byteArrayOf(0x57,0x30,0x34,0x36,0x30,1,0x30,0x33,0x39,0x30,1,0x2f,0x20)
     RotatorProtocol.SAEBRTRACK -> "AZ100EL030\n".encodeToByteArray()
     RotatorProtocol.ROTCTLD -> "P 100.0 30.0\n".encodeToByteArray()
     RotatorProtocol.PST_ROTATOR -> "<PST><AZIMUTH>100.0</AZIMUTH><ELEVATION>30.0</ELEVATION></PST>".encodeToByteArray()
@@ -122,7 +122,7 @@ private fun expectedPoint(protocol:RotatorProtocol):ByteArray = when(protocol) {
 private fun query(protocol:RotatorProtocol):ByteArray?=when(protocol) {
     RotatorProtocol.GS232 -> "C2\r".encodeToByteArray()
     RotatorProtocol.EASYCOMM_II,RotatorProtocol.EASYCOMM_III -> "AZ\n".encodeToByteArray()
-    RotatorProtocol.SPID_ROT2PROG -> byteArrayOf(0x57,0,0,0,0,1,0,0,0,0,1,0x1f,0x20)
+    RotatorProtocol.SPID_ROT2PROG -> byteArrayOf(0x57,0,0,0,0,0,0,0,0,0,0,0x1f,0x20)
     RotatorProtocol.ROTCTLD -> "p\n".encodeToByteArray()
     RotatorProtocol.OZ9AAR_URC -> "{\"POLL\"}".encodeToByteArray()
     else -> null
@@ -142,7 +142,7 @@ private class AuditRotatorTransport(private val protocol:RotatorProtocol,var rep
         val reply=when(protocol) {
             RotatorProtocol.GS232 -> "AZ=090 EL=020\r".encodeToByteArray()
             RotatorProtocol.EASYCOMM_I,RotatorProtocol.EASYCOMM_II,RotatorProtocol.EASYCOMM_III -> "AZ90.0 EL20.0\r".encodeToByteArray()
-            RotatorProtocol.SPID_ROT2PROG -> byteArrayOf(0x57,0,4,5,0,1,0,3,8,0,1,0x20)
+            RotatorProtocol.SPID_ROT2PROG -> byteArrayOf(0x57,4,5,0,0,1,3,8,0,0,1,0x20)
             RotatorProtocol.ROTCTLD -> "${reportedPosition.azimuthDegrees}\n${reportedPosition.elevationDegrees}\n".encodeToByteArray()
             RotatorProtocol.PST_ROTATOR -> "AZ:90.0 EL:20.0".encodeToByteArray()
             RotatorProtocol.OZ9AAR_URC -> "{\"AZ\":90.0,\"EL\":20.0}".encodeToByteArray()
