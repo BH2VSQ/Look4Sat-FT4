@@ -82,7 +82,14 @@ class MapViewModel(
      *  handler is the only writer and the all-satellite batch isn't recomputed per frame. */
     @Volatile
     private var isScrubbing = false
-    private var scrubJob: Job? = null
+
+    /**
+     * Latest scrub offset, collected by a single worker. StateFlow conflates, so a burst of slider
+     * steps can neither run two predictions at once nor land them out of order — an older result
+     * arriving after a newer one moved the marker and its footprint back a step, which is what the
+     * drag shake turned out to be.
+     */
+    private val scrubOffset = MutableStateFlow(0L)
 
     /** Gates the prediction loop so it doesn't burn CPU while the map isn't on screen */
     private val isScreenVisible = MutableStateFlow(true)
@@ -109,6 +116,15 @@ class MapViewModel(
             // re-entering the map picks their results up.
             isScreenVisible.collect { visible ->
                 if (visible) refreshMapGridData()
+            }
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            // Serialised scrub pipeline (see scrubOffset): one prediction at a time, always the
+            // newest offset, and "now" is read here so a step that arrives mid-prediction is not
+            // dropped. Runs on Default for the same reason the tick loop does.
+            scrubOffset.collect { offset ->
+                val selected = selectedOrbitalObject ?: return@collect
+                updateScrubbedState(selected, stationPos, Date(System.currentTimeMillis() + offset))
             }
         }
         val (selectedCatNum, _) = satelliteRepo.selectedPass.value
@@ -193,11 +209,7 @@ class MapViewModel(
     private fun setTimeOffset(offsetMs: Long) {
         timeOffsetMs = offsetMs.coerceAtLeast(0L)
         _uiState.update { it.copy(timeOffsetMs = timeOffsetMs) }
-        val selected = selectedOrbitalObject ?: return
-        scrubJob?.cancel()
-        scrubJob = viewModelScope.launch(Dispatchers.Default) {
-            updateScrubbedState(selected, stationPos, Date(System.currentTimeMillis() + timeOffsetMs))
-        }
+        scrubOffset.value = timeOffsetMs
     }
 
     private fun getStationPosition() {

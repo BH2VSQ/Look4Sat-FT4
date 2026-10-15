@@ -445,12 +445,9 @@ private fun MapScreen(
     }
     // Time scrub: keep the scrubbed satellite in view. Only its own entry is patched into
     // `positions`, so without this the camera would stay where the live map left it and the
-    // marker would walk off-screen mid-drag.
-    LaunchedEffect(uiState.isScrubbing, uiState.mapData?.osmPos) {
-        if (!uiState.isScrubbing) return@LaunchedEffect
-        val point = uiState.mapData?.osmPos ?: return@LaunchedEffect
-        mapView.controller.setCenter(GeoPoint(point.latitude, point.longitude))
-    }
+    // marker would walk off-screen mid-drag. The camera is moved inside the map update pass
+    // below, not here: a separate effect ran after the markers were applied, so the two
+    // alternated on screen and the marker and its footprint looked like they were shaking.
     LaunchedEffect(uiState.mapSource, uiState.tiandituKey, uiState.isLightUi) {
         configureTileSources(mapView, uiState.mapSource, uiState.tiandituKey, uiState.isLightUi)
     }
@@ -543,7 +540,21 @@ private fun MapScreen(
                         setTerminator(uiState.sunLatDeg, uiState.sunLonDeg, view)
                         setSubSolarPoint(uiState.sunLatDeg, uiState.sunLonDeg, view, uiState.isLightUi)
                         setMoonPosition(uiState.moonLatDeg, uiState.moonLonDeg, view, uiState.isLightUi)
+                        // Time scrub: chase the scrubbed satellite in the same pass that moved its
+                        // marker and footprint, interpolating across one slider step so the map
+                        // glides instead of stepping. Doing this from a separate effect applied the
+                        // camera after the markers, and the two alternating on screen was the shake.
+                        if (uiState.isScrubbing) {
+                            uiState.mapData?.osmPos?.let { point ->
+                                view.controller.animateTo(
+                                    GeoPoint(point.latitude, point.longitude),
+                                    view.zoomLevelDouble,
+                                    SCRUB_FOLLOW_MS
+                                )
+                            }
+                        }
                     }
+                    scrubInProgress = uiState.isScrubbing
                     view.invalidate()
                 }
                 // Satellite mode: the time slider replaces the old info cards. Grid mode keeps
@@ -1680,6 +1691,9 @@ private const val VIEWPORT_MARGIN = 8.0
 /** Debounce for viewport-driven marker refreshes, in milliseconds */
 private const val MAP_LISTENER_DELAY = 128L
 
+/** Camera interpolation window while the time slider is under the finger (about one step). */
+private const val SCRUB_FOLLOW_MS = 120L
+
 /** Shared dot icon used when too many satellites are visible to label them */
 private var dotIcon: Drawable? = null
 
@@ -1689,6 +1703,15 @@ private val visibleSats = ArrayList<Pair<OrbitalObject, GeoPos>>()
 /** Last emitted positions, replayed on scroll/zoom so culled markers appear without waiting for a tick */
 private var lastPositions: Map<OrbitalObject, GeoPos>? = null
 private var lastAction: ((OrbitalObject) -> Unit)? = null
+
+/**
+ * True while the time slider is under the finger. The marker refresh that the map listener runs
+ * after a scroll ([MAP_LISTENER_DELAY] ms after the camera moved) re-applies the last known
+ * positions; during a drag that is up to one slider step stale, which used to pull the satellite
+ * and its footprint back a step between two scrub updates and read as shaking.
+ */
+@Volatile
+private var scrubInProgress = false
 
 /** Pool of reusable Marker objects keyed by satellite name, to avoid re-creation every frame */
 private val markerPool = HashMap<String, Marker>()
@@ -1786,6 +1809,9 @@ private fun setPositions(
 private fun refreshPositions(mapView: MapView): Boolean {
     // Grid mode disables the satellite layer — don't re-populate markers off-screen
     if (mapView.overlays.getOrNull(OVERLAY_POSITIONS)?.isEnabled == false) return true
+    // A drag re-applies the selected satellite every slider step; a listener refresh in between
+    // would put the last (stale) map back and make the marker jump.
+    if (scrubInProgress) return true
     val posMap = lastPositions ?: return false
     val action = lastAction ?: return false
     setPositions(posMap, mapView, action)
