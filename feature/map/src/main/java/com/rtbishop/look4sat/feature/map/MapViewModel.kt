@@ -73,6 +73,15 @@ class MapViewModel(
     private var dataUpdateJob: Job? = null
     private var dataUpdateRate = 1000L
     private var selectedOrbitalObject: OrbitalObject? = null
+    /** Time-scrub offset ahead of "now" (0 = live). The tick loop reads it on Default while
+     *  slider actions arrive on Main, hence @Volatile. */
+    @Volatile
+    private var timeOffsetMs = 0L
+    /** True while the time slider is under the finger: the tick loop stands down so the scrub
+     *  handler is the only writer and the all-satellite batch isn't recomputed per frame. */
+    @Volatile
+    private var isScrubbing = false
+    private var scrubJob: Job? = null
 
     /** Gates the prediction loop so it doesn't burn CPU while the map isn't on screen */
     private val isScreenVisible = MutableStateFlow(true)
@@ -166,6 +175,27 @@ class MapViewModel(
                 }
             }
             is MapAction.SetVisible -> isScreenVisible.value = action.isVisible
+            is MapAction.SetTimeOffset -> setTimeOffset(action.offsetMs)
+            MapAction.ResetTimeOffset -> setTimeOffset(0L)
+            is MapAction.SetScrubbing -> {
+                isScrubbing = action.isScrubbing
+                _uiState.update { it.copy(isScrubbing = action.isScrubbing) }
+            }
+        }
+    }
+
+    /**
+     * Moves the satellite-mode clock [offsetMs] ahead of now and re-predicts the selected
+     * satellite for that instant. Called on every throttled slider step, so it must stay cheap:
+     * see [updateScrubbedState].
+     */
+    private fun setTimeOffset(offsetMs: Long) {
+        timeOffsetMs = offsetMs.coerceAtLeast(0L)
+        _uiState.update { it.copy(timeOffsetMs = timeOffsetMs) }
+        val selected = selectedOrbitalObject ?: return
+        scrubJob?.cancel()
+        scrubJob = viewModelScope.launch(Dispatchers.Default) {
+            updateScrubbedState(selected, stationPos, Date(System.currentTimeMillis() + timeOffsetMs))
         }
     }
 
@@ -220,7 +250,13 @@ class MapViewModel(
                 while (isActive) {
                     // Suspends while the map is off-screen instead of predicting into the void
                     isScreenVisible.first { it }
-                    dateNow.time = System.currentTimeMillis()
+                    if (isScrubbing) {
+                        // The scrub handler owns the map while the finger is down; the full
+                        // constellation batch would only fight it (and burn CPU).
+                        delay(SCRUB_IDLE_DELAY)
+                        continue
+                    }
+                    dateNow.time = System.currentTimeMillis() + timeOffsetMs
                     updateMapState(orbitalObject, allSatellites, stationPos, dateNow)
                     delay(effectiveRate)
                 }
@@ -282,6 +318,38 @@ class MapViewModel(
             it.copy(
                 positions = positionsMap,
                 footprint = footprint,
+                mapData = mapData.first,
+                orbitalPass = mapData.second,
+                sunLatDeg = sunPos.latitude,
+                sunLonDeg = sunPos.longitude,
+                moonLatDeg = moonPos.declination, // sub-lunar latitude = declination
+                moonLonDeg = if (moonPos.gha <= 180.0) -moonPos.gha else 360.0 - moonPos.gha
+            )
+        }
+    }
+
+    /**
+     * Time-scrub update: re-predicts only the selected satellite, its footprint and the
+     * celestial markers for [date], and patches that one entry of the marker map. The rest of
+     * the constellation keeps its last positions — during a drag the other markers are noise
+     * anyway, and recomputing thousands of them per slider step is the only cost that would
+     * make the scrub stutter.
+     */
+    private suspend fun updateScrubbedState(selected: OrbitalObject, pos: GeoPos, date: Date) {
+        val satPos = satelliteRepo.getPosition(selected, pos, date.time)
+        val mapData = buildMapData(selected, satPos, date)
+        val sunPos = CelestialComputer.getSunPosition(stationPos, date.time)
+        val moonPos = CelestialComputer.getMoonPosition(stationPos, date.time)
+        _uiState.update { state ->
+            val positions = state.positions?.let { original ->
+                HashMap<OrbitalObject, GeoPos>(original.size + 1).apply {
+                    putAll(original)
+                    put(selected, satPos.toMapGeoPos())
+                }
+            }
+            state.copy(
+                positions = positions,
+                footprint = satPos,
                 mapData = mapData.first,
                 orbitalPass = mapData.second,
                 sunLatDeg = sunPos.latitude,
@@ -380,6 +448,9 @@ class MapViewModel(
     companion object {
         /** Number of parallel chunks for satellite position computation */
         private const val PARALLEL_CHUNKS = 4
+
+        /** Poll interval while the time slider is under the finger (the tick loop is paused then). */
+        private const val SCRUB_IDLE_DELAY = 100L
 
         fun factory(container: IMainContainer) = viewModelFactory {
             initializer {

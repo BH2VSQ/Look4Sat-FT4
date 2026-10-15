@@ -48,7 +48,11 @@ data class MapState(
     val sunLatDeg: Double = 0.0,
     val sunLonDeg: Double = 0.0,
     val moonLatDeg: Double = 0.0,
-    val moonLonDeg: Double = 0.0
+    val moonLonDeg: Double = 0.0,
+    /** Satellite-mode time scrub: milliseconds ahead of "now" (0 = live tracking). */
+    val timeOffsetMs: Long = 0L,
+    /** True while the time slider is under the finger; the prediction loop stands down then. */
+    val isScrubbing: Boolean = false
 )
 
 sealed interface MapAction {
@@ -62,6 +66,12 @@ sealed interface MapAction {
     data class RemoveMarkedStation(val grid: String, val call: String) : MapAction
     data class PinMarkedStation(val grid: String, val call: String) : MapAction
     data class SetVisible(val isVisible: Boolean) : MapAction
+    /** Time scrub: [offsetMs] ahead of now; the ViewModel clamps it at 0. */
+    data class SetTimeOffset(val offsetMs: Long) : MapAction
+    /** Back to live tracking (the "Now" button). */
+    data object ResetTimeOffset : MapAction
+    /** Finger down/up on the time slider. */
+    data class SetScrubbing(val isScrubbing: Boolean) : MapAction
 }
 
 data class MapData(

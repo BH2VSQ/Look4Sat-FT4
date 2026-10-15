@@ -25,9 +25,11 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import androidx.collection.LruCache
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -35,7 +37,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,6 +55,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -302,6 +307,13 @@ private fun MapScreen(
     val usesTianditu = tiandituLayers(uiState.mapSource) != null && uiState.tiandituKey.isNotBlank()
     val copyrightResId = if (usesTianditu) R.string.map_copyright_tianditu else R.string.map_copyright_osm
 
+    // Slider span = the window the ground track is drawn for (2.4 orbital periods from the
+    // selection instant), so a scrubbed marker always lands on that drawn track.
+    val scrubSpanMs = remember(uiState.mapData?.period) {
+        val periodMin = uiState.mapData?.period ?: 0.0
+        (periodMin * 2.4 * 60_000.0).toLong().coerceAtLeast(60_000L)
+    }
+
     // Tapped worked grid -> centered QSO dialog. Local UI state: the map is the
     // only consumer and it resets when leaving the page.
     var selectedGrid by remember { mutableStateOf<String?>(null) }
@@ -430,6 +442,14 @@ private fun MapScreen(
         val firstPos = uiState.track?.firstOrNull()?.firstOrNull() ?: return@LaunchedEffect
         mapView.controller.animateTo(GeoPoint(firstPos.latitude, firstPos.longitude))
     }
+    // Time scrub: keep the scrubbed satellite in view. Only its own entry is patched into
+    // `positions`, so without this the camera would stay where the live map left it and the
+    // marker would walk off-screen mid-drag.
+    LaunchedEffect(uiState.isScrubbing, uiState.mapData?.osmPos) {
+        if (!uiState.isScrubbing) return@LaunchedEffect
+        val point = uiState.mapData?.osmPos ?: return@LaunchedEffect
+        mapView.controller.setCenter(GeoPoint(point.latitude, point.longitude))
+    }
     LaunchedEffect(uiState.mapSource, uiState.tiandituKey, uiState.isLightUi) {
         configureTileSources(mapView, uiState.mapSource, uiState.tiandituKey, uiState.isLightUi)
     }
@@ -525,11 +545,20 @@ private fun MapScreen(
                     }
                     view.invalidate()
                 }
-                uiState.mapData?.let { mapData ->
-                    if (!uiState.isGridMode) {
-                        if (isVertical) MapDataCard(mapData, copyrightResId)
-                        else MapDataCards(mapData, copyrightResId)
-                    }
+                // Satellite mode: the time slider replaces the old info cards. Grid mode keeps
+                // its own overlay set untouched.
+                if (!uiState.isGridMode) {
+                    TimeScrubBar(
+                        offsetMs = uiState.timeOffsetMs,
+                        spanMs = scrubSpanMs,
+                        isUtc = uiState.isUtc,
+                        copyrightResId = copyrightResId,
+                        onScrub = { onAction(MapAction.SetTimeOffset(it)) },
+                        onScrubStart = { onAction(MapAction.SetScrubbing(true)) },
+                        onScrubEnd = { onAction(MapAction.SetScrubbing(false)) },
+                        onReset = { onAction(MapAction.ResetTimeOffset) },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
                 }
                 // Top-left: 台址 selector for VUCC counting (grid mode only).
                 // Shown whenever per-grid QSO data exists; "All" (null) is available.
@@ -1037,86 +1066,113 @@ private fun formatTime(epochMs: Long, isUtc: Boolean): String {
 }
 // endregion
 
-// region Map data composables
-@Composable
-private fun MapDataCard(data: MapData, copyrightResId: Int) {
-    val textColor = MaterialTheme.colorScheme.primary
-    val cardColors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = stringResource(copyrightResId), fontSize = 14.sp)
-        Card(colors = cardColors) {
-            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                MapDataRow(
-                    stringResource(R.string.map_azimuth, data.azimuth) to textColor,
-                    stringResource(R.string.map_elevation, data.elevation) to textColor
-                )
-                MapDataRow(
-                    stringResource(R.string.map_altitude, data.altitude) to null,
-                    stringResource(R.string.map_distance, data.range) to null
-                )
-                MapDataRow(
-                    stringResource(R.string.map_latitude, data.osmPos.latitude) to textColor,
-                    stringResource(R.string.map_longitude, data.osmPos.longitude) to textColor
-                )
-                MapDataRow(
-                    stringResource(R.string.map_qth, data.qthLoc) to null,
-                    stringResource(R.string.map_phase, data.phase) to null
-                )
-            }
-        }
-    }
-}
+// region Time scrub bar
 
+/** Throttle for slider steps: ~12 map updates per second looks continuous and keeps the
+ *  per-pixel callbacks off the satellite prediction path. */
+private const val SCRUB_THROTTLE_MS = 80L
+
+/** Width reserved for the drag bubble, used to keep it inside the slider's track. */
+private val scrubBubbleWidth = 64.dp
+
+/**
+ * Bottom bar of satellite mode: one slider that scrubs the map's clock forward from "now" over
+ * the window the ground track is drawn for, so the scrubbed marker always sits on the drawn
+ * track. While the finger is down the satellite marker, its footprint and the terminator follow
+ * the thumb; a bubble above it shows that instant in the same UTC/local format as the rest of
+ * the app. Releasing keeps the offset — the map keeps running at that offset, so the pass can be
+ * watched — until "Now" is tapped. This replaces the old info cards; their readings live on the
+ * radar page.
+ */
 @Composable
-private fun MapDataRow(
-    left: Pair<String, androidx.compose.ui.graphics.Color?>,
-    right: Pair<String, androidx.compose.ui.graphics.Color?>
+private fun TimeScrubBar(
+    offsetMs: Long,
+    spanMs: Long,
+    isUtc: Boolean,
+    copyrightResId: Int,
+    onScrub: (Long) -> Unit,
+    onScrubStart: () -> Unit,
+    onScrubEnd: () -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-        if (left.second != null) Text(text = left.first, color = left.second!!)
-        else Text(text = left.first)
-        if (right.second != null) Text(text = right.first, color = right.second!!)
-        else Text(text = right.first)
+    // Local thumb fraction: it has to follow the finger even between throttled updates.
+    var fraction by remember { mutableStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    // "Now" captured when the gesture starts: the bubble must not jitter with the wall clock
+    // while the fingerprint of the drag is already deciding the instant.
+    var anchorMs by remember { mutableStateOf(0L) }
+    val lastPushMs = remember { longArrayOf(0L) }
+    // Re-sync when the offset changes from outside (the "Now" button).
+    LaunchedEffect(offsetMs, spanMs) {
+        if (!dragging) fraction = (offsetMs.toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
     }
-}
-
-@Composable
-private fun MapDataCards(data: MapData, copyrightResId: Int) {
-    val cardColors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)
-    val paddingMod = Modifier
-        .padding(horizontal = 8.dp, vertical = 4.dp)
-        .width(160.dp)
-    val textColor = MaterialTheme.colorScheme.primary
-    Box(modifier = Modifier.fillMaxSize()) {
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.TopStart)) {
-            Column(horizontalAlignment = Alignment.Start, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_azimuth, data.azimuth), color = textColor)
-                Text(text = stringResource(R.string.map_elevation, data.elevation))
+    Surface(
+        color = ComposeColor.Black.copy(alpha = 0.45f),
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Fixed-height slot so showing the bubble never moves the slider under the finger.
+            Box(modifier = Modifier.fillMaxWidth().height(22.dp)) {
+                if (dragging) {
+                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = formatTime(anchorMs + (fraction * spanMs).toLong(), isUtc),
+                            color = ComposeColor.White,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .offset(x = ((maxWidth - scrubBubbleWidth) * fraction).coerceAtLeast(0.dp))
+                                .background(ComposeColor.Black.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
             }
-        }
-        // Top-end card is offset down to make room for the grid-mode toggle pill.
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.TopEnd).padding(top = 60.dp)) {
-            Column(horizontalAlignment = Alignment.End, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_altitude, data.altitude), color = textColor)
-                Text(text = stringResource(R.string.map_distance, data.range))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Slider(
+                    value = fraction,
+                    onValueChange = { value ->
+                        if (!dragging) {
+                            dragging = true
+                            anchorMs = System.currentTimeMillis()
+                            onScrubStart()
+                        }
+                        fraction = value
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastPushMs[0] >= SCRUB_THROTTLE_MS) {
+                            lastPushMs[0] = nowMs
+                            onScrub((value * spanMs).toLong())
+                        }
+                    },
+                    onValueChangeFinished = {
+                        dragging = false
+                        onScrub((fraction * spanMs).toLong())
+                        onScrubEnd()
+                    },
+                    valueRange = 0f..1f,
+                    modifier = Modifier.weight(1f)
+                )
+                if (offsetMs > 0L) {
+                    TextButton(onClick = onReset) {
+                        Text(text = stringResource(R.string.map_time_now), fontSize = 12.sp)
+                    }
+                }
             }
-        }
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.BottomStart)) {
-            Column(horizontalAlignment = Alignment.Start, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_phase, data.phase), color = textColor)
-                Text(text = stringResource(R.string.map_qth, data.qthLoc))
-            }
-        }
-        Text(
-            text = stringResource(copyrightResId),
-            fontSize = 14.sp,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.BottomEnd)) {
-            Column(horizontalAlignment = Alignment.End, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_latitude, data.osmPos.latitude), color = textColor)
-                Text(text = stringResource(R.string.map_longitude, data.osmPos.longitude))
-            }
+            Text(
+                text = stringResource(copyrightResId),
+                color = ComposeColor.White.copy(alpha = 0.7f),
+                fontSize = 9.sp
+            )
         }
     }
 }
