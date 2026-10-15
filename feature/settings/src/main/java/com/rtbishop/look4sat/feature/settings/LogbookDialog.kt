@@ -570,13 +570,13 @@ private fun LogbookQuerySheet(
     onClear: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val filtered = query.isNotBlank() || modeFilter.isNotEmpty() || confirmation != LogbookFilter.ALL
     SharedDialog(
         title = stringResource(R.string.prefs_logbook_query_title),
         onDismissRequest = onDismiss,
-        onCancel = onClear,
-        cancelText = stringResource(R.string.prefs_logbook_query_clear),
-        onAccept = onDismiss,
-        acceptText = stringResource(R.string.prefs_logbook_query_done)
+        // The sheet carries only its leading button, so Back is the single way out.
+        onCancel = onDismiss,
+        cancelText = stringResource(R.string.prefs_logbook_query_back)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = LocalSpacing.current.large),
@@ -590,11 +590,18 @@ private fun LogbookQuerySheet(
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters)
             )
-            Text(
-                text = stringResource(R.string.prefs_logbook_query_hits, hitCount),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(R.string.prefs_logbook_query_hits, hitCount),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (filtered) {
+                    TextButton(onClick = onClear) {
+                        Text(stringResource(R.string.prefs_logbook_query_clear), fontSize = 11.sp)
+                    }
+                }
+            }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 items(LogbookFilter.entries.toList()) { filter ->
                     FilterChip(

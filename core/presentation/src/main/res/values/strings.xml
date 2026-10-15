@@ -266,7 +266,7 @@
     <string name="prefs_logbook_query_hint">Search callsign, satellite or grid</string>
     <string name="prefs_logbook_query_hits">%1$d matches</string>
     <string name="prefs_logbook_query_clear">Clear</string>
-    <string name="prefs_logbook_query_done">Done</string>
+    <string name="prefs_logbook_query_back">Back</string>
     <string name="prefs_logbook_query_empty">No records match the query</string>
     <string name="prefs_logbook_query_all">All</string>
     <string name="prefs_logbook_query_confirmed">LoTW confirmed</string>
