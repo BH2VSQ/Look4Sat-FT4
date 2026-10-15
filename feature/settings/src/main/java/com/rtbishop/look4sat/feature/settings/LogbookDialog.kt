@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.sp
 import com.rtbishop.look4sat.core.domain.logbook.LogbookFilter
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
 import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
-import com.rtbishop.look4sat.core.domain.logbook.SATELLITE_MODE_FILTER
 import com.rtbishop.look4sat.core.domain.logbook.displayMode
 import com.rtbishop.look4sat.core.domain.logbook.filterRecords
 import com.rtbishop.look4sat.core.domain.logbook.frequencyBand
@@ -617,15 +616,6 @@ private fun LogbookQuerySheet(
                         selected = modeFilter.isEmpty(),
                         onClick = { onModeFilter("") },
                         label = { Text(stringResource(R.string.prefs_logbook_query_all_modes), fontSize = 12.sp) }
-                    )
-                }
-                item {
-                    FilterChip(
-                        selected = modeFilter == SATELLITE_MODE_FILTER,
-                        onClick = {
-                            onModeFilter(if (modeFilter == SATELLITE_MODE_FILTER) "" else SATELLITE_MODE_FILTER)
-                        },
-                        label = { Text(stringResource(R.string.prefs_logbook_query_satellite_mode), fontSize = 12.sp) }
                     )
                 }
                 items(modes) { mode ->

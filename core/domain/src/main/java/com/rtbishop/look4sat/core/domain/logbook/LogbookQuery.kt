@@ -21,9 +21,6 @@ package com.rtbishop.look4sat.core.domain.logbook
 /** Confirmation state filters offered by the logbook query. */
 enum class LogbookFilter { ALL, CONFIRMED, UNCONFIRMED, DRAFTS }
 
-/** Sentinel mode filter: only records worked through a satellite. */
-const val SATELLITE_MODE_FILTER = "__SATELLITE__"
-
 /**
  * The logbook query shared by every logbook surface (the enhanced logbook page and the
  * settings logbook dialog's query sheet). Both used to / would otherwise carry their own
@@ -31,8 +28,9 @@ const val SATELLITE_MODE_FILTER = "__SATELLITE__"
  * here, next to the record model, as the single definition of "matches the query".
  *
  * [query] is matched case-insensitively against the opposite callsign, the own callsign,
- * the satellite name, both grids and the comment. [modeFilter] is either blank (any mode),
- * [SATELLITE_MODE_FILTER], or an exact [displayMode]. [confirmation] narrows to confirmed,
+ * the satellite name, both grids and the comment. [modeFilter] is either blank (any mode)
+ * or an exact [displayMode] — the modes offered are whatever the log actually contains, so
+ * there is no sentinel for "worked via satellite". [confirmation] narrows to confirmed,
  * completed-but-unconfirmed, or not-completed records.
  */
 fun filterRecords(
@@ -52,7 +50,6 @@ fun filterRecords(
     ).any { it.contains(trimmed, ignoreCase = true) }) &&
         when (modeFilter) {
             "" -> true
-            SATELLITE_MODE_FILTER -> record.isSatellite
             else -> record.displayMode == modeFilter
         } &&
         when (confirmation) {

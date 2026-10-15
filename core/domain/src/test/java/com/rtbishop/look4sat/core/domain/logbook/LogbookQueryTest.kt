@@ -64,18 +64,15 @@ class LogbookQueryTest {
     }
 
     @Test
-    fun satelliteModeFilterKeepsOnlySatelliteRecords() {
-        // Every fixture is a satellite record except the non-satellite one added below.
-        val terrestrial = record(satellite = "", mode = "SSB")
-        val list = listOf(satFm, terrestrial)
-        assertEquals(listOf(satFm), filterRecords(list, "", SATELLITE_MODE_FILTER, LogbookFilter.ALL))
-        assertEquals(listOf(terrestrial), filterRecords(list, "", "SSB", LogbookFilter.ALL))
-    }
-
-    @Test
     fun exactModeFilterMatchesTheDisplayMode() {
         assertEquals(listOf(satCw), filterRecords(all, "", "CW", LogbookFilter.ALL))
         assertEquals(emptyList<QsoRecord>(), filterRecords(all, "", "FT4", LogbookFilter.ALL))
+        // A terrestrial row (blank satellite name) is addressed by its own mode label.
+        val terrestrial = record(satellite = "", mode = "SSB")
+        assertEquals(
+            listOf(terrestrial),
+            filterRecords(listOf(terrestrial, satFm), "", "SSB", LogbookFilter.ALL)
+        )
     }
 
     @Test
@@ -89,7 +86,7 @@ class LogbookQueryTest {
     fun filtersCombineWithAnd() {
         assertEquals(
             listOf(satCw),
-            filterRecords(all, "eu", SATELLITE_MODE_FILTER, LogbookFilter.CONFIRMED)
+            filterRecords(all, "eu", "CW", LogbookFilter.CONFIRMED)
         )
         assertEquals(
             emptyList<QsoRecord>(),

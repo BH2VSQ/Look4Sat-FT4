@@ -274,7 +274,6 @@
     <string name="prefs_logbook_query_unconfirmed">Unconfirmed</string>
     <string name="prefs_logbook_query_incomplete">Draft / aborted</string>
     <string name="prefs_logbook_query_all_modes">All modes</string>
-    <string name="prefs_logbook_query_satellite_mode">Satellite mode</string>
     <string name="prefs_logbook_upload_wavelog_title">Upload to Wavelog</string>
     <string name="lotw_upload_grid_title">Upload check</string>
     <string name="lotw_upload_grid_fix">Fix station location</string>

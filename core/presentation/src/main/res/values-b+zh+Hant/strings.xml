@@ -255,7 +255,6 @@
     <string name="prefs_logbook_query_unconfirmed">待确认</string>
     <string name="prefs_logbook_query_incomplete">草稿／中止</string>
     <string name="prefs_logbook_query_all_modes">全部模式</string>
-    <string name="prefs_logbook_query_satellite_mode">卫星模式</string>
     <string name="prefs_logbook_upload_wavelog_title">上传到 Wavelog</string>
     <string name="lotw_upload_grid_title">上传前核对</string>
     <string name="lotw_upload_grid_fix">修改台址</string>
