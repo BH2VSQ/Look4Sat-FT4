@@ -164,7 +164,16 @@ class MainContainer(private val context: Context) : IMainContainer {
             settingsRepo,
             disciplinedClock,
             transportFactory = transportFactory::create,
-            diagnostics = controlDiagnostics
+            diagnostics = controlDiagnostics,
+            n76AudioFactory = { address -> com.rtbishop.look4sat.core.data.framework.N76AudioSession(
+                com.rtbishop.look4sat.core.data.framework.BluetoothSppRadioTransport(manager, address, controlDiagnostics,
+                    java.util.UUID.fromString(com.rtbishop.look4sat.core.data.framework.N76AudioProtocol.SERVICE_UUID)),
+                com.rtbishop.look4sat.core.data.framework.AndroidN76AudioIo(context, audioHub) { settingsRepo.radioControlSettings.value.n76Options },
+                appScope, controlDiagnostics)
+            },
+            n76RecordingFactory = { com.rtbishop.look4sat.core.data.framework.AndroidN76Recording(context,
+                com.rtbishop.look4sat.core.data.framework.AndroidN76AudioIo(context, audioHub) { settingsRepo.radioControlSettings.value.n76Options },
+                appScope) { settingsRepo.radioControlSettings.value.n76Options } }
         )
     }
     override val radioTrackingService: IRadioTrackingService by lazy { sharedRadioTrackingService }

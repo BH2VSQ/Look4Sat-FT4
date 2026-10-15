@@ -10,7 +10,7 @@ class RadioCapabilitiesTest {
 
     @Test fun bluetoothPickerKeepsOnlyRequestedModelsAndFtx1IsUsbOnly() {
         assertEquals(listOf(RadioControlSettings.MODEL_ICOM_IC705,RadioControlSettings.MODEL_QUANSHENG_UVK1,
-            RadioControlSettings.MODEL_QUANSHENG_UVK5V3,RadioControlSettings.MODEL_ICOM_IC9700),
+            RadioControlSettings.MODEL_QUANSHENG_UVK5V3,RadioControlSettings.MODEL_ICOM_IC9700,RadioControlSettings.MODEL_VERO_N76),
             RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_BLUETOOTH))
         assertTrue(RadioControlSettings.MODEL_YAESU_FTX1 in RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_USB))
         assertFalse(RadioControlSettings.MODEL_YAESU_FTX1 in RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_TCP))
@@ -33,7 +33,8 @@ class RadioCapabilitiesTest {
                 RadioControlSettings.MODEL_ICOM_IC910,
                 RadioControlSettings.MODEL_ICOM_IC820,
                 RadioControlSettings.MODEL_QUANSHENG_UVK1,
-                RadioControlSettings.MODEL_QUANSHENG_UVK5V3
+                RadioControlSettings.MODEL_QUANSHENG_UVK5V3,
+                RadioControlSettings.MODEL_VERO_N76
             ),
             RadioModelCatalog.supportedModels
         )
@@ -85,6 +86,20 @@ class RadioCapabilitiesTest {
         assertFalse(radio.capabilities.narrowFm)
         assertFalse(radio.capabilities.canSetTxFrequencyWhileTransmitting)
         assertEquals(setOf(RadioBand.TWO_METERS, RadioBand.SEVENTY_CENTIMETERS), radio.capabilities.bands)
+    }
+
+    @Test
+    fun n76UsesBluetoothNativeSatelliteVfoAndIndependentPttWithoutClaimingFullDuplex() {
+        val radio = radioModelDescriptor(RadioControlSettings.MODEL_VERO_N76)
+        assertEquals(RadioProtocolFamily.VERO_GAIA, radio.protocolFamily)
+        assertTrue(radio.capabilities.singleRadioSplit)
+        assertTrue(radio.capabilities.frequencyReadback)
+        assertFalse(radio.capabilities.fullDuplex)
+        assertTrue(radio.capabilities.ptt)
+        assertFalse(radio.capabilities.dataMode)
+        assertFalse(radio.capabilities.canSetTxFrequencyWhileTransmitting)
+        assertFalse(radio.model in RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_USB))
+        assertFalse(radio.model in RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_TCP))
     }
 
     @Test

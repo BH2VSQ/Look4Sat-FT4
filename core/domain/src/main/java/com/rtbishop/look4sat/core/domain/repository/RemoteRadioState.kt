@@ -27,7 +27,8 @@ data class RemoteRadioCapabilities(
 )
 
 data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double,
-    val contextKey: String? = null)
+    val contextKey: String? = null, val distanceKm: Double = 0.0, val altitudeKm: Double = 0.0,
+    val secondsUntilAos: Long = 0)
 
 fun radioContextKey(uuid: String): String = java.security.MessageDigest.getInstance("SHA-256")
     .digest(uuid.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -87,7 +88,16 @@ data class RemoteRadioState(
     val nativeProfileGeneration: Long? = null,
     val nativeProfileCapacity: Int? = null,
     val profileStore:RadioProfileStoreStatus?=null,
-    val transmitStateKnown:Boolean=true
+    val transmitStateKnown:Boolean=true,
+    val phoneMicrophone: Boolean = false,
+    val bluetoothAudioConnected: Boolean = false,
+    val radioMonitor: Boolean = false,
+    val recording: Boolean = false,
+    val playingRecording: Boolean = false,
+    val lastRecording: String? = null,
+    val recordingNeedsMicrophone: Boolean = false,
+    val recordingSupported: Boolean = false,
+    val isN76: Boolean = false
 )
 
 object CwTransmitText {

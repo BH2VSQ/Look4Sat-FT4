@@ -138,6 +138,8 @@ sealed interface RadarAction {
     data class SendCw(val text: String, val wpm: Int) : RadarAction
     data class SaveCwPreset(val index: Int, val text: String) : RadarAction
     data object StopRemoteTx : RadarAction
+    data class RadioMonitor(val enabled: Boolean) : RadarAction
+    data class Recording(val action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) : RadarAction
 
     // SSTV actions
     data object SstvStartRecording : RadarAction

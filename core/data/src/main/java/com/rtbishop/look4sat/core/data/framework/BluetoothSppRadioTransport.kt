@@ -42,8 +42,9 @@ class BluetoothSppRadioTransport internal constructor(
 ) : RadioTransport {
     constructor(
         manager: BluetoothManager?, address: String,
-        diagnostics: IControlDiagnostics = NoOpControlDiagnostics
-    ) : this(AndroidSppConnector(manager, address), diagnostics)
+        diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
+        serviceUuid: UUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
+    ) : this(AndroidSppConnector(manager, address, serviceUuid), diagnostics)
 
     private var socket: SppSocket? = null
     private var nextMode = 0
@@ -201,7 +202,7 @@ class BluetoothSppRadioTransport internal constructor(
 }
 
 @SuppressLint("MissingPermission")
-private class AndroidSppConnector(private val manager: BluetoothManager?, private val address: String) : SppConnector {
+private class AndroidSppConnector(private val manager: BluetoothManager?, private val address: String, private val uuid: UUID) : SppConnector {
     override fun prepare() {
         val adapter = manager?.adapter ?: throw IOException("Bluetooth adapter unavailable")
         check(adapter.isEnabled) { "Bluetooth is disabled" }
@@ -212,7 +213,6 @@ private class AndroidSppConnector(private val manager: BluetoothManager?, privat
 
     override fun create(secure: Boolean): SppSocket {
         val device = checkNotNull(manager?.adapter).getRemoteDevice(address)
-        val uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb")
         val socket = if (secure) device.createRfcommSocketToServiceRecord(uuid)
             else device.createInsecureRfcommSocketToServiceRecord(uuid)
         return object : SppSocket {

@@ -76,6 +76,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
@@ -1204,6 +1205,9 @@ fun RadioControlDialog(
     }
     val l4sDopplerStepHz = rememberSaveable { mutableStateOf(initialSettings.l4sDopplerStepHz.toString()) }
     val l4sCorrectionStepHz = rememberSaveable { mutableStateOf(initialSettings.l4sCorrectionEditStepHz.toString()) }
+    val n76BluetoothAudio = rememberSaveable { mutableStateOf(initialSettings.n76BluetoothAudio) }
+    var n76Options by remember { mutableStateOf(initialSettings.n76Options) }
+    var showN76Options by rememberSaveable { mutableStateOf(false) }
     val sharedBusDelayMillis = rememberSaveable {
         mutableStateOf(initialSettings.sharedBusCommandDelayMillis.toString())
     }
@@ -1311,6 +1315,7 @@ fun RadioControlDialog(
     val modelDescriptor = radioModelDescriptor(radioModel.value)
     val isIcom = modelDescriptor.protocolFamily == RadioProtocolFamily.ICOM_CIV
     val isL4s = modelDescriptor.protocolFamily == RadioProtocolFamily.L4S
+    val isN76 = modelDescriptor.protocolFamily == RadioProtocolFamily.VERO_GAIA
     val isFtx1 = radioModel.value == RadioControlSettings.MODEL_YAESU_FTX1
     val isVox = catTransport.value == RadioControlSettings.TRANSPORT_VOX
     LaunchedEffect(catTransport.value) {
@@ -1326,7 +1331,7 @@ fun RadioControlDialog(
     val supportsSatelliteMode = modelDescriptor.capabilities.satelliteMode &&
         !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
             tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-    val isSingleRadio = modelDescriptor.capabilities.singleRadioSplit && (splitMode.value || isL4s)
+    val isSingleRadio = modelDescriptor.capabilities.singleRadioSplit && (splitMode.value || isL4s || isN76)
     val requiredStopBits = modelDescriptor.serialStopBits
 
     val baudRates = radioBaudRates(radioModel.value)
@@ -1460,7 +1465,9 @@ fun RadioControlDialog(
                 fmDialDeadbandHz = fmDialDeadbandHz.value.toLongOrNull() ?: 200L,
                 sharedBusCommandDelayMillis = sharedBusDelayMillis.value.toLongOrNull() ?: 0L,
                 l4sDopplerStepHz = parsedL4sStep ?: 250L,
-                l4sCorrectionEditStepHz = correctionStep ?: 10L
+                l4sCorrectionEditStepHz = correctionStep ?: 10L,
+                n76BluetoothAudio = n76BluetoothAudio.value,
+                n76Options = n76Options
             )
         )
         onDismiss()
@@ -1492,7 +1499,8 @@ fun RadioControlDialog(
             Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 RadioControlSettings.SUPPORTED_TRANSPORTS.filter {
-                    !(isL4s || isFtx1) || it == RadioControlSettings.TRANSPORT_USB
+                    if (isN76) it == RadioControlSettings.TRANSPORT_BLUETOOTH
+                    else !(isL4s || isFtx1) || it == RadioControlSettings.TRANSPORT_USB
                 }.forEach { transport ->
                     FilterChip(
                         selected = catTransport.value == transport,
@@ -1560,6 +1568,7 @@ fun RadioControlDialog(
                             val currentAddress = parseCivAddress(civAddress.value)
                             val modelChanged = radioModel.value != model
                             radioModel.value = model
+                            if (model == RadioControlSettings.MODEL_VERO_N76) splitMode.value = true
                             if (radioModelDescriptor(model).protocolFamily == RadioProtocolFamily.L4S ||
                                 model == RadioControlSettings.MODEL_YAESU_FTX1) {
                                 splitMode.value = true
@@ -1598,6 +1607,17 @@ fun RadioControlDialog(
             Spacer(modifier = Modifier.height(6.dp))
 
             if (isFtx1) Text(stringResource(R.string.rc_ftx1_usb_hint),style=MaterialTheme.typography.bodySmall)
+            if (isN76) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.rc_n76_bluetooth_audio), modifier = Modifier.weight(1f))
+                    Switch(checked = n76BluetoothAudio.value, onCheckedChange = { n76BluetoothAudio.value = it },
+                        enabled = enabled.value && !frequencyLocked)
+                }
+                OutlinedButton(onClick = { showN76Options = true }, modifier = Modifier.fillMaxWidth(), enabled = enabled.value && !frequencyLocked) {
+                    Text(stringResource(R.string.rc_n76_options))
+                }
+            }
             if (
                 isIcom &&
                 !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
@@ -1644,7 +1664,7 @@ fun RadioControlDialog(
                 if(frequencyLocked)Text(stringResource(R.string.rc_l4s_edit_locked),color=MaterialTheme.colorScheme.primary)
                 OutlinedButton(onClick=onOpenProfiles,modifier=Modifier.fillMaxWidth()) {Text(stringResource(R.string.rc_l4s_profiles))}
             }
-            if (modelDescriptor.capabilities.singleRadioSplit && !isL4s) {
+            if (modelDescriptor.capabilities.singleRadioSplit && !isL4s && !isN76) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically,
@@ -1888,7 +1908,7 @@ fun RadioControlDialog(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
-            if (catTransport.value != RadioControlSettings.TRANSPORT_TCP) {
+            if (catTransport.value != RadioControlSettings.TRANSPORT_TCP && !isN76) {
                 // Baud rate belongs to the local serial link. TCP bridges/rigctld own their serial settings.
                 Text(stringResource(R.string.rc_baud_rate), fontWeight = FontWeight.Medium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1943,6 +1963,12 @@ fun RadioControlDialog(
             Spacer(modifier = Modifier.height(6.dp))
             }
         }
+    }
+    if (showN76Options) {
+        val container = (context.applicationContext as com.rtbishop.look4sat.core.domain.repository.IContainerProvider).getMainContainer()
+        val inputs by container.audioHub.inputDevices.collectAsState()
+        N76OptionsDialog(n76Options, n76BluetoothAudio.value, inputs,
+            onSave = { n76Options = it }, onDismiss = { showN76Options = false })
     }
 }
 

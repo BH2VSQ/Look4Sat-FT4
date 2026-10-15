@@ -17,7 +17,8 @@ enum class AudioConsumer {
     CW,
     MORSE_EXPERT,
     FT4_DECODE,
-    FT4_SPECTRUM
+    FT4_SPECTRUM,
+    N76_VOICE
 }
 
 enum class AudioDelivery {

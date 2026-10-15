@@ -50,12 +50,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        val mainContainer = (applicationContext as IContainerProvider).getMainContainer()
+        mainContainer.appScope.launch { mainContainer.radioTrackingService.setAudioForeground(true) }
+    }
+
     override fun onStop() {
         val mainContainer = (applicationContext as IContainerProvider).getMainContainer()
         mainContainer.appScope.launch {
-            mainContainer.audioHub.stopAll()
             mainContainer.ft4AudioTransmitter.emergencyStop()
             mainContainer.ft4TransmitCoordinator.emergencyPttOff()
+            mainContainer.radioTrackingService.setAudioForeground(false)
+            mainContainer.audioHub.stopAll()
         }
         super.onStop()
     }

@@ -3,6 +3,23 @@
 Look4Sat-BA7OPF (this fork) bundles or adapts the following third-party
 components:
 
+## HTCommander / HTCommanderWeb
+
+- Source: https://github.com/Ylianst/HTCommander
+- Copyright 2026 Ylian Saint-Hilaire
+- License: Apache-2.0 (full text bundled in `core/data/src/main/assets/licenses/HTCommander-Apache-2.0.txt`)
+- Used for: the Kotlin mono/32 kHz SBC codec and coefficient tables for N76 Bluetooth voice audio,
+  adapted from commit `33a13be1b55daa32184ed0c96b6171c8cf70e539`. N76 control and audio framing
+  follow the same project's protocol reference.
+
+## Look4Sat-n76
+
+- Source: https://github.com/fluoroom/Look4Sat-n76
+- License: GPL-3.0-or-later
+- Used as reference for N76's independent PTT press/release, programmable monitor,
+  legacy frequency mode, power fields, Bluetooth RX relay and recording controls.
+- Reference commit: `c3f59411ca350a6ca3277af3b1dee3262dd49e02`.
+
 ## OrbitDeckiOS
 
 - Source: https://github.com/prstoetzer/OrbitDeckiOS

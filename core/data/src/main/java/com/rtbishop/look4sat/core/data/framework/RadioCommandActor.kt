@@ -215,6 +215,9 @@ class SerialRadioController(
     override suspend fun readPttState() = execute(operation = delegate::readPttState)
     override suspend fun connect() = actor.execute(CONNECT_TIMEOUT_MILLIS, delegate::connect)
     override suspend fun disconnect() = execute(operation = delegate::disconnect)
+    override suspend fun setAudioForeground(enabled: Boolean) = execute { delegate.setAudioForeground(enabled) }
+    override suspend fun setRadioMonitor(enabled: Boolean) = execute { delegate.setRadioMonitor(enabled) }
+    override suspend fun recordingAction(action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) = execute { delegate.recordingAction(action) }
     override suspend fun setFrequency(frequencyHz: Long) = execute { delegate.setFrequency(frequencyHz) }
     override suspend fun setMode(mode: String) = execute { delegate.setMode(mode) }
     override suspend fun setDataMode(enabled: Boolean, baseMode: String) =

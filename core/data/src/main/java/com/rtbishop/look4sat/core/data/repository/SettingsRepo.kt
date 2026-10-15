@@ -1146,6 +1146,8 @@ class SettingsRepo(
     private val keyRadioSharedBusDelay = "radioSharedBusCommandDelayMillis"
     private val keyRadioL4sStep = "radioL4sDopplerStepHz"
     private val keyRadioCorrectionStep = "radioL4sCorrectionEditStepHz"
+    private val keyN76BluetoothAudio = "radioN76BluetoothAudio"
+    private val keyN76Options = "radioN76Options"
 
     override fun getRemoteCwPresets(): List<String> = readRemoteCwPresets(preferences)
 
@@ -1182,7 +1184,8 @@ class SettingsRepo(
             fmDialDeadbandHz = settings.fmDialDeadbandHz.coerceIn(10L, 100_000L),
             sharedBusCommandDelayMillis = settings.sharedBusCommandDelayMillis.coerceIn(0L, 2_000L),
             l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(settings.l4sDopplerStepHz),
-            l4sCorrectionEditStepHz = settings.l4sCorrectionEditStepHz.coerceIn(10,1000)/10*10
+            l4sCorrectionEditStepHz = settings.l4sCorrectionEditStepHz.coerceIn(10,1000)/10*10,
+            n76Options = settings.n76Options.normalized()
         )
         preferences.edit {
             putBoolean(keyRadioControlEnabled, normalized.enabled)
@@ -1203,6 +1206,8 @@ class SettingsRepo(
             putLong(keyRadioSharedBusDelay, normalized.sharedBusCommandDelayMillis)
             putLong(keyRadioL4sStep, normalized.l4sDopplerStepHz)
             putLong(keyRadioCorrectionStep, normalized.l4sCorrectionEditStepHz)
+            putBoolean(keyN76BluetoothAudio, normalized.n76BluetoothAudio)
+            putString(keyN76Options, normalized.n76Options.toPreferenceJson())
         }
         _radioControlSettings.value = normalized
     }
@@ -1237,7 +1242,9 @@ class SettingsRepo(
             fmDialDeadbandHz = preferences.getLong(keyRadioFmDeadband, 200L).coerceIn(10L, 100_000L),
             sharedBusCommandDelayMillis = preferences.getLong(keyRadioSharedBusDelay, 0L).coerceIn(0L, 2_000L),
             l4sDopplerStepHz = com.rtbishop.look4sat.core.domain.repository.normalizeL4sStep(preferences.getLong(keyRadioL4sStep,250L)),
-            l4sCorrectionEditStepHz = preferences.getLong(keyRadioCorrectionStep,10).coerceIn(10,1000)/10*10
+            l4sCorrectionEditStepHz = preferences.getLong(keyRadioCorrectionStep,10).coerceIn(10,1000)/10*10,
+            n76BluetoothAudio = preferences.getBoolean(keyN76BluetoothAudio, false),
+            n76Options = n76OptionsFromJson(preferences.getString(keyN76Options, null))
         )
     }
     //endregion

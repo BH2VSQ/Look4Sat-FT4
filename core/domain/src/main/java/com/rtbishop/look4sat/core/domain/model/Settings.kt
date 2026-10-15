@@ -158,7 +158,9 @@ data class RadioControlSettings(
     val sharedBusCommandDelayMillis: Long = 0L,
     /** L4S tracking/control quantum, distinct from the radio's 10 Hz hardware resolution. */
     val l4sDopplerStepHz: Long = 250L,
-    val l4sCorrectionEditStepHz: Long = 10L
+    val l4sCorrectionEditStepHz: Long = 10L,
+    val n76BluetoothAudio: Boolean = false,
+    val n76Options: N76ControlOptions = N76ControlOptions()
 ) {
     companion object {
         const val MODEL_YAESU_FT817 = "Yaesu FT-817/818"
@@ -170,6 +172,7 @@ data class RadioControlSettings(
         const val MODEL_ICOM_IC820 = "Icom IC-820"
         const val MODEL_QUANSHENG_UVK1 = "Quansheng UV-K1 (L4S)"
         const val MODEL_QUANSHENG_UVK5V3 = "Quansheng UV-K5 V3 (L4S)"
+        const val MODEL_VERO_N76 = "Vero VR-N76"
         const val TRANSPORT_BLUETOOTH = "BLUETOOTH"
         const val TRANSPORT_USB = "USB"
         const val TRANSPORT_TCP = "TCP"

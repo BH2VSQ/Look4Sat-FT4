@@ -35,6 +35,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -45,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
 import com.rtbishop.look4sat.core.domain.repository.PttState
 import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
+import com.rtbishop.look4sat.core.domain.model.RadioRecordingAction
 import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
@@ -59,6 +65,8 @@ internal fun RadioControlSubState.canSendL4sCw(): Boolean =
 @Composable
 internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (RadarAction) -> Unit) {
     val remote = control.remoteRadio ?: RemoteRadioState()
+    val context = LocalContext.current
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val caps = remote.capabilities
     val minWpm = caps?.minimumWpm ?: 10
     val maxWpm = caps?.maximumWpm ?: 45
@@ -73,18 +81,23 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         else -> null
     }
     val action by rememberUpdatedState(onAction)
+    val requiresMicrophone by rememberUpdatedState(remote.phoneMicrophone)
     val canVoice by rememberUpdatedState(remote.connected && !remote.nativeMenuOpen && control.isReady && caps?.voicePtt == true &&
         remote.txEnabled && remote.transmitStateKnown && remote.profileStore?.busy!=true &&
+        (!remote.phoneMicrophone || remote.bluetoothAudioConnected) &&
         control.txPanel.mode in setOf("FM", "NFM") && control.transmitOwner == RadioTransmitOwner.NONE &&
         control.pttState == PttState.OFF)
     var showCw by rememberSaveable { mutableStateOf(false) }
     val pttLabel = stringResource(R.string.rc_l4s_hold)
     DisposableEffect(Unit) { onDispose { action(RadarAction.StopRemoteTx) } }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedButton(onClick = { showCw = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.rc_l4s_cw))
+        if (caps?.cwText == true) {
+            OutlinedButton(onClick = { showCw = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.rc_l4s_cw))
+            }
+            cwBlockReason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
-        cwBlockReason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        if (caps?.cwText == true || caps?.nativeSettings == true) {
         Text(stringResource(R.string.rc_l4s_applied,
             remote.txFrequencyHz?.let(::formatFrequency) ?: "—", remote.rxFrequencyHz?.let(::formatFrequency) ?: "—"),
             style = MaterialTheme.typography.bodySmall)
@@ -95,6 +108,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
             fun toneLabel(hz:Double?)=hz?.let { "${it} Hz" } ?: "OFF"
             Text(stringResource(R.string.rc_l4s_tones,toneLabel(remote.txCtcssHz),toneLabel(remote.rxCtcssHz),toneLabel(remote.activationCtcssHz)),
                 style=MaterialTheme.typography.bodySmall)
+        }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(
@@ -108,6 +122,11 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                             val down = awaitFirstDown(requireUnconsumed = false)
                             if (canVoice) {
                                 down.consume()
+                                if (requiresMicrophone && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                    microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                                    waitForUpOrCancellation()
+                                    return@awaitEachGesture
+                                }
                                 action(RadarAction.VoicePtt(true))
                                 try { waitForUpOrCancellation() }
                                 finally { action(RadarAction.VoicePtt(false)) }
@@ -120,9 +139,31 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         OutlinedButton(onClick = { action(RadarAction.StopRemoteTx) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.rc_l4s_stop))
         }
+        if (remote.isN76) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { action(RadarAction.RadioMonitor(!remote.radioMonitor)) },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp), enabled = !control.frequencyEditingLocked) {
+                    Text(stringResource(if (remote.radioMonitor) R.string.rc_n76_monitor_off else R.string.rc_n76_monitor))
+                }
+                if (remote.recordingSupported) OutlinedButton(onClick = {
+                    if (!remote.recording && remote.recordingNeedsMicrophone &&
+                        context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+                        microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    else action(RadarAction.Recording(if (remote.recording) RadioRecordingAction.STOP else RadioRecordingAction.START))
+                }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Text(stringResource(if (remote.recording) R.string.rc_n76_stop_recording else R.string.rc_n76_record))
+                }
+            }
+            if (remote.recordingSupported) OutlinedButton(onClick = {
+                action(RadarAction.Recording(if (remote.playingRecording) RadioRecordingAction.STOP_PLAYBACK else RadioRecordingAction.PLAY_LAST))
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                enabled = !remote.recording && remote.lastRecording != null && control.transmitOwner == RadioTransmitOwner.NONE) {
+                Text(stringResource(if (remote.playingRecording) R.string.rc_n76_stop_playback else R.string.rc_n76_play_last))
+            }
+        }
         remote.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
-    if (showCw) {
+    if (showCw && caps?.cwText == true) {
         var text by rememberSaveable { mutableStateOf("") }
         var wpm by rememberSaveable { mutableIntStateOf((remote.nativeCwWpm ?: 20).coerceIn(minWpm, maxWpm)) }
         var error by remember { mutableStateOf<String?>(null) }

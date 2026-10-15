@@ -65,6 +65,40 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+    @Test fun n76UsesAtomicNativeTrackingAndDoesNotApplyTheL4s250HzQuantizer() = runTest {
+        val remote = remoteFixtureState().also { flow ->
+            flow.value = flow.value.copy(capabilities = flow.value.capabilities!!.copy(
+                cwText = false, voicePtt = false, satelliteProfiles = false, nativeSettings = false))
+        }
+        val tx = FakeRadioController(remote = remote, pttReadbackSupported = true)
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_VERO_N76,
+            transport = RadioControlSettings.TRANSPORT_BLUETOOTH)
+        fixture.transponder = fixture.transponder.copy(uplinkMode = "FM", downlinkMode = "FM")
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        assertTrue(fixture.service.state.value.splitMode)
+        assertTrue(fixture.service.state.value.isActive)
+        assertTrue(tx.operations.any { it.startsWith("pair:") })
+        assertFalse(tx.operations.any { it.startsWith("frequency:") || it.startsWith("tx-frequency:") || it.startsWith("rx-frequency:") })
+        val current = fixture.service.state.value
+        assertEquals(fixture.position.getDownlinkFreq(current.nominalRxFrequencyHz!!), current.targetRxFrequencyHz)
+        assertEquals(fixture.position.getUplinkFreq(current.nominalTxFrequencyHz!!), current.targetTxFrequencyHz)
+        fixture.close()
+        assertTrue("split:false" in tx.operations)
+    }
+
+    @Test fun n76RejectsUnsupportedUsbBeforeConstructingAnyController() = runTest {
+        val tx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(), radioModel = RadioControlSettings.MODEL_VERO_N76)
+        fixture.service.connectRadios()
+        assertFalse(fixture.service.state.value.txConnected)
+        assertTrue(tx.operations.isEmpty())
+        assertEquals("N76 requires Bluetooth", fixture.service.state.value.errorMessage)
+        fixture.close()
+    }
+
     @Test fun ic705DopplerChangesBothFrequenciesWithoutSwitchingToTxVfo() = runTest {
         val tx = FakeRadioController()
         val fixture = Fixture(backgroundScope, tx, FakeRadioController(),

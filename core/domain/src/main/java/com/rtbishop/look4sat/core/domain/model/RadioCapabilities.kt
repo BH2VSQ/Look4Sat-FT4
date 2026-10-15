@@ -13,7 +13,8 @@ enum class RadioProtocolFamily {
     YAESU_CAT,
     YAESU_ASCII_CAT,
     ICOM_CIV,
-    L4S
+    L4S,
+    VERO_GAIA
 }
 
 enum class RadioBand {
@@ -192,20 +193,32 @@ object RadioModelCatalog {
             baudRates = listOf(38_400), serialStopBits = 1
         )
     }
-    private val byModel = descriptors.associateBy(RadioModelDescriptor::model)
+    private val n76 = RadioModelDescriptor(
+        model = RadioControlSettings.MODEL_VERO_N76,
+        protocolFamily = RadioProtocolFamily.VERO_GAIA,
+        capabilities = RadioCapabilities(
+            fullDuplex = false, receiveOnly = false, frequencyReadback = true,
+            singleRadioSplit = true, satelliteMode = false, dataMode = false,
+            ptt = true, narrowFm = false, canSetTxFrequencyWhileTransmitting = false,
+            bands = setOf(RadioBand.TWO_METERS, RadioBand.SEVENTY_CENTIMETERS)
+        ),
+        baudRates = listOf(9_600), serialStopBits = 1
+    )
+    private val byModel = (descriptors + n76).associateBy(RadioModelDescriptor::model)
 
-    val supportedModels: List<String> = descriptors.map(RadioModelDescriptor::model)
+    val supportedModels: List<String> = (descriptors + n76).map(RadioModelDescriptor::model)
 
     val bluetoothModels: List<String> = listOf(
         RadioControlSettings.MODEL_ICOM_IC705, RadioControlSettings.MODEL_QUANSHENG_UVK1,
-        RadioControlSettings.MODEL_QUANSHENG_UVK5V3, RadioControlSettings.MODEL_ICOM_IC9700
+        RadioControlSettings.MODEL_QUANSHENG_UVK5V3, RadioControlSettings.MODEL_ICOM_IC9700,
+        RadioControlSettings.MODEL_VERO_N76
     )
 
     fun modelsForTransport(transport: String): List<String> =
         when (transport) {
             RadioControlSettings.TRANSPORT_BLUETOOTH -> bluetoothModels
-            RadioControlSettings.TRANSPORT_USB -> supportedModels
-            else -> supportedModels.filterNot { it == RadioControlSettings.MODEL_YAESU_FTX1 }
+            RadioControlSettings.TRANSPORT_USB -> supportedModels.filterNot { it == n76.model }
+            else -> supportedModels.filterNot { it == RadioControlSettings.MODEL_YAESU_FTX1 || it == n76.model }
         }
 
     fun resolve(model: String): RadioModelDescriptor =

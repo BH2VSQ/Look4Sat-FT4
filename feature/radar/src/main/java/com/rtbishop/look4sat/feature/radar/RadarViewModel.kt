@@ -365,6 +365,8 @@ class RadarViewModel(
                 _uiState.update { it.copy(radioControl=it.radioControl.copy(cwPresets=settingsRepo.getRemoteCwPresets())) }
             }
             RadarAction.StopRemoteTx -> trackingService.cancelRemoteTransmit()
+            is RadarAction.RadioMonitor -> trackingService.setRadioMonitor(action.enabled)
+            is RadarAction.Recording -> trackingService.recordingAction(action.action)
 
             // SSTV actions
             is RadarAction.SstvPermissionResult -> {

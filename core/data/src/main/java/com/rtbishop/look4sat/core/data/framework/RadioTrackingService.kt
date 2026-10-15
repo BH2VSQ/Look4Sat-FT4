@@ -83,10 +83,26 @@ class RadioTrackingService(
     private val clock: IDisciplinedClock,
     private val controllerFactory: ((Boolean, String) -> IRadioController)? = null,
     private val transportFactory: ((String, String, Int, Int) -> RadioTransport)? = null,
-    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics
+    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
+    private val n76AudioFactory: ((String) -> N76Audio)? = null,
+    private val n76RecordingFactory: (() -> N76Recording)? = null
 ) : IRadioTrackingService, IFt4TransmitCoordinator {
 
     private val tag = "RadioTracking"
+    override suspend fun setAudioForeground(enabled: Boolean) {
+        txController?.setAudioForeground(enabled)
+    }
+    override fun setRadioMonitor(enabled: Boolean) = changeRadioSettings {
+        if (txController?.setRadioMonitor(enabled) != true) failTrackingCommand("Radio monitor was not acknowledged")
+    }
+    override fun recordingAction(action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) {
+        appScope.launch {
+            try {
+                if (txController?.recordingAction(action) != true) failTrackingCommand("Recording operation failed")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { failTrackingCommand(error.message ?: "Recording operation failed") }
+        }
+    }
     private val _state = MutableStateFlow(RadioTrackingState())
     override val state: StateFlow<RadioTrackingState> = _state
 
@@ -195,6 +211,10 @@ class RadioTrackingService(
         val txAddr     = rcSettings.txRadioAddress
         val rxAddr     = rcSettings.rxRadioAddress
         val profile    = radioProfile(rcSettings.radioModel, rcSettings.civAddress)
+        if (profile.isN76 && rcSettings.catTransport != RadioControlSettings.TRANSPORT_BLUETOOTH) {
+            _state.update { it.copy(errorMessage = "N76 requires Bluetooth") }
+            return
+        }
         if (profile.isFtx1 && rcSettings.catTransport != RadioControlSettings.TRANSPORT_USB) {
             _state.update { it.copy(errorMessage = "FTX-1 requires USB CAT") }
             return
@@ -208,13 +228,13 @@ class RadioTrackingService(
             _state.update { it.copy(errorMessage = "L4S radios require USB CDC/OTG") }
             return
         }
-        connectedCatPttSupported = profile.capabilities.ptt
+        connectedCatPttSupported = profile.capabilities.ptt || (profile.isN76 && rcSettings.n76BluetoothAudio)
         if (profile.icomVariant == IcomCivVariant.IC820 && txAddr.isNotBlank() && txAddr == rxAddr) {
             _state.update { it.copy(errorMessage = "IC-820 needs separate TX/RX radios; for receive-only tracking configure RX only") }
             return
         }
         val isIcom     = profile.isIcom
-        val isSplit    = profile.capabilities.singleRadioSplit && (rcSettings.splitMode || profile.isL4s)
+        val isSplit    = profile.capabilities.singleRadioSplit && (rcSettings.splitMode || profile.isL4s || profile.isN76)
         if (!isSplit && txAddr.isNotBlank() && txAddr == rxAddr) {
             _state.update { it.copy(txConnected=false, rxConnected=false, physicalConnectionCount=0,
                 errorMessage="Dual-radio operation requires separate TX/RX endpoints; select single-radio split when supported") }
@@ -337,7 +357,7 @@ class RadioTrackingService(
                         physicalConnectionCount = if (remote.connected) 1 else 0,
                         txFrequencyHz = remote.txFrequencyHz, rxFrequencyHz = remote.rxFrequencyHz,
                         txMode=remote.txMode,rxMode=remote.rxMode,
-                        ctcssTone=if(settingsChanged && pendingControls.get()==0 && current.trackingPhase!=TrackingPhase.INITIALIZING &&
+                        ctcssTone=if(remote.isN76 && current.isActive) remote.txCtcssHz else if(settingsChanged && pendingControls.get()==0 && current.trackingPhase!=TrackingPhase.INITIALIZING &&
                             (current.isActive || !ctcssExplicit || matchingProfile))
                             (if(!current.isActive && matchingProfile) remote.nativeSavedTxCtcssHz else remote.txCtcssHz) else current.ctcssTone,
                         pttState = if (remote.txSource != 0) PttState.ON else if (current.pttState == PttState.ERROR) PttState.ERROR else PttState.OFF,
@@ -412,7 +432,11 @@ class RadioTrackingService(
                 profile.serialStopBits
             )
         } else null
-        val controller = injected ?: if (profile.isL4s) {
+        val controller = injected ?: if (profile.isN76) {
+            N76Controller(transport ?: BluetoothSppRadioTransport(bluetoothManager, address, diagnostics), appScope, diagnostics,
+                audio = if (settings.n76BluetoothAudio) n76AudioFactory?.invoke(address) else null,
+                options = { settingsRepo.radioControlSettings.value.n76Options }, recorder = n76RecordingFactory?.invoke())
+        } else if (profile.isL4s) {
             L4sController(checkNotNull(transport) { "L4S USB transport is unavailable" }, appScope, diagnostics=diagnostics,
                 tuningStepHz={settingsRepo.radioControlSettings.value.l4sDopplerStepHz},
                 correctionStepHz={settingsRepo.radioControlSettings.value.l4sCorrectionEditStepHz})
@@ -1180,6 +1204,10 @@ class RadioTrackingService(
         val radio = txController
             ?: return failTrackingInitialization("TX radio is not connected")
         if (!radio.isConnected) return failTrackingInitialization("TX radio is not connected")
+        if (radioProfile(settingsRepo.radioControlSettings.value.radioModel).isN76) {
+            runN76Tracking(radio, transponder, initialTxBaseFreqHz)
+            return
+        }
 
         val isSatelliteMode = _state.value.satelliteMode
         val addressedVfos = settingsRepo.radioControlSettings.value.let {
@@ -1272,6 +1300,44 @@ class RadioTrackingService(
         runTrackingLoop(split = true)
     }
 
+    private suspend fun runN76Tracking(radio: IRadioController, transponder: SatRadio, initialTxBaseFreqHz: Long?) {
+        try {
+            transmitMutex.withLock {
+                if (!selectProfileContext(radio, transponder)) return failTrackingInitialization("N76 context was not acknowledged")
+                val txMode = controlUplinkMode(transponder)
+                val rxMode = controlDownlinkMode(transponder, txMode)
+                if (!radio.setSplitModes(rxMode, txMode)) return failTrackingInitialization("N76 satellite tracking requires FM")
+                val txBase = if (transponder.uplinkLow == null) null else
+                    nativeBaseOverride?.txHz ?: initialTxBaseFreqHz ?: transponder.uplinkCenterFrequency()
+                val rxBase = nativeBaseOverride?.rxHz ?: txBase?.let { TransponderMapper.mapUplinkToDownlink(it, transponder) }
+                    ?: transponder.downlinkLow ?: return failTrackingInitialization("No downlink frequency")
+                if (nativeBaseOverride == null) nativeBaseOverride =
+                    com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(rxBase, txBase)
+                if (!radio.configureTxCtcss(_state.value.ctcssTone.takeIf { txBase != null }))
+                    return failTrackingInitialization("N76 CTCSS was not accepted")
+                val pass = _state.value.currentPass ?: return failTrackingInitialization("No satellite selected")
+                val now = clock.nowMillis()
+                val position = satelliteRepo.getPosition(pass.orbitalObject, settingsRepo.stationPosition.value, now)
+                if (!radio.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay(
+                        pass.name, Math.toDegrees(position.azimuth), Math.toDegrees(position.elevation),
+                        distanceKm = position.distance, altitudeKm = position.altitude,
+                        secondsUntilAos = ((pass.aosTime - now) / 1000).coerceAtLeast(0))) ||
+                    radio.setTrackingFrequencies(position.getDownlinkFreq(rxBase), txBase?.let(position::getUplinkFreq)) != FrequencyPairResult.APPLIED)
+                    return failTrackingInitialization("N76 satellite frequency pair was not acknowledged")
+                _state.update { it.copy(isActive = true, trackingPhase = TrackingPhase.READY,
+                    txMode = txMode, rxMode = rxMode, txBaseFrequencyHz = txBase,
+                    ctcssTone = if (radio.remoteState?.value != null) radio.remoteState?.value?.txCtcssHz
+                        else _state.value.ctcssTone.takeUnless { txBase == null }) }
+                diagnose("tracking/ready", "mode=N76 native-satellite")
+            }
+            runTrackingLoop(split = true)
+        } finally {
+            withContext(NonCancellable) {
+                if (radio.isConnected) radio.setSplitMode(false)
+            }
+        }
+    }
+
     // A cycle and a settings change own the same lock as transmit preparation.
     // During PTT, hold both CAT legs and suppress dial-change detection.
     private suspend fun runTrackingLoop(split: Boolean) {
@@ -1291,7 +1357,8 @@ class RadioTrackingService(
                     val transponder = current.selectedTransponder ?: return@withLock
                     val now = clock.nowMillis()
                     if (now >= pass.losTime) {
-                        if (hasTransmitClaim || current.pttState!=PttState.OFF || txController?.remoteState?.value?.txSource?.let {it!=0}==true)
+                        if (hasTransmitClaim || (connectedCatPttSupported &&
+                            (current.pttState!=PttState.OFF || txController?.remoteState?.value?.txSource?.let {it!=0}==true)))
                             forcePttOffLocked(null)
                         _state.update { it.copy(isActive = false, trackingPhase = TrackingPhase.IDLE,
                             lastCommandError = "Satellite pass reached LOS") }
@@ -1325,7 +1392,9 @@ class RadioTrackingService(
                     if (tx?.remoteState?.value?.capabilities?.trackingDisplay==true) {
                         tx.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay(
                             pass.name,Math.toDegrees(position.azimuth),Math.toDegrees(position.elevation),
-                            tx.remoteState?.value?.let { profileKey(it,transponder) } ?: radioContextKey(transponder.uuid)))
+                            tx.remoteState?.value?.let { profileKey(it,transponder) } ?: radioContextKey(transponder.uuid),
+                            distanceKm = position.distance, altitudeKm = position.altitude,
+                            secondsUntilAos = ((pass.aosTime - now) / 1000).coerceAtLeast(0)))
                     }
                     // Keep BOTH RX and TX fixed during all transmission, including CW gaps.
                     val frozen = hasTransmitClaim || !current.catTransmitStateKnown || current.catTransmitting ||
@@ -1471,7 +1540,10 @@ class RadioTrackingService(
                 currentCoroutineContext().ensureActive()
                 tuningRevision.incrementAndGet()
             }
-            withTimeoutOrNull(1000L) { tuningWake.receive() }
+            val interval = settingsRepo.radioControlSettings.value.let {
+                if (it.radioModel == RadioControlSettings.MODEL_VERO_N76) it.n76Options.normalized().pollMillis else 1_000L
+            }
+            withTimeoutOrNull(interval) { tuningWake.receive() }
         }
     }
 
@@ -1687,7 +1759,9 @@ class RadioTrackingService(
             } else {
                 tx?.setCtcssMode(false) == true
             }
-            if (acknowledged) _state.update { it.copy(ctcssTone = toneHz,referenceDirty=true) }
+            if (acknowledged) _state.update { it.copy(ctcssTone =
+                if (tx?.remoteState?.value?.isN76 == true && it.isActive) tx.remoteState?.value?.txCtcssHz else toneHz,
+                referenceDirty=true) }
             else failTrackingCommand("CTCSS command was not acknowledged")
         }
     }
@@ -1780,6 +1854,7 @@ class RadioTrackingService(
     private fun trackingTarget(radio:IRadioController?,hz:Long?,rx:Boolean):Long? {
         if(hz==null) return null
         val remote=radio?.remoteState?.value ?: return hz
+        if (!radioProfile(settingsRepo.radioControlSettings.value.radioModel).isL4s) return hz
         if(remote.capabilities?.atomicPair!=true) return hz
         return com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(hz,
             if(rx) remote.nativeRxCorrectionHz else remote.nativeTxCorrectionHz,settingsRepo.radioControlSettings.value.l4sDopplerStepHz)
