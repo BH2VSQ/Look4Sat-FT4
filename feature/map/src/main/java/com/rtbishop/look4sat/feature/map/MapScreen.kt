@@ -48,6 +48,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -1168,9 +1169,17 @@ private fun TimeScrubBar(
                     modifier = Modifier.weight(1f)
                 )
                 // Always rendered: the button is part of the bar from the first frame, so the row
-                // never re-layouts when a scrub starts. At offset 0 it is already the live view,
-                // so tapping it is a no-op.
-                TextButton(onClick = onReset) {
+                // never re-layouts when a scrub starts. It greys out while the map is live (there
+                // is nothing to reset). The grey is stated explicitly: the theme's disabled colour
+                // comes from onSurface and would be dark-on-dark over this bar's translucent black.
+                TextButton(
+                    onClick = onReset,
+                    enabled = offsetMs > 0L,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        disabledContentColor = ComposeColor.White.copy(alpha = 0.45f)
+                    )
+                ) {
                     Text(text = stringResource(R.string.map_time_reset), fontSize = 12.sp)
                 }
             }
