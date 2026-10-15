@@ -55,8 +55,10 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -74,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -1121,11 +1124,10 @@ private fun TimeScrubBar(
     LaunchedEffect(offsetMs, spanMs) {
         if (!dragging) fraction = (offsetMs.toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
     }
-    Surface(
-        color = ComposeColor.Black.copy(alpha = 0.45f),
-        shape = RoundedCornerShape(12.dp),
-        modifier = modifier
-    ) {
+    // The bar has no backing panel: it sits straight on the map. Contrast for its labels comes
+    // from a soft halo (plus the clock's own capsule) instead of a black box behind them.
+    val labelShadow = Shadow(color = ComposeColor.Black.copy(alpha = 0.85f), blurRadius = 4f)
+    Box(modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1177,6 +1179,13 @@ private fun TimeScrubBar(
                         onScrubEnd()
                     },
                     valueRange = 0f..1f,
+                    // Stated explicitly: with no panel behind it, the theme's inactive track (a
+                    // surface tint) can vanish against the map tiles.
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = ComposeColor.Black.copy(alpha = 0.35f)
+                    ),
                     modifier = Modifier.weight(1f)
                 )
                 // Always rendered: the button is part of the bar from the first frame, so the row
@@ -1191,13 +1200,18 @@ private fun TimeScrubBar(
                         disabledContentColor = ComposeColor.White.copy(alpha = 0.45f)
                     )
                 ) {
-                    Text(text = stringResource(R.string.map_time_reset), fontSize = 12.sp)
+                    Text(
+                        text = stringResource(R.string.map_time_reset),
+                        fontSize = 12.sp,
+                        style = LocalTextStyle.current.copy(shadow = labelShadow)
+                    )
                 }
             }
             Text(
                 text = stringResource(copyrightResId),
-                color = ComposeColor.White.copy(alpha = 0.7f),
-                fontSize = 9.sp
+                color = ComposeColor.White.copy(alpha = 0.9f),
+                fontSize = 9.sp,
+                style = LocalTextStyle.current.copy(shadow = labelShadow)
             )
         }
     }
