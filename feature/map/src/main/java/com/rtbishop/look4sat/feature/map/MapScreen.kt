@@ -1130,7 +1130,7 @@ private fun TimeScrubBar(
                             if (dragging) anchorMs + (fraction * spanMs).toLong() else mapTimeMs,
                             isUtc
                         ),
-                        color = ComposeColor.White,
+                        color = MaterialTheme.colorScheme.primary,
                         fontSize = 12.sp,
                         maxLines = 1,
                         modifier = Modifier
@@ -1167,10 +1167,11 @@ private fun TimeScrubBar(
                     valueRange = 0f..1f,
                     modifier = Modifier.weight(1f)
                 )
-                if (offsetMs > 0L) {
-                    TextButton(onClick = onReset) {
-                        Text(text = stringResource(R.string.map_time_reset), fontSize = 12.sp)
-                    }
+                // Always rendered: the button is part of the bar from the first frame, so the row
+                // never re-layouts when a scrub starts. At offset 0 it is already the live view,
+                // so tapping it is a no-op.
+                TextButton(onClick = onReset) {
+                    Text(text = stringResource(R.string.map_time_reset), fontSize = 12.sp)
                 }
             }
             Text(
