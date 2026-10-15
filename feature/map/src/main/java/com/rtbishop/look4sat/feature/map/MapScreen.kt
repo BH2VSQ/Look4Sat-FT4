@@ -551,6 +551,7 @@ private fun MapScreen(
                     TimeScrubBar(
                         offsetMs = uiState.timeOffsetMs,
                         spanMs = scrubSpanMs,
+                        mapTimeMs = uiState.mapTimeMs,
                         isUtc = uiState.isUtc,
                         copyrightResId = copyrightResId,
                         onScrub = { onAction(MapAction.SetTimeOffset(it)) },
@@ -1088,6 +1089,7 @@ private val scrubBubbleWidth = 64.dp
 private fun TimeScrubBar(
     offsetMs: Long,
     spanMs: Long,
+    mapTimeMs: Long,
     isUtc: Boolean,
     copyrightResId: Int,
     onScrub: (Long) -> Unit,
@@ -1118,21 +1120,24 @@ private fun TimeScrubBar(
                 .padding(horizontal = 10.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Fixed-height slot so showing the bubble never moves the slider under the finger.
+            // Fixed-height slot so the readout never moves the slider under the finger. The clock
+            // stays visible: while the finger is down it tracks the thumb (the state only follows
+            // the throttled steps), otherwise it shows the instant the map is rendering.
             Box(modifier = Modifier.fillMaxWidth().height(22.dp)) {
-                if (dragging) {
-                    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = formatTime(anchorMs + (fraction * spanMs).toLong(), isUtc),
-                            color = ComposeColor.White,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .offset(x = ((maxWidth - scrubBubbleWidth) * fraction).coerceAtLeast(0.dp))
-                                .background(ComposeColor.Black.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = formatTime(
+                            if (dragging) anchorMs + (fraction * spanMs).toLong() else mapTimeMs,
+                            isUtc
+                        ),
+                        color = ComposeColor.White,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .offset(x = ((maxWidth - scrubBubbleWidth) * fraction).coerceAtLeast(0.dp))
+                            .background(ComposeColor.Black.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
                 }
             }
             Row(
@@ -1164,7 +1169,7 @@ private fun TimeScrubBar(
                 )
                 if (offsetMs > 0L) {
                     TextButton(onClick = onReset) {
-                        Text(text = stringResource(R.string.map_time_now), fontSize = 12.sp)
+                        Text(text = stringResource(R.string.map_time_reset), fontSize = 12.sp)
                     }
                 }
             }

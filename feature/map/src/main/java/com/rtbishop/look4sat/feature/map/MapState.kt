@@ -51,6 +51,9 @@ data class MapState(
     val moonLonDeg: Double = 0.0,
     /** Satellite-mode time scrub: milliseconds ahead of "now" (0 = live tracking). */
     val timeOffsetMs: Long = 0L,
+    /** The instant the map is currently rendering (now + [timeOffsetMs]); the time readout
+     *  above the slider shows this, so it stays in step with the markers. */
+    val mapTimeMs: Long = 0L,
     /** True while the time slider is under the finger; the prediction loop stands down then. */
     val isScrubbing: Boolean = false
 )

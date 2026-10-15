@@ -65,7 +65,8 @@ class MapViewModel(
             isUtc = settingsRepo.otherSettings.value.stateOfUtc,
             mapSource = settingsRepo.otherSettings.value.mapSource,
             tiandituKey = settingsRepo.otherSettings.value.tiandituKey,
-            orbitalPass = defaultPass
+            orbitalPass = defaultPass,
+            mapTimeMs = System.currentTimeMillis()
         )
     )
     private var allPasses = satelliteRepo.passes.value
@@ -323,7 +324,8 @@ class MapViewModel(
                 sunLatDeg = sunPos.latitude,
                 sunLonDeg = sunPos.longitude,
                 moonLatDeg = moonPos.declination, // sub-lunar latitude = declination
-                moonLonDeg = if (moonPos.gha <= 180.0) -moonPos.gha else 360.0 - moonPos.gha
+                moonLonDeg = if (moonPos.gha <= 180.0) -moonPos.gha else 360.0 - moonPos.gha,
+                mapTimeMs = date.time
             )
         }
     }
@@ -355,7 +357,8 @@ class MapViewModel(
                 sunLatDeg = sunPos.latitude,
                 sunLonDeg = sunPos.longitude,
                 moonLatDeg = moonPos.declination, // sub-lunar latitude = declination
-                moonLonDeg = if (moonPos.gha <= 180.0) -moonPos.gha else 360.0 - moonPos.gha
+                moonLonDeg = if (moonPos.gha <= 180.0) -moonPos.gha else 360.0 - moonPos.gha,
+                mapTimeMs = date.time
             )
         }
     }
