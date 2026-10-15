@@ -77,6 +77,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -385,6 +386,10 @@ fun SharedDialog(
     content: @Composable (padding: Dp) -> Unit
 ) {
     DialogShell(onDismissRequest = onDismissRequest) { padding ->
+        // Measured width of the optional second leading button. A spacer of the same width goes
+        // after the title so the two sides of the header stay balanced: without it the title
+        // would be centred in the room the extra button leaves over, i.e. off to the right.
+        var extraLeadingWidth by remember { mutableStateOf(0) }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -396,7 +401,11 @@ fun SharedDialog(
             }
             if (onExtra != null) {
                 Spacer(modifier = Modifier.width(4.dp))
-                CardButton(onClick = onExtra, text = extraText.orEmpty())
+                CardButton(
+                    onClick = onExtra,
+                    text = extraText.orEmpty(),
+                    modifier = Modifier.onSizeChanged { extraLeadingWidth = it.width }
+                )
             }
             Text(
                 text = title,
@@ -413,6 +422,11 @@ fun SharedDialog(
                         end = if (onAccept != null) padding else 0.dp
                     )
             )
+            // Balances the extra leading button (and its 4 dp gap) on the trailing side.
+            if (onExtra != null && extraLeadingWidth > 0) {
+                val extraWidth = with(LocalDensity.current) { extraLeadingWidth.toDp() } + 4.dp
+                Spacer(modifier = Modifier.width(extraWidth))
+            }
             if (onAccept != null) {
                 CardButton(
                     onClick = onAccept,
