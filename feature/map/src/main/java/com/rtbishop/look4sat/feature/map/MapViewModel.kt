@@ -194,8 +194,10 @@ class MapViewModel(
                     val glided = glidePositions(state.positions, selected, null, state.mapTimeMs)
                     if (glided == null) state else state.copy(positions = glided)
                 }
-                // The constellation is on the new instant now, and the track describes an instant.
-                maybeRefreshTrack(selected, stationPos, timeMs)
+                // The track is deliberately NOT touched here. It describes the live pass, not the
+                // instant the slider is parked on (user decision 2026-10-16): dragging the time bar
+                // moves the satellite, its footprint and the clock, and leaves the line as it was.
+                // Re-deriving it per refresh only bought a redraw that disagreed with the marker.
             }
         }
         val (selectedCatNum, _) = satelliteRepo.selectedPass.value
@@ -322,9 +324,9 @@ class MapViewModel(
             // dispatcher. On Main that posts one continuation per satellite per tick, which
             // floods the looper and ANRs for users tracking thousands of objects.
             dataUpdateJob = launch(Dispatchers.Default) {
-                // The track belongs to the instant the map is showing, not to wall clock: with an
-                // active scrub offset the line has to start where the markers are.
-                val dateNow = Date(System.currentTimeMillis() + timeOffsetMs)
+                // Live wall-clock now: the track describes the pass the map is tracking live, and a
+                // scrub offset must not move it (see syncTrack and the refresh worker).
+                val dateNow = Date()
                 getStationPosition()
                 getSatTrack(orbitalObject, stationPos, dateNow)
                 // Scale update interval based on satellite count to avoid excessive CPU usage
@@ -389,8 +391,9 @@ class MapViewModel(
                 mapTimeMs = date.time
             )
         }
-        // The ground track describes one instant: keep it on the instant the map is showing.
-        maybeRefreshTrack(selected, pos, date.time)
+        // The track belongs to live tracking: keep it on wall-clock now, never on the scrubbed
+        // instant (see the refresh worker), so a scrub leaves the line untouched.
+        syncTrack(selected, pos, System.currentTimeMillis())
     }
 
     /**
@@ -610,9 +613,12 @@ class MapViewModel(
     /**
      * Puts the ground track on [timeMs] the cheap way: the head is re-anchored on the satellite
      * itself (one prediction) and, every 15 s of map time, one more sample is appended at the
-     * tail — instead of re-deriving the whole 2.4-lap curve. The track is a curve for an instant,
-     * so leaving [timeMs] out of it is what made the line walk away from the satellite while the
-     * map was live (the scrub path hid it, because a scrub rebuilt the track).
+     * tail — instead of re-deriving the whole 2.4-lap curve.
+     *
+     * [timeMs] is always the live wall clock: the line describes the pass being tracked live, so a
+     * scrub offset never moves it (user decision 2026-10-16). While the map is live this is what
+     * keeps the head of the line on the satellite instead of letting the selection instant drift
+     * away from it.
      */
     private suspend fun syncTrack(orbitalObject: OrbitalObject, pos: GeoPos, timeMs: Long) {
         val samples = trackSamples
@@ -664,13 +670,6 @@ class MapViewModel(
         satTracks.add(currentTrack)
         trackTimeMs = anchorMs
         _uiState.update { it.copy(track = satTracks) }
-    }
-
-    /**
-     * Keeps the drawn track on [timeMs] while the selection is unchanged.
-     */
-    private suspend fun maybeRefreshTrack(selected: OrbitalObject, pos: GeoPos, timeMs: Long) {
-        syncTrack(selected, pos, timeMs)
     }
 
     companion object {
