@@ -1084,9 +1084,13 @@ private fun formatTime(epochMs: Long, isUtc: Boolean): String {
 
 // region Time scrub bar
 
-/** Throttle for slider steps: ~12 map updates per second looks continuous and keeps the
- *  per-pixel callbacks off the satellite prediction path. */
-private const val SCRUB_THROTTLE_MS = 80L
+/**
+ * Slider-to-map update interval while dragging, in milliseconds. Throttling keeps the per-pixel
+ * callbacks off the satellite prediction path; 80 ms (12.5 fps) read as visible stepping, and
+ * with the per-step work cut down (marker/track/footprint are no longer rebuilt) 40 ms (25 fps)
+ * is affordable and reads as continuous.
+ */
+private const val SCRUB_THROTTLE_MS = 40L
 
 /** Width reserved for the drag bubble, used to keep it inside the slider's track. */
 private val scrubBubbleWidth = 64.dp
@@ -1705,8 +1709,8 @@ private const val VIEWPORT_MARGIN = 8.0
 /** Debounce for viewport-driven marker refreshes, in milliseconds */
 private const val MAP_LISTENER_DELAY = 128L
 
-/** Camera interpolation window while the time slider is under the finger (about one step). */
-private const val SCRUB_FOLLOW_MS = 120L
+/** Camera interpolation window while dragging: two slider steps, so it tracks without lag. */
+private const val SCRUB_FOLLOW_MS = 80L
 
 /** Shared dot icon used when too many satellites are visible to label them */
 private var dotIcon: Drawable? = null
@@ -1737,6 +1741,31 @@ private fun setPositions(
     action: (OrbitalObject) -> Unit
 ) {
     try {
+        // While the slider is under the finger only the scrubbed satellite moves and the tick
+        // loop is paused, so the rest of the layer is already correct: patch the markers that
+        // actually changed instead of clearing and re-adding the whole folder. `items` is a
+        // CopyOnWriteArrayList, so every re-add copies the backing array — that per-step churn
+        // (thousands of element copies at 25 steps a second) was the stutter.
+        if (scrubInProgress) {
+            val previous = lastPositions
+            val moved = posMap.filter { (item, pos) -> previous?.get(item) != pos }
+            // Only safe while every moved satellite already has a live marker; otherwise fall
+            // through and let the full path build the layer.
+            if (moved.keys.all { markerPool[it.data.name] != null }) {
+                moved.forEach { (item, pos) ->
+                    val current = markerPool.getValue(item.data.name).position
+                    if (current != null) {
+                        current.latitude = pos.latitude
+                        current.longitude = pos.longitude
+                    } else {
+                        markerPool.getValue(item.data.name).position = GeoPoint(pos.latitude, pos.longitude)
+                    }
+                }
+                lastPositions = posMap
+                lastAction = action
+                return
+            }
+        }
         lastPositions = posMap
         lastAction = action
         // Clear caches when the MapView instance changes (e.g. config change)
@@ -1857,7 +1886,17 @@ private fun getCachedTextIcon(name: String, mapView: MapView): Drawable {
     return drawable
 }
 
+private var lastTrack: List<List<GeoPos>>? = null
+private var lastTrackView: MapView? = null
+
 private fun setSatelliteTrack(satTrack: List<List<GeoPos>>, mapView: MapView) {
+    // The track only changes when the selection changes, but this call sits in the map update
+    // pass, so it runs on every state update — during a drag, on every slider step. Rebuilding
+    // it meant a fresh FolderOverlay, one Polyline per lap and ~1000 new GeoPoints per step,
+    // which is pure churn: nothing about the geometry changed. The identity check skips it.
+    if (satTrack === lastTrack && lastTrackView === mapView) return
+    lastTrack = satTrack
+    lastTrackView = mapView
     val trackOverlay = FolderOverlay()
     try {
         satTrack.forEach { track ->
@@ -1896,7 +1935,11 @@ private fun setFootprint(orbitalPos: OrbitalPos, mapView: MapView) {
             footprintPolyline = this
         }
         polyline.setPoints(pts)
-        mapView.overlays[OVERLAY_FOOTPRINT] = polyline
+        // Only touch the overlay list when this is not already the installed instance: the
+        // assignment goes through osmdroid's observable list and is wasted work every step.
+        if (mapView.overlays.getOrNull(OVERLAY_FOOTPRINT) !== polyline) {
+            mapView.overlays[OVERLAY_FOOTPRINT] = polyline
+        }
     } catch (e: Exception) {
         println(e)
     }
