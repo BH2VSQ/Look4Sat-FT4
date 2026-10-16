@@ -1128,25 +1128,33 @@ private fun TimeScrubBar(
     // as teleporting. Easing turns those steps into continuous motion and settles exactly.
     var shownFraction by remember { mutableStateOf(0f) }
     var dragging by remember { mutableStateOf(false) }
+    // True from the first touch until the eased clock has caught up with the finger's last value,
+    // i.e. it outlives the release by a few frames. That tail is what keeps the satellite centred
+    // after a fast flick: reporting the finger's raw value the moment it is lifted would jump the
+    // clock by the whole easing lag (minutes of orbit on a quick swipe) while the camera had
+    // already stopped following, so the marker would land far off-screen.
+    var easing by remember { mutableStateOf(false) }
     // "Now" captured when the gesture starts: the readout must not jitter with the wall clock
     // while the finger is already deciding the instant.
     var anchorMs by remember { mutableStateOf(0L) }
     // Re-sync when the offset changes from outside (the reset button).
     LaunchedEffect(offsetMs, spanMs) {
-        if (!dragging) {
+        if (!easing) {
             fingerFraction = (offsetMs.toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
             shownFraction = fingerFraction
         }
     }
-    // Easing loop: while the finger is down, chase it frame by frame and report the eased instant.
-    // Frame-rate independent exponential approach; the map only ever moves by small increments, so
-    // even a flick glides — and the loop stops reporting once it has caught up.
-    LaunchedEffect(dragging, spanMs) {
-        if (!dragging) return@LaunchedEffect
+    // Easing loop: chase the finger frame by frame and report the eased instant. Frame-rate
+    // independent exponential approach; the map only ever moves by small increments, so even a
+    // flick glides. It keeps running for a moment after the finger is lifted (see `easing`) and
+    // stops reporting once it has caught up.
+    LaunchedEffect(easing, spanMs) {
+        if (!easing) return@LaunchedEffect
         var lastFrameMs = 0.0
         var lastReportedMs = Long.MIN_VALUE
         while (true) {
             var reported = Long.MIN_VALUE
+            var settled = false
             withFrameNanos { frameNs ->
                 val frameMs = frameNs / 1_000_000.0
                 val deltaMs = if (lastFrameMs == 0.0) 16.0 else (frameMs - lastFrameMs)
@@ -1155,6 +1163,7 @@ private fun TimeScrubBar(
                 shownFraction += ((fingerFraction - shownFraction) * factor).toFloat()
                 if (abs(fingerFraction - shownFraction) < SCRUB_EASE_EPSILON) {
                     shownFraction = fingerFraction
+                    settled = true
                 }
                 val timeMs = (shownFraction * spanMs).toLong()
                 if (timeMs != lastReportedMs) {
@@ -1163,6 +1172,14 @@ private fun TimeScrubBar(
                 }
             }
             if (reported != Long.MIN_VALUE) onScrub(reported)
+            // Finger up and clock caught up: settle on the exact value, then hand the map back to
+            // the tick loop (which is what makes the camera stop following).
+            if (settled && !dragging) {
+                onScrub((shownFraction * spanMs).toLong())
+                onScrubEnd()
+                easing = false
+                break
+            }
         }
     }
     // The bar has no backing panel: it sits straight on the map. Contrast for its labels comes
@@ -1204,6 +1221,7 @@ private fun TimeScrubBar(
                     onValueChange = { value ->
                         if (!dragging) {
                             dragging = true
+                            easing = true
                             anchorMs = System.currentTimeMillis()
                             // Start the eased clock where the finger grabbed the track, so the
                             // readout does not glide in from wherever it was before.
@@ -1213,10 +1231,9 @@ private fun TimeScrubBar(
                         fingerFraction = value
                     },
                     onValueChangeFinished = {
-                        // Settle exactly on the finger's last value and hand back to the tick loop.
+                        // The clock keeps easing (and the camera keeps following) until it has
+                        // caught up with fingerFraction; the loop ends the gesture itself.
                         dragging = false
-                        onScrub((fingerFraction * spanMs).toLong())
-                        onScrubEnd()
                     },
                     valueRange = 0f..1f,
                     // Stated explicitly: with no panel behind it, the theme's inactive track (a
