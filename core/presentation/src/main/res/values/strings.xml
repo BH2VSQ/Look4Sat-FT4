@@ -913,5 +913,9 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="rc_n76_record">Record</string>
     <string name="rc_n76_stop_recording">Stop recording</string>
     <string name="rc_n76_play_last">Play last recording</string>
+    <string name="rc_n76_save">Save recording</string>
+    <string name="rc_n76_saving">Saving…</string>
+    <string name="rc_n76_saved">Recording saved</string>
+    <string name="rc_n76_export_retry">Recording kept locally. Tap Save recording to choose another location.</string>
     <string name="rc_n76_stop_playback">Stop playback</string>
 </resources>

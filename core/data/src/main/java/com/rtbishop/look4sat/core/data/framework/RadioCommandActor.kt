@@ -218,6 +218,7 @@ class SerialRadioController(
     override suspend fun setAudioForeground(enabled: Boolean) = execute { delegate.setAudioForeground(enabled) }
     override suspend fun setRadioMonitor(enabled: Boolean) = execute { delegate.setRadioMonitor(enabled) }
     override suspend fun recordingAction(action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) = execute { delegate.recordingAction(action) }
+    override suspend fun saveRecording(destinationUri: String) = execute { delegate.saveRecording(destinationUri) }
     override suspend fun setFrequency(frequencyHz: Long) = execute { delegate.setFrequency(frequencyHz) }
     override suspend fun setMode(mode: String) = execute { delegate.setMode(mode) }
     override suspend fun setDataMode(enabled: Boolean, baseMode: String) =

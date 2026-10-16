@@ -114,6 +114,7 @@ interface IRadioTrackingService {
     suspend fun setAudioForeground(enabled: Boolean) = Unit
     fun setRadioMonitor(enabled: Boolean) = Unit
     fun recordingAction(action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) = Unit
+    fun saveRecording(destinationUri: String) = Unit
 }
 
 private val EmptyRadioProfileManagerState:StateFlow<RadioProfileManagerState> = kotlinx.coroutines.flow.MutableStateFlow(RadioProfileManagerState())

@@ -89,6 +89,97 @@ class RadioTrackingServiceTest {
         assertTrue("split:false" in tx.operations)
     }
 
+    @Test fun n76KeepsFmForTelemetrySelectionAndExplicitModeRequests() = runTest {
+        val remote = remoteFixtureState().also { flow ->
+            flow.value = flow.value.copy(capabilities = flow.value.capabilities!!.copy(
+                satelliteProfiles = false, nativeSettings = false))
+        }
+        val tx = FakeRadioController(remote = remote, pttReadbackSupported = true)
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_VERO_N76,
+            transport = RadioControlSettings.TRANSPORT_BLUETOOTH)
+        fixture.service.connectRadios()
+        fixture.transponder = fixture.transponder.copy(uplinkLow = null, uplinkHigh = null,
+            uplinkMode = null, downlinkMode = "BPSK")
+        fixture.service.setTransponder(fixture.transponder)
+        runCurrent()
+        fixture.startTracking(null)
+        runCurrent()
+        assertTrue(fixture.service.state.value.isActive)
+        fixture.service.setMode("CW", "USB")
+        runCurrent()
+        assertEquals("FM", fixture.service.state.value.txMode)
+        assertEquals("FM", fixture.service.state.value.rxMode)
+        assertTrue(tx.operations.filter { it.startsWith("split-modes:") }.all { it == "split-modes:FM:FM" })
+        assertNull(fixture.service.state.value.errorMessage)
+        fixture.close()
+    }
+
+    @Test fun recoveredRemoteErrorClearsThePanelWithoutErasingALaterCommandFailure() = runTest {
+        val remote = remoteFixtureState()
+        val tx = FakeRadioController(remote = remote, setModeSucceeds = false)
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_ICOM_IC705,
+            transport = RadioControlSettings.TRANSPORT_BLUETOOTH)
+        fixture.service.connectRadios()
+        runCurrent()
+        remote.value = remote.value.copy(error = "Recording source unavailable")
+        runCurrent()
+        assertEquals(remote.value.error, fixture.service.state.value.errorMessage)
+        remote.value = remote.value.copy(error = null, recording = true)
+        runCurrent()
+        assertNull(fixture.service.state.value.errorMessage)
+        assertNull(fixture.service.state.value.lastCommandError)
+        remote.value = remote.value.copy(error = "Old recording error")
+        runCurrent()
+        fixture.service.setMode("FM", "FM")
+        runCurrent()
+        assertEquals("Radio mode command was not acknowledged", fixture.service.state.value.errorMessage)
+        remote.value = remote.value.copy(error = null)
+        runCurrent()
+        assertEquals("Radio mode command was not acknowledged", fixture.service.state.value.errorMessage)
+        fixture.close()
+    }
+
+    @Test fun recordingAndExportErrorsDoNotBecomeCatErrorsOrStopTracking() = runTest {
+        val remote = remoteFixtureState().also { flow ->
+            flow.value = flow.value.copy(isN76 = true, capabilities = flow.value.capabilities!!.copy(
+                satelliteProfiles = false, nativeSettings = false))
+        }
+        val tx = FakeRadioController(remote = remote, pttReadbackSupported = true)
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_VERO_N76, transport = RadioControlSettings.TRANSPORT_BLUETOOTH)
+        fixture.transponder = fixture.transponder.copy(uplinkMode = "FM", downlinkMode = "FM")
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        remote.value = remote.value.copy(recordingError = "Microphone permission required", recordingExportError = "Folder access expired")
+        fixture.service.recordingAction(com.rtbishop.look4sat.core.domain.model.RadioRecordingAction.START)
+        fixture.service.saveRecording("content://new-provider/recording.wav")
+        runCurrent()
+        assertTrue(fixture.service.state.value.isActive)
+        assertNull(fixture.service.state.value.errorMessage)
+        assertEquals("Folder access expired", fixture.service.state.value.remoteRadio?.recordingExportError)
+        remote.value = remote.value.copy(recordingError = null, recordingExportError = null)
+        runCurrent()
+        assertNull(fixture.service.state.value.errorMessage)
+        fixture.close()
+    }
+
+    @Test fun enablingN76AudioRecreatesTheConnectionOnNextConnect() = runTest {
+        val tx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_VERO_N76,
+            transport = RadioControlSettings.TRANSPORT_BLUETOOTH)
+        fixture.service.connectRadios()
+        assertTrue(fixture.service.applyRadioControlSettings(fixture.settings.radioControlSettings.value.copy(n76BluetoothAudio = true)))
+        assertFalse(fixture.service.state.value.txConnected)
+        assertTrue("disconnect" in tx.operations)
+        fixture.service.connectRadios()
+        assertTrue(fixture.service.state.value.txConnected)
+        fixture.close()
+    }
+
     @Test fun n76RejectsUnsupportedUsbBeforeConstructingAnyController() = runTest {
         val tx = FakeRadioController()
         val fixture = Fixture(backgroundScope, tx, FakeRadioController(), radioModel = RadioControlSettings.MODEL_VERO_N76)
@@ -300,11 +391,43 @@ class RadioTrackingServiceTest {
         remote.value=remote.value.copy(transmitStateKnown=false)
         fixture.service.adjustTxBaseFrequency(1000);runCurrent()
         assertEquals(base,fixture.service.state.value.txBaseFrequencyHz)
+        assertEquals("Radio transmit state is unknown", fixture.service.state.value.lastCommandError)
         remote.value=remote.value.copy(transmitStateKnown=true);runCurrent()
         fixture.service.adjustTxBaseFrequency(1000);fixture.service.setVoicePtt(true);runCurrent()
         assertEquals(base,fixture.service.state.value.txBaseFrequencyHz)
         assertEquals(RadioTransmitOwner.VOICE,fixture.service.state.value.transmitOwner)
         fixture.service.cancelRemoteTransmit();runCurrent();fixture.close()
+    }
+    @Test fun repeatedConnectDuringHandshakeDoesNotQueueAnotherDisconnect() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val proceed = CompletableDeferred<Unit>()
+        val tx = FakeRadioController().apply { beforeConnect = { started.complete(Unit); proceed.await() } }
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController())
+        val first = async { fixture.service.connectRadios() }
+        runCurrent()
+        assertTrue(started.isCompleted)
+        val duplicate = async { fixture.service.connectRadios() }
+        runCurrent()
+        assertTrue(duplicate.isCompleted)
+        proceed.complete(Unit)
+        first.await()
+        duplicate.await()
+        assertEquals(1, tx.operations.count { it == "connect" })
+        assertTrue(fixture.service.state.value.txConnected)
+        fixture.close()
+    }
+
+    @Test fun disconnectedRemoteDoesNotReportAnActiveTransmission() = runTest {
+        val remote = remoteFixtureState()
+        val fixture = Fixture(backgroundScope, FakeRadioController(remote = remote), FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_QUANSHENG_UVK1, splitMode = true)
+        fixture.service.connectRadios()
+        remote.value = remote.value.copy(connected = false, transmitStateKnown = false)
+        runCurrent()
+        fixture.service.setMode("FM", "FM")
+        runCurrent()
+        assertEquals("Radio is not connected", fixture.service.state.value.lastCommandError)
+        fixture.close()
     }
     @Test fun independentlyEditingEitherBaseKeepsTheOtherAndReceiveOnlyProfileNeverAddsTx()=runTest {
         val remote=remoteFixtureState();val tx=FakeRadioController(remote=remote)
@@ -1432,9 +1555,11 @@ private class FakeRadioController(
     var beforeReadTx: (suspend () -> Unit)? = null
     var beforeSetFrequency: (suspend () -> Unit)? = null
     override var isConnected: Boolean = false
+    var beforeConnect: (suspend () -> Unit)? = null
 
     override suspend fun connect(): Boolean {
         operations += "connect"
+        beforeConnect?.invoke()
         isConnected = true
         return true
     }

@@ -46,6 +46,7 @@ interface IRadioController {
     suspend fun setAudioForeground(enabled: Boolean) = Unit
     suspend fun setRadioMonitor(enabled: Boolean): Boolean = false
     suspend fun recordingAction(action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction): Boolean = false
+    suspend fun saveRecording(destinationUri: String): Boolean = false
 
     suspend fun setFrequency(frequencyHz: Long): Boolean
 

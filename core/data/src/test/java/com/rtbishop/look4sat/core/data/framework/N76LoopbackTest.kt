@@ -22,6 +22,7 @@ import org.junit.Test
 /** Real loopback socket; the peer parses and frames bytes independently of N76Protocol. */
 class N76LoopbackTest {
     @Test fun realSocketTracksAndKeysWithAudioOffThenResumesFreshFrequencies() = exercise { radio, peer, _ ->
+        assertEquals(listOf(4, 36, 20, 6), peer.packets.take(4).map { it.command })
         assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_000_010, 145_950_020))
         assertEquals(435_000_010L, peer.rxHz)
         assertEquals(145_950_020L, peer.txHz)
@@ -67,6 +68,20 @@ class N76LoopbackTest {
         assertEquals(1, peer.packets.count { it.command == 66 && it.payload.contentEquals(byteArrayOf(0, 13)) })
     }
 
+    @Test fun idleStatusTimeoutRecoversOnTheSameSocket() = exercise { radio, peer, diagnostics ->
+        radio.setTrackingFrequencies(435_000_000, 145_950_000)
+        peer.suppressStatus = true
+        assertNull(radio.readPttState())
+        assertTrue(radio.isConnected)
+        assertFalse(radio.remoteState.value.transmitStateKnown)
+        peer.suppressStatus = false
+        assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_003_000, 145_953_000))
+        assertTrue(radio.isConnected)
+        assertNull(radio.remoteState.value.error)
+        assertEquals(435_003_000L, peer.rxHz)
+        assertTrue(diagnostics.events.value.any { it.stage == "n76/status/recovered" })
+    }
+
     private fun exercise(block: suspend (N76Controller, Peer, ControlDiagnosticsBuffer) -> Unit) = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val diagnostics = ControlDiagnosticsBuffer()
@@ -107,7 +122,8 @@ class N76LoopbackTest {
                     if (command == 6 || command == 20 && suppressStatus) continue
                     var status = 0
                     val response = when (command) {
-                        4 -> byteArrayOf(0, 0, 2, 1, 0, 137.toByte(), 0, 2, 32, 0)
+                        4 -> byteArrayOf(0, 1, 3, 1, 0, 137.toByte(), 0, 0, 32, 0)
+                        36 -> byteArrayOf(0, 0, 0, 0)
                         20 -> byteArrayOf(if (transmitting) 0xc0.toByte() else 0x80.toByte(), 0, 0, 0)
                         35 -> {
                             if (payload.size >= 8 && payload.any { it != 0.toByte() }) {

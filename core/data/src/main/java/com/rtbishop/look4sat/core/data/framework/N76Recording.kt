@@ -6,6 +6,11 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSeverity
+import com.rtbishop.look4sat.core.domain.control.ControlDiagnosticSource
+import com.rtbishop.look4sat.core.domain.control.IControlDiagnostics
+import com.rtbishop.look4sat.core.domain.control.NoOpControlDiagnostics
 import com.rtbishop.look4sat.core.domain.model.N76ControlOptions
 import java.io.File
 import java.io.RandomAccessFile
@@ -33,7 +38,8 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 data class N76RecordingState(val recording: Boolean = false, val playing: Boolean = false,
-    val lastFile: String? = null, val error: String? = null)
+    val lastFile: String? = null, val error: String? = null, val exportError: String? = null,
+    val exporting: Boolean = false, val exportedFile: String? = null)
 
 interface N76Recording {
     val state: StateFlow<N76RecordingState>
@@ -42,6 +48,7 @@ interface N76Recording {
     suspend fun playLast(): Boolean
     suspend fun stopPlayback(): Boolean
     fun feedRadio(pcm: ShortArray)
+    suspend fun save(destinationUri: String): Boolean = false
 }
 
 internal class N76PcmRing(private val capacity: Int = 32_000) {
@@ -110,12 +117,15 @@ internal class AndroidN76Recording(
     private val context: Context,
     private val io: N76AudioIo,
     private val scope: CoroutineScope,
+    private val diagnostics: IControlDiagnostics = NoOpControlDiagnostics,
     private val options: () -> N76ControlOptions
 ) : N76Recording {
     private val preferences = context.getSharedPreferences("n76-recordings", Context.MODE_PRIVATE)
-    private val mutableState = MutableStateFlow(N76RecordingState(lastFile = preferences.getString("last", null)))
+    private val directory = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir, "N76")
+    private val mutableState = MutableStateFlow(N76RecordingState(lastFile = lastLocalN76Recording(directory, preferences.getString("last", null))))
     override val state: StateFlow<N76RecordingState> = mutableState
     private val mutex = Mutex()
+    private val exporter = N76RecordingExportQueue(scope, mutableState, diagnostics)
     private val microphone = N76PcmRing()
     private val radio = N76PcmRing()
     private var micJob: Job? = null
@@ -135,7 +145,6 @@ internal class AndroidN76Recording(
         writerJob?.join()
         stopPlayback()
         microphone.clear(); radio.clear(); recordRadio = settings.recordRadio
-        val directory = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir, "N76")
         if (!directory.exists() && !directory.mkdirs()) return@withLock failed("Cannot create the recording folder")
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.ROOT).format(Date())
         val name = satelliteName.replace(Regex("[^A-Za-z0-9._-]"), "_").take(48)
@@ -172,11 +181,10 @@ internal class AndroidN76Recording(
                     var finalized = false
                     try { output.close(); finalized = true }
                     catch (error: Exception) { failed(error.message ?: "Recording finalization failed") }
-                    mutableState.update { it.copy(recording = false, lastFile = if (finalized) file.absolutePath else it.lastFile) }
+                    mutableState.update { it.copy(recording = false, lastFile = if (finalized) file.absolutePath else it.lastFile,
+                        exportError = if (finalized) null else it.exportError, exportedFile = if (finalized) null else it.exportedFile) }
                     if (finalized) preferences.edit().putString("last", file.absolutePath).apply()
-                    if (finalized && settings.outputFolderUri.isNotBlank()) scope.launch(Dispatchers.IO) {
-                        exportCopy(file, settings.outputFolderUri)
-                    }
+                    if (finalized && settings.outputFolderUri.isNotBlank()) scheduleExport(file, settings.outputFolderUri, tree = true)
                 }
             }
         }
@@ -218,29 +226,54 @@ internal class AndroidN76Recording(
 
     override suspend fun stopPlayback(): Boolean = withContext(Dispatchers.Main) {
         val current = player; player = null
-        runCatching { current?.stop() }; current?.release()
+        runCatching { current?.stop() }
+        runCatching { current?.release() }.onFailure {
+            diagnostics.record(ControlDiagnosticSource.RADIO, "n76/recording/playback-close", "${it.javaClass.simpleName}: ${it.message}", ControlDiagnosticSeverity.ERROR)
+        }
         mutableState.update { it.copy(playing = false) }
         true
     }
 
     private fun failed(message: String): Boolean {
         mutableState.update { it.copy(error = message, recording = false) }
+        diagnostics.record(ControlDiagnosticSource.RADIO, "n76/recording/failed", message, ControlDiagnosticSeverity.ERROR)
         return false
     }
 
-    private fun exportCopy(file: File, folder: String) {
-        try {
-            val tree = Uri.parse(folder)
-            val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-            val destination = DocumentsContract.createDocument(context.contentResolver, parent, "audio/wav", file.name)
-                ?: error("Cannot create recording in selected folder")
-            context.contentResolver.openOutputStream(destination, "w")!!.use { output -> file.inputStream().use { it.copyTo(output) } }
-            if (mutableState.value.lastFile == file.absolutePath) {
-                mutableState.update { it.copy(lastFile = destination.toString()) }
-                preferences.edit().putString("last", destination.toString()).apply()
+    override suspend fun save(destinationUri: String): Boolean {
+        val file = mutableState.value.lastFile?.let(::File)?.takeIf { it.isFile }
+            ?: return failed("No recording to save")
+        if (mutableState.value.exporting) return true
+        scheduleExport(file, destinationUri, tree = false)
+        return true
+    }
+
+    private fun scheduleExport(file: File, location: String, tree: Boolean) {
+        val description = "provider=${runCatching { Uri.parse(location).authority }.getOrNull()} tree=$tree"
+        exporter.enqueue(file, description) {
+            val uri = Uri.parse(location)
+            require(uri.scheme == "content") { "Recording destination is not a document URI" }
+            val destination = if (tree) {
+                require(DocumentsContract.isTreeUri(uri)) { "Recording folder is not a document tree" }
+                check(context.contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }) {
+                    "Recording folder write permission expired; reselect the folder"
+                }
+                val parent = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+                DocumentsContract.createDocument(context.contentResolver, parent, "audio/wav", file.name)
+                    ?: error("Document provider could not create the recording")
+            } else uri
+            object : N76RecordingDestination {
+                override fun open() = context.contentResolver.openOutputStream(destination, "w")
+                override fun size(): Long? = runCatching {
+                    context.contentResolver.query(destination, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it >= 0 } else null
+                    }
+                }.getOrNull()
+                override fun removeIncomplete() {
+                    // Only a document created for this automatic copy is removed.
+                    if (tree) DocumentsContract.deleteDocument(context.contentResolver, destination)
+                }
             }
-        } catch (_: Exception) {
-            mutableState.update { it.copy(error = "Folder export failed; recording kept in app storage") }
         }
     }
 }

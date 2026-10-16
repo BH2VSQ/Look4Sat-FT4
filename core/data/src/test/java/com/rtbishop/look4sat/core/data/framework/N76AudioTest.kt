@@ -151,7 +151,7 @@ class N76AudioTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val wire = Wire(); val io = Io()
         val session = N76AudioSession(wire, io, scope)
-        try { assertTrue(session.connect()); block(session, wire, io) }
+        try { assertTrue(session.connect()); assertTrue(wire.secureFirst); block(session, wire, io) }
         finally { session.disconnect(); scope.cancel() }
     }
     private class Io : N76AudioIo {
@@ -169,6 +169,8 @@ class N76AudioTest {
         }
     }
     private class Wire : RadioTransport {
+        var secureFirst = false
+        override fun configureBluetoothConnection(secureFirst: Boolean, timeoutMillis: Long) { this.secureFirst = secureFirst }
         @Volatile override var isConnected = false
         val writes = Collections.synchronizedList(mutableListOf<ByteArray>())
         private var input = byteArrayOf()

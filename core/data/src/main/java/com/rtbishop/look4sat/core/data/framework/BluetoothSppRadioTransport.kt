@@ -78,7 +78,7 @@ class BluetoothSppRadioTransport internal constructor(
 
     override suspend fun connectAlternative(): Boolean = withContext(Dispatchers.IO) {
         if (!canTryAlternativeConnection) return@withContext false
-        closeSocket("CI-V handshake failed; trying alternative RFCOMM")
+        closeSocket("Protocol handshake failed; trying alternative RFCOMM")
         connectNext()
     }
 
@@ -95,7 +95,7 @@ class BluetoothSppRadioTransport internal constructor(
                 }
                 if (connected == true) {
                     lastIoFailure = null
-                    record("connected", "mode=$connectionDescription RFCOMM established; CI-V not yet verified")
+                    record("connected", "mode=$connectionDescription RFCOMM established; protocol handshake pending")
                     return true
                 }
                 if (connected == null) {

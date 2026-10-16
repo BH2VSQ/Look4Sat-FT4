@@ -23,8 +23,8 @@ internal class AndroidN76AudioIo(private val context: Context, private val hub: 
     private var focusHeld = false
     private var interrupted: (() -> Unit)? = null
     private val focusListener = AudioManager.OnAudioFocusChangeListener { focus ->
-        if (focus < 0) { track?.pause(); interrupted?.invoke() }
-        else if (focus == AudioManager.AUDIOFOCUS_GAIN) track?.play()
+        if (focus < 0) { runCatching { track?.pause() }; interrupted?.invoke() }
+        else if (focus == AudioManager.AUDIOFOCUS_GAIN) runCatching { track?.play() }
     }
     @Suppress("DEPRECATION")
     override fun openPlayback(): Boolean {
@@ -52,8 +52,8 @@ internal class AndroidN76AudioIo(private val context: Context, private val hub: 
     override fun closePlayback() {
         val current = track; track = null
         runCatching { current?.pause(); current?.flush() }
-        current?.release()
-        if (focusHeld) manager.abandonAudioFocus(focusListener)
+        runCatching { current?.release() }
+        if (focusHeld) runCatching { manager.abandonAudioFocus(focusListener) }
         focusHeld = false
     }
     override fun hasMicrophonePermission(): Boolean =

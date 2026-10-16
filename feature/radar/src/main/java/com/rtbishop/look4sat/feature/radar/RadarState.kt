@@ -140,6 +140,7 @@ sealed interface RadarAction {
     data object StopRemoteTx : RadarAction
     data class RadioMonitor(val enabled: Boolean) : RadarAction
     data class Recording(val action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) : RadarAction
+    data class SaveRecording(val destinationUri: String) : RadarAction
 
     // SSTV actions
     data object SstvStartRecording : RadarAction

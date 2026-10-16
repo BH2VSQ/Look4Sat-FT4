@@ -83,14 +83,36 @@ class N76ControllerTest {
         }
     }
 
-    @Test fun rejectsWrongDeviceOrOldFirmwareWithoutAnyTune() = runBlocking {
-        for (wire in listOf(SimulatedN76().apply { product = 1 }, SimulatedN76().apply { vfo = false })) {
+    @Test fun variant259WithoutVfoFlagVerifiesInactiveFrequencyModeAndTracks() = withRadio(
+        SimulatedN76().apply { product = 259; vfo = false; frequencyStatus = ByteArray(4) }
+    ) { radio, wire, diagnostics ->
+        assertEquals(listOf(4, 36, 20, 6), wire.commands().take(4))
+        assertTrue(radio.isConnected)
+        assertNull(radio.remoteState.value.error)
+        assertFalse(wire.commands().any { it in listOf(35, 66, 77) })
+        assertTrue(diagnostics.events.value.any { it.stage == "n76/connect/device-info" &&
+            "product=259" in it.message && "supportsVfo=false" in it.message })
+        ready(radio)
+        assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_000_000, 145_950_000))
+        assertTrue(radio.pttOn())
+        assertEquals(FrequencyPairResult.HELD, radio.setTrackingFrequencies(435_001_000, 145_951_000))
+        assertTrue(radio.pttOff())
+    }
+
+    @Test fun rejectsMalformedInfoAndUnverifiedFrequencyModeWithoutAnyTune() = runBlocking {
+        for (wire in listOf(
+            SimulatedN76().apply { deviceInfo = ByteArray(9) },
+            SimulatedN76().apply { product = 259; vfo = false; reject = 36 },
+            SimulatedN76().apply { product = 259; vfo = false; suppress = 36 },
+            SimulatedN76().apply { product = 259; vfo = false; frequencyStatus = ByteArray(3) }
+        )) {
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val radio = N76Controller(wire, scope, replyTimeoutMillis = 100)
             try {
                 assertFalse(radio.connect())
                 assertFalse(wire.commands().contains(35))
                 assertFalse(radio.isConnected)
+                assertNotNull(radio.remoteState.value.error)
             } finally { radio.disconnect(); scope.cancel() }
         }
     }
@@ -164,9 +186,14 @@ class N76ControllerTest {
         assertFalse(radio.setWorkingFrequency(435_200_000))
     }
 
-    @Test fun unsupportedModesAndInvalidBandNeverSendAnRfWrite() = withRadio { radio, wire, _ ->
+    @Test fun requestedModesStayFmAndInvalidBandNeverSendsAnRfWrite() = withRadio { radio, wire, _ ->
         ready(radio)
-        for (mode in listOf("USB", "LSB", "CW", "NFM")) assertFalse(radio.setMode(mode))
+        for (mode in listOf("USB", "LSB", "CW", "NFM", "BPSK")) {
+            assertTrue(radio.setMode(mode))
+            assertEquals("FM", radio.remoteState.value.rxMode)
+            assertEquals("FM", radio.remoteState.value.txMode)
+            assertNull(radio.remoteState.value.error)
+        }
         assertEquals(FrequencyPairResult.FAILED, radio.setTrackingFrequencies(200_000_000, 145_950_000))
         assertEquals(FrequencyPairResult.FAILED, radio.setTrackingFrequencies(435_000_000, 800_000_000))
         assertFalse(wire.commands().contains(35))
@@ -278,7 +305,8 @@ class N76ControllerTest {
         assertTrue(radio.isConnected)
         assertTrue(radio.remoteState.value.capabilities!!.voicePtt)
         assertFalse(radio.remoteState.value.bluetoothAudioConnected)
-        assertEquals("Audio unavailable", radio.remoteState.value.error)
+        assertEquals("Audio unavailable", radio.remoteState.value.bluetoothAudioError)
+        assertNull(radio.remoteState.value.error)
     }
 
     @Test fun audioOffUsesDistinctControlPttPressAndReleaseWithoutAnAudioSession() = withRadio { radio, wire, _ ->
@@ -349,6 +377,92 @@ class N76ControllerTest {
         }
     }
 
+    @Test fun successfulRecordingClearsItsPreviousError() = runBlocking {
+        val recorder = FakeRecording().apply { startFailure = "Enable Bluetooth audio to record the radio" }
+        withRadio(recorder = recorder) { radio, _, _ ->
+            assertFalse(radio.recordingAction(RadioRecordingAction.START))
+            assertEquals(recorder.startFailure, radio.remoteState.value.recordingError)
+            assertNull(radio.remoteState.value.error)
+            recorder.startFailure = null
+            assertTrue(radio.recordingAction(RadioRecordingAction.START))
+            assertTrue(radio.remoteState.value.recording)
+            assertNull(radio.remoteState.value.recordingError)
+        }
+    }
+
+    @Test fun recordingRecoveryDoesNotEraseASeparateCatFailure() = runBlocking {
+        val recorder = FakeRecording().apply { startFailure = "Recording source unavailable" }
+        withRadio(recorder = recorder) { radio, _, _ ->
+            assertFalse(radio.recordingAction(RadioRecordingAction.START))
+            assertFalse(radio.configureTxCtcss(Double.NaN))
+            val catError = radio.remoteState.value.error
+            assertEquals("Invalid CTCSS tone", catError)
+            recorder.startFailure = null
+            assertTrue(radio.recordingAction(RadioRecordingAction.START))
+            assertEquals(catError, radio.remoteState.value.error)
+        }
+    }
+
+    @Test fun transientStatusLossHoldsTuningAndRecoversWithoutDisconnectingOrReplayingTargets() = withRadio { radio, wire, diagnostics ->
+        ready(radio)
+        radio.setTrackingFrequencies(435_000_000, 145_950_000)
+        val writes = wire.commands().count { it == 35 }
+        wire.suppress = 20
+        assertEquals(FrequencyPairResult.HELD, radio.setTrackingFrequencies(435_001_000, 145_951_000))
+        assertTrue(radio.isConnected)
+        assertFalse(radio.remoteState.value.transmitStateKnown)
+        assertEquals(writes, wire.commands().count { it == 35 })
+        wire.suppress = null
+        assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_003_000, 145_953_000))
+        assertEquals(435_003_000L, radio.remoteState.value.rxFrequencyHz)
+        assertNull(radio.remoteState.value.error)
+        assertTrue(diagnostics.events.value.any { it.stage == "n76/status/recovered" })
+    }
+
+    @Test fun persistentIdleStatusLossDisconnectsAfterBoundedRecovery() = withRadio { radio, wire, _ ->
+        wire.suppress = 20
+        repeat(3) { assertNull(radio.readPttState()) }
+        assertFalse(radio.isConnected)
+        assertFalse(wire.transmitting)
+        assertFalse(wire.commands().contains(66))
+    }
+
+    @Test fun optionalAudioSettingsTimeoutLeavesCatUsable() = withRadio(
+        SimulatedN76().apply { suppress = 33 }, audioFactory = { FakeAudio(it) }
+    ) { radio, _, _ ->
+        assertTrue(radio.isConnected)
+        assertFalse(radio.remoteState.value.bluetoothAudioConnected)
+        assertNotNull(radio.remoteState.value.bluetoothAudioError)
+        assertNull(radio.remoteState.value.error)
+        ready(radio)
+        assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_000_000, 145_950_000))
+        delay(600)
+        assertNotNull(radio.remoteState.value.bluetoothAudioError)
+        assertNull(radio.remoteState.value.error)
+    }
+
+    @Test fun recordingExceptionCannotDisconnectCatAndSaveFailureIsSeparate() = runBlocking {
+        val recorder = FakeRecording().apply { throwOnStart = true }
+        withRadio(recorder = recorder) { radio, _, _ ->
+            ready(radio)
+            assertFalse(radio.recordingAction(RadioRecordingAction.START))
+            assertTrue(radio.isConnected)
+            assertEquals("Disk full", radio.remoteState.value.recordingError)
+            assertNull(radio.remoteState.value.error)
+            assertEquals(FrequencyPairResult.APPLIED, radio.setTrackingFrequencies(435_000_000, 145_950_000))
+            recorder.throwOnStart = false
+            assertTrue(radio.recordingAction(RadioRecordingAction.START))
+            assertNull(radio.remoteState.value.recordingError)
+            recorder.state.value = recorder.state.value.copy(recording = false, lastFile = "local.wav", exportError = "Folder permission expired")
+            assertTrue(radio.saveRecording("content://new-provider/recording.wav"))
+            assertEquals("content://new-provider/recording.wav", recorder.savedUri)
+            assertEquals("local.wav", radio.remoteState.value.lastRecording)
+            assertNull(radio.remoteState.value.recordingExportError)
+            assertTrue(radio.remoteState.value.recordingExported)
+            assertNull(radio.remoteState.value.error)
+        }
+    }
+
     @Test fun rejectedControlPttDoesNotQueueAStartOrLeaveAnOwnedTransmission() = withRadio { radio, wire, diagnostics ->
         ready(radio); radio.setTrackingFrequencies(435_000_000, 145_950_000)
         wire.reject = 66
@@ -389,14 +503,25 @@ class N76ControllerTest {
     private class FakeRecording : N76Recording {
         override val state = kotlinx.coroutines.flow.MutableStateFlow(N76RecordingState())
         var starts = 0
+        var startFailure: String? = null
+        var throwOnStart = false
+        var savedUri: String? = null
         override suspend fun start(satelliteName: String, radioAudioAvailable: Boolean): Boolean {
-            starts++; state.value = state.value.copy(recording = true); return true
+            if (throwOnStart) throw java.io.IOException("Disk full")
+            starts++
+            state.value = state.value.copy(recording = startFailure == null, error = startFailure)
+            return startFailure == null
         }
         override suspend fun stop(): Boolean { state.value = state.value.copy(recording = false,
             lastFile = if (starts > 0) "test.wav" else null); return true }
         override suspend fun playLast(): Boolean { state.value = state.value.copy(playing = true); return true }
         override suspend fun stopPlayback(): Boolean { state.value = state.value.copy(playing = false); return true }
         override fun feedRadio(pcm: ShortArray) = Unit
+        override suspend fun save(destinationUri: String): Boolean {
+            savedUri = destinationUri
+            state.value = state.value.copy(exportError = null, exportedFile = state.value.lastFile)
+            return true
+        }
     }
 
     private class SimulatedN76 : RadioTransport {
@@ -406,6 +531,8 @@ class N76ControllerTest {
         var secureFirst = true
         var product = 2
         var vfo = true
+        var deviceInfo: ByteArray? = null
+        var frequencyStatus = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(435_000_000).array()
         var echo = false
         var reject: Int? = null
         var suppress: Int? = null
@@ -436,9 +563,9 @@ class N76ControllerTest {
             }
             if (packet.command == 34 && reject != 34) bss = packet.payload.copyOf()
             val data = when (packet.command) {
-                4 -> byteArrayOf(0, (product shr 8).toByte(), product.toByte(), 1, 0, 137.toByte(), 0, if (vfo) 2 else 0, 32, 0)
+                4 -> deviceInfo ?: byteArrayOf(0, (product shr 8).toByte(), product.toByte(), 1, 0, 137.toByte(), 0, if (vfo) 2 else 0, 32, 0)
                 20 -> byteArrayOf(if (transmitting) 0xc0.toByte() else 0x80.toByte(), 0, 0, 0)
-                36 -> ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(435_000_000).array()
+                36 -> frequencyStatus
                 33 -> bss.copyOf()
                 else -> byteArrayOf()
             }

@@ -367,6 +367,7 @@ class RadarViewModel(
             RadarAction.StopRemoteTx -> trackingService.cancelRemoteTransmit()
             is RadarAction.RadioMonitor -> trackingService.setRadioMonitor(action.enabled)
             is RadarAction.Recording -> trackingService.recordingAction(action.action)
+            is RadarAction.SaveRecording -> trackingService.saveRecording(action.destinationUri)
 
             // SSTV actions
             is RadarAction.SstvPermissionResult -> {

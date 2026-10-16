@@ -67,6 +67,9 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
     val remote = control.remoteRadio ?: RemoteRadioState()
     val context = LocalContext.current
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val saveRecording = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
+        if (uri != null) onAction(RadarAction.SaveRecording(uri.toString()))
+    }
     val caps = remote.capabilities
     val minWpm = caps?.minimumWpm ?: 10
     val maxWpm = caps?.maximumWpm ?: 45
@@ -160,8 +163,16 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                 enabled = !remote.recording && remote.lastRecording != null && control.transmitOwner == RadioTransmitOwner.NONE) {
                 Text(stringResource(if (remote.playingRecording) R.string.rc_n76_stop_playback else R.string.rc_n76_play_last))
             }
+            if (remote.recordingSupported && remote.lastRecording != null) OutlinedButton(onClick = {
+                saveRecording.launch(remote.lastRecording?.substringAfterLast('/')?.takeIf { it.endsWith(".wav", true) } ?: "N76-recording.wav")
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = !remote.recording && !remote.recordingExporting) {
+                Text(stringResource(if (remote.recordingExporting) R.string.rc_n76_saving else R.string.rc_n76_save))
+            }
+            val recordingError = remote.recordingError ?: remote.bluetoothAudioError
+            if (recordingError != null) Text(recordingError, color = MaterialTheme.colorScheme.error)
+            else if (remote.recordingExportError != null) Text(stringResource(R.string.rc_n76_export_retry), color = MaterialTheme.colorScheme.error)
+            else if (remote.recordingExported && !remote.recordingExporting) Text(stringResource(R.string.rc_n76_saved), style = MaterialTheme.typography.bodySmall)
         }
-        remote.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
     if (showCw && caps?.cwText == true) {
         var text by rememberSaveable { mutableStateOf("") }

@@ -2,7 +2,9 @@
 package com.rtbishop.look4sat.feature.settings
 
 import android.content.Intent
+import android.app.Activity
 import android.Manifest
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,6 +44,9 @@ import com.rtbishop.look4sat.core.domain.model.N76FirmwareMode
 import com.rtbishop.look4sat.core.domain.model.N76Power
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 internal fun N76OptionsDialog(initial: N76ControlOptions, audioEnabled: Boolean,
@@ -49,11 +55,21 @@ internal fun N76OptionsDialog(initial: N76ControlOptions, audioEnabled: Boolean,
     var interval by remember { mutableStateOf(initial.pollMillis.toString()) }
     var folderError by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            val granted = runCatching { context.contentResolver.takePersistableUriPermission(uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }.isSuccess
+    val folder = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val uri = result.data?.data
+        if (result.resultCode == Activity.RESULT_OK && uri != null) scope.launch {
+            val granted = withContext(Dispatchers.IO) { runCatching {
+                val flags = (result.data?.flags ?: 0) and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                check(flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0)
+                val parent = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+                val writable = context.contentResolver.query(parent, arrayOf(DocumentsContract.Document.COLUMN_FLAGS), null, null, null)?.use {
+                    it.moveToFirst() && it.getInt(0) and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE != 0
+                } == true
+                check(writable)
+                context.contentResolver.takePersistableUriPermission(uri, flags)
+            }.isSuccess }
             folderError = !granted
             if (granted) draft = draft.copy(outputFolderUri = uri.toString())
         }
@@ -109,7 +125,9 @@ internal fun N76OptionsDialog(initial: N76ControlOptions, audioEnabled: Boolean,
             N76Choice(stringResource(R.string.rc_n76_mic_gain), draft.micGainDb, listOf(0, 6, 12, 18, 24).map { it to "+$it dB" }) {
                 draft = draft.copy(micGainDb = it)
             }
-            OutlinedButton(onClick = { folder.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { folder.launch(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)) }, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(if (draft.outputFolderUri.isBlank()) R.string.rc_n76_choose_folder else R.string.rc_n76_change_folder))
             }
             if (folderError) Text(stringResource(R.string.rc_n76_folder_error))

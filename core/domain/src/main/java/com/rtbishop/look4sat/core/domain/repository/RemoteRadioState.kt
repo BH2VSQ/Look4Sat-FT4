@@ -91,12 +91,17 @@ data class RemoteRadioState(
     val transmitStateKnown:Boolean=true,
     val phoneMicrophone: Boolean = false,
     val bluetoothAudioConnected: Boolean = false,
+    val bluetoothAudioError: String? = null,
     val radioMonitor: Boolean = false,
     val recording: Boolean = false,
     val playingRecording: Boolean = false,
     val lastRecording: String? = null,
     val recordingNeedsMicrophone: Boolean = false,
     val recordingSupported: Boolean = false,
+    val recordingError: String? = null,
+    val recordingExportError: String? = null,
+    val recordingExporting: Boolean = false,
+    val recordingExported: Boolean = false,
     val isN76: Boolean = false
 )
 

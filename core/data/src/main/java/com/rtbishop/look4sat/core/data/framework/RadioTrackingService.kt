@@ -53,6 +53,7 @@ import com.rtbishop.look4sat.core.domain.utility.frequencies
 import com.rtbishop.look4sat.core.domain.utility.defaultTxCtcssHz
 import com.rtbishop.look4sat.core.domain.repository.radioContextKey
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -96,9 +97,20 @@ class RadioTrackingService(
         if (txController?.setRadioMonitor(enabled) != true) failTrackingCommand("Radio monitor was not acknowledged")
     }
     override fun recordingAction(action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) {
+        recordingOperation { it.recordingAction(action) }
+    }
+    override fun saveRecording(destinationUri: String) {
+        recordingOperation { it.saveRecording(destinationUri) }
+    }
+    private fun recordingOperation(operation: suspend (IRadioController) -> Boolean) {
         appScope.launch {
             try {
-                if (txController?.recordingAction(action) != true) failTrackingCommand("Recording operation failed")
+                val radio = txController
+                if (radio == null || !operation(radio)) {
+                    val remote = radio?.remoteState?.value
+                    if (remote?.recordingError == null && remote?.recordingExportError == null)
+                        failTrackingCommand(remote?.error ?: "Recording operation failed")
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { failTrackingCommand(error.message ?: "Recording operation failed") }
         }
@@ -119,6 +131,7 @@ class RadioTrackingService(
     private val manualEpoch = AtomicLong()
     private val tuningWake = Channel<Unit>(Channel.CONFLATED)
     private val connectionMutex = Mutex()
+    private val connecting = AtomicBoolean()
     private val transmitMutex = Mutex()
     private val tuningRevision = AtomicLong()
     private val pendingControls = AtomicInteger()
@@ -173,7 +186,8 @@ class RadioTrackingService(
             reconnectRequired=old.radioModel!=settings.radioModel || old.catTransport!=settings.catTransport ||
                 old.txRadioAddress!=settings.txRadioAddress || old.rxRadioAddress!=settings.rxRadioAddress ||
                 old.baudRate!=settings.baudRate || old.civAddress!=settings.civAddress ||
-                old.splitMode!=settings.splitMode || old.duplexMode!=settings.duplexMode || old.tcpProtocol!=settings.tcpProtocol
+                old.splitMode!=settings.splitMode || old.duplexMode!=settings.duplexMode || old.tcpProtocol!=settings.tcpProtocol ||
+                settings.radioModel==RadioControlSettings.MODEL_VERO_N76 && old.n76BluetoothAudio!=settings.n76BluetoothAudio
             if(reconnectRequired) {
                 pendingControls.incrementAndGet()
                 manualEpoch.incrementAndGet()
@@ -191,7 +205,19 @@ class RadioTrackingService(
 
     // ── Connection ──────────────────────────────────────────────────────────
 
-    override suspend fun connectRadios(): Unit = connectionMutex.withLock {
+    override suspend fun connectRadios() {
+        if (!connecting.compareAndSet(false, true)) {
+            diagnose("connect/skipped", "Connection attempt already in progress")
+            return
+        }
+        try {
+            connectionMutex.withLock { connectRadiosLocked() }
+        } finally {
+            connecting.set(false)
+        }
+    }
+
+    private suspend fun connectRadiosLocked() {
         cancelTrackingAndJoin()
         emergencyPttOff()
         txController?.disconnect()
@@ -347,6 +373,7 @@ class RadioTrackingService(
                 var previousTxSource = remoteFlow.value.txSource
                 var previousSettingsSequence: Int? = null
                 var previousProfileGeneration: Long? = null
+                var previousRemoteError: String? = null
                 remoteFlow.collect { remote ->
                     profiles.observe(remote.profileStore)
                     val settingsChanged=remote.settingsSequence!=null && remote.settingsSequence!=previousSettingsSequence
@@ -361,11 +388,12 @@ class RadioTrackingService(
                             (current.isActive || !ctcssExplicit || matchingProfile))
                             (if(!current.isActive && matchingProfile) remote.nativeSavedTxCtcssHz else remote.txCtcssHz) else current.ctcssTone,
                         pttState = if (remote.txSource != 0) PttState.ON else if (current.pttState == PttState.ERROR) PttState.ERROR else PttState.OFF,
-                        lastCommandError = remote.error ?: current.lastCommandError,
+                        lastCommandError = remote.error ?: current.lastCommandError.takeUnless { previousRemoteError != null && it == previousRemoteError },
                         isActive = current.isActive && remote.connected,
                         trackingPhase = if (!remote.connected && current.isActive) TrackingPhase.ERROR else current.trackingPhase,
-                        errorMessage = remote.error ?: current.errorMessage
+                        errorMessage = remote.error ?: current.errorMessage.takeUnless { previousRemoteError != null && it == previousRemoteError }
                     ) }
+                    previousRemoteError = remote.error
                     if (previousTxSource!=0 && remote.txSource==0 && remote.connected) tuningWake.trySend(Unit)
                     previousTxSource=remote.txSource
                     previousSettingsSequence=remote.settingsSequence
@@ -674,6 +702,7 @@ class RadioTrackingService(
     }
 
     private fun controlUplinkMode(transponder: SatRadio): String? {
+        if (settingsRepo.radioControlSettings.value.radioModel == RadioControlSettings.MODEL_VERO_N76) return "FM"
         nativeProfileMode(transponder)?.let { return when(it) {0->"FM";3->"NFM";else->"CW"} }
         val mode = normalizeFmMode(transponder.resolvedUplinkMode())
         return if (radioProfile(settingsRepo.radioControlSettings.value.radioModel).isL4s &&
@@ -681,7 +710,8 @@ class RadioTrackingService(
     }
 
     private fun controlDownlinkMode(transponder: SatRadio, txMode: String?): String? =
-        if(nativeProfileMode(transponder)==3) "NFM"
+        if(settingsRepo.radioControlSettings.value.radioModel == RadioControlSettings.MODEL_VERO_N76) "FM"
+        else if(nativeProfileMode(transponder)==3) "NFM"
         else if(nativeProfileMode(transponder)==2) "USB"
         else if (radioProfile(settingsRepo.radioControlSettings.value.radioModel).isL4s && txMode == "CW") "CW"
         else normalizeFmMode(transponder.downlinkMode?.uppercase()) ?: txMode?.let {
@@ -1078,7 +1108,7 @@ class RadioTrackingService(
     // ── Tracking ────────────────────────────────────────────────────────────
 
     override fun startTracking(pass: OrbitalPass, transponder: SatRadio, txBaseFreqHz: Long?) {
-        if(userFrequencyEditingBlocked()){failTrackingCommand("Frequency editing is disabled during transmission");return}
+        if(userFrequencyEditingBlocked()){failTrackingCommand(frequencyEditingBlockMessage());return}
         if(radioProfile(settingsRepo.radioControlSettings.value.radioModel).isL4s ||
             txController?.supportsPttReadback==true || rxController?.supportsPttReadback==true) {
             val editEpoch=manualEpoch.get()
@@ -1306,7 +1336,7 @@ class RadioTrackingService(
                 if (!selectProfileContext(radio, transponder)) return failTrackingInitialization("N76 context was not acknowledged")
                 val txMode = controlUplinkMode(transponder)
                 val rxMode = controlDownlinkMode(transponder, txMode)
-                if (!radio.setSplitModes(rxMode, txMode)) return failTrackingInitialization("N76 satellite tracking requires FM")
+                if (!radio.setSplitModes(rxMode, txMode)) return failTrackingInitialization("N76 FM mode setup was not acknowledged")
                 val txBase = if (transponder.uplinkLow == null) null else
                     nativeBaseOverride?.txHz ?: initialTxBaseFreqHz ?: transponder.uplinkCenterFrequency()
                 val rxBase = nativeBaseOverride?.rxHz ?: txBase?.let { TransponderMapper.mapUplinkToDownlink(it, transponder) }
@@ -1565,9 +1595,11 @@ class RadioTrackingService(
     }
 
     private suspend fun configureTransponder(transponder: SatRadio) {
-            applyDataToneDefault(transponder)
             val tx = txController
             val rx = rxController
+            val txMode=controlUplinkMode(transponder)
+            val rxMode=controlDownlinkMode(transponder,txMode)
+            applyDataToneDefault(transponder)
             // Selecting a transponder is also local UI state. Allow it before a
             // radio is connected; startTracking will program the selected mode.
             if (tx?.isConnected != true && rx?.isConnected != true) {
@@ -1578,8 +1610,6 @@ class RadioTrackingService(
             if (tx?.isConnected==true && !selectProfileContext(tx,transponder)) {
                 failTrackingCommand("Radio context was not acknowledged");return
             }
-            val txMode=controlUplinkMode(transponder)
-            val rxMode=controlDownlinkMode(transponder,txMode)
             val txModeOk: Boolean
             val rxModeOk: Boolean
             if (split) {
@@ -1608,7 +1638,7 @@ class RadioTrackingService(
     }
 
     override fun tuneFromCalculator(transponder: SatRadio, tuning: CalculatorTuning) {
-        if(userFrequencyEditingBlocked()) {failTrackingCommand("Frequency editing is disabled during transmission");return}
+        if(userFrequencyEditingBlocked()) {failTrackingCommand(frequencyEditingBlockMessage());return}
         if (tuning.transponderUuid != transponder.uuid || tuning.frequencyHz <= 0 ||
             !DopplerFrequencyCalculator.isLinearTransponder(transponder)) return
         if (_state.value.isActive && _state.value.currentPass?.catNum != transponder.catnum) {
@@ -1638,6 +1668,22 @@ class RadioTrackingService(
         val remote=txController?.remoteState?.value ?: current.remoteRadio
         return current.frequencyEditingLocked || hasTransmitClaim || manualJob?.isActive==true || remote?.txSource?.let {it!=0}==true ||
             remote?.nativeMenuOpen==true || remote?.profileStore?.busy==true || remote?.let { !it.connected || !it.transmitStateKnown }==true
+    }
+
+    private fun frequencyEditingBlockMessage(): String {
+        val current = _state.value
+        val remote = txController?.remoteState?.value ?: current.remoteRadio
+        return when {
+            current.transmitPreparing || hasTransmitClaim || current.pttState != PttState.OFF ||
+                current.catTransmitting || remote?.txSource?.let { it != 0 } == true ->
+                "Frequency editing is disabled during transmission"
+            remote?.connected == false -> "Radio is not connected"
+            !current.catTransmitStateKnown || remote?.transmitStateKnown == false -> "Radio transmit state is unknown"
+            remote?.nativeMenuOpen == true -> "Close the radio menu before editing frequency"
+            remote?.profileStore?.busy == true -> "Radio profile operation is in progress"
+            current.trackingPhase == TrackingPhase.INITIALIZING -> "Radio tracking is initializing"
+            else -> "Radio frequency editing is temporarily unavailable"
+        }
     }
 
     private suspend fun refreshCatTransmitState(): Boolean {
@@ -1674,7 +1720,7 @@ class RadioTrackingService(
     }
 
     private fun changeRadioSettings(block: suspend () -> Unit) {
-        if(userFrequencyEditingBlocked()) {failTrackingCommand("Frequency editing is disabled during transmission");return}
+        if(userFrequencyEditingBlocked()) {failTrackingCommand(frequencyEditingBlockMessage());return}
         val editEpoch=manualEpoch.get()
         pendingControls.incrementAndGet()
         tuningRevision.incrementAndGet()
@@ -1683,7 +1729,7 @@ class RadioTrackingService(
             try {
                 transmitMutex.withLock {
                     if(userFrequencyEditingBlocked() || editEpoch!=manualEpoch.get()) {
-                        failTrackingCommand("Frequency editing is disabled during transmission");return@withLock
+                        failTrackingCommand(frequencyEditingBlockMessage());return@withLock
                     }
                     if(!authorizeFrequencyEdit() || userFrequencyEditingBlocked() ||
                         editEpoch!=manualEpoch.get()) {
@@ -1768,14 +1814,18 @@ class RadioTrackingService(
 
     override fun setMode(txMode: String, rxMode: String) {
         changeRadioSettings {
+            val forceFm = settingsRepo.radioControlSettings.value.radioModel == RadioControlSettings.MODEL_VERO_N76
+            val appliedTxMode = if (forceFm) "FM" else txMode
+            val appliedRxMode = if (forceFm) "FM" else rxMode
             val split = _state.value.splitMode
             val txOk = if (split) {
-                txController?.setSplitModes(rxMode, txMode) ?: false
+                txController?.setSplitModes(appliedRxMode, appliedTxMode) ?: false
             } else {
-                txController?.setMode(txMode) ?: true
+                txController?.setMode(appliedTxMode) ?: true
             }
-            val rxOk = if (split) true else rxController?.setMode(rxMode) ?: true
-            if (txOk && rxOk) _state.update { it.copy(txMode = txMode, rxMode = rxMode,referenceDirty=true) }
+            val rxOk = if (split) true else rxController?.setMode(appliedRxMode) ?: true
+            if (txOk && rxOk) _state.update { it.copy(txMode = appliedTxMode, rxMode = appliedRxMode,referenceDirty=true,
+                errorMessage=txController?.remoteState?.value?.error, lastCommandError=txController?.remoteState?.value?.error) }
             else failTrackingCommand("Radio mode command was not acknowledged")
         }
     }
@@ -1793,7 +1843,9 @@ class RadioTrackingService(
                 nominalTxFrequencyHz = txCenter,
                 nominalRxFrequencyHz = rxNominal,
                 txMode = controlUplinkMode(transponder),
-                rxMode = rxMode
+                rxMode = rxMode,
+                errorMessage = txController?.remoteState?.value?.error,
+                lastCommandError = txController?.remoteState?.value?.error
             )
         }
         restoreNativeProfile(transponder)

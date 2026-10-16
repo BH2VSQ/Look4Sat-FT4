@@ -74,7 +74,7 @@ internal class N76AudioSession(
             player?.cancelAndJoin(); player = null
             playback?.close(); playback = null
             io.closePlayback()
-            transport.configureBluetoothConnection(secureFirst = false, timeoutMillis = 4_000)
+            transport.configureBluetoothConnection(secureFirst = true, timeoutMillis = 6_000)
             if (!transport.connect()) throw IOException(transport.lastIoFailure ?: "Could not open N76 Bluetooth audio")
             if (!io.openPlayback()) throw IOException("Could not open phone audio output")
             io.onInterrupted { scope.launch { stopTransmit() } }

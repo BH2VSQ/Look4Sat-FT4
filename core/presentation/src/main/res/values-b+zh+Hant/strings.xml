@@ -865,5 +865,9 @@
     <string name="rc_n76_record">錄音</string>
     <string name="rc_n76_stop_recording">停止錄音</string>
     <string name="rc_n76_play_last">回放最近錄音</string>
+    <string name="rc_n76_save">儲存錄音</string>
+    <string name="rc_n76_saving">正在儲存…</string>
+    <string name="rc_n76_saved">錄音已儲存</string>
+    <string name="rc_n76_export_retry">錄音已保留在本機，點擊「儲存錄音」重新選擇位置。</string>
     <string name="rc_n76_stop_playback">停止回放</string>
 </resources>

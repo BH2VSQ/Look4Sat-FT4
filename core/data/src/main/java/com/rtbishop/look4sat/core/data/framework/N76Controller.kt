@@ -63,12 +63,15 @@ internal class N76Controller(
     private var radioMonitor = false
     private var monitorByTracking = false
     private var audioRelayChanged = false
+    private var statusFailures = 0
+    private var recordingOperationError: String? = null
     init { audio?.setRadioPcmSink { recorder?.feedRadio(it) } }
 
     override suspend fun connect(): Boolean = io(false) {
         if (isConnected) return@io true
         reset()
         closing = false
+        state.update { it.copy(error = null) }
         transport.configureBluetoothConnection(secureFirst = false, timeoutMillis = 8_000L)
         if (!transport.connect()) {
             report("connect/transport", transport.lastIoFailure ?: "Bluetooth connection failed")
@@ -79,14 +82,28 @@ internal class N76Controller(
             decoder.clear()
             // Identification is read-only. No channel, mode or transmit changes here.
             val info = request(N76Protocol.GET_DEVICE_INFO, byteArrayOf(3), attempts = 3)
-            if (info != null && info.size >= 10) {
-                val product = ((info[1].toInt() and 255) shl 8) or (info[2].toInt() and 255)
-                if (product != 2 || info[7].toInt() and 2 == 0) {
-                    report("connect/device", "N76 with frequency-mode firmware is required; product=$product")
+            if (info != null) {
+                if (info.size < 10) {
+                    report("connect/device", "Malformed N76 device information; length=${info.size}")
                     break
                 }
+                val product = ((info[1].toInt() and 255) shl 8) or (info[2].toInt() and 255)
+                val supportsVfo = info[7].toInt() and 2 != 0
+                firmwareVersion = ((info[4].toInt() and 255) shl 8) or (info[5].toInt() and 255)
+                diagnose("connect/device-info", "product=$product firmware=$firmwareVersion supportsVfo=$supportsVfo " +
+                    "capabilities=${info.copyOfRange(6, 10).joinToString("") { "%02x".format(it.toInt() and 255) }}")
+                // Some N76 variants clear the VFO flag but implement remote frequency mode.
+                // Verify its read-only opcode instead of treating a model flag as a command refusal.
+                if (!supportsVfo) {
+                    val frequencyStatus = request(N76Protocol.GET_FREQUENCY, attempts = 2)
+                    if (frequencyStatus == null || frequencyStatus.size < 4) {
+                        if (frequencyStatus != null) report("connect/frequency", "Malformed N76 frequency status; length=${frequencyStatus.size}")
+                        break
+                    }
+                    // Zero is valid here: frequency mode need not be active when connecting.
+                    diagnose("connect/frequency", "Read-only frequency-mode query verified; product=$product")
+                }
                 if (readStatus() != null) {
-                    firmwareVersion = ((info[4].toInt() and 255) shl 8) or (info[5].toInt() and 255)
                     state.update { it.copy(connected = true,
                         firmware = "${info[4].toInt() and 255}.${info[5].toInt() and 255}",
                         capabilities = CAPABILITIES, error = null, isN76 = true,
@@ -98,7 +115,7 @@ internal class N76Controller(
             }
         } while (transport.canTryAlternativeConnection && transport.connectAlternative())
         if (!ready) {
-            dropConnection("N76 read-only handshake failed")
+            dropConnection(state.value.error ?: "N76 read-only handshake failed")
             return@io false
         }
         // Notification registration is session-local; it does not write channel memory.
@@ -110,7 +127,7 @@ internal class N76Controller(
             val readyAudio = prepareAudioRelay() && audio.connect()
             state.update { it.copy(capabilities = CAPABILITIES,
                 phoneMicrophone = true, bluetoothAudioConnected = readyAudio,
-                error = if (readyAudio) null else audio.state.value.error ?: state.value.error ?: "Bluetooth audio is unavailable") }
+                bluetoothAudioError = if (readyAudio) null else audio.state.value.error ?: "Bluetooth audio is unavailable") }
         }
         if (!isConnected) return@io false
         monitor = scope.launch(Dispatchers.IO) {
@@ -122,13 +139,11 @@ internal class N76Controller(
                         dropConnection("N76 Bluetooth connection lost")
                         return@io false
                     }
+                    audio?.state?.value?.let { snapshot -> state.update { it.copy(
+                        bluetoothAudioConnected = snapshot.connected,
+                        bluetoothAudioError = if (snapshot.connected) null else snapshot.error ?: it.bluetoothAudioError) } }
+                    syncRecordingState()
                     val transmitting = readStatus() ?: return@io false
-                    audio?.let { session -> state.update { it.copy(
-                        bluetoothAudioConnected = session.state.value.connected,
-                        error = session.state.value.error ?: it.error) } }
-                    recorder?.state?.value?.let { recording -> state.update { it.copy(
-                        recording = recording.recording, playingRecording = recording.playing,
-                        lastRecording = recording.lastFile, error = recording.error ?: it.error) } }
                     if (!transmitting && stopPending) stopFrequencyMode()
                     if (!transmitting && audioRelayChanged && audio?.state?.value?.connected != true) restoreAudioRelay()
                     true
@@ -148,7 +163,7 @@ internal class N76Controller(
                 // Do not retune an externally keyed transmitter even during teardown.
                 if (isConnected && pair != null && readStatus() == false) stopFrequencyMode()
             } finally {
-                recorder?.stop(); recorder?.stopPlayback()
+                stopRecordingSafely()
                 audio?.disconnect()
                 if (isConnected) restoreAudioRelay()
                 if (isConnected && radioMonitor) setMonitorLocked(false)
@@ -183,7 +198,8 @@ internal class N76Controller(
     private suspend fun applyPair(target: N76Protocol.Frequencies, tone: Double?): FrequencyPairResult {
         if (!isConnected || !N76Protocol.validFrequency(target.rxHz) ||
             target.txHz?.let { !N76Protocol.validFrequency(it) } == true) return FrequencyPairResult.FAILED
-        val transmitting = readStatus() ?: return FrequencyPairResult.FAILED
+        val transmitting = readStatus() ?: return if (isConnected && !state.value.transmitStateKnown)
+            FrequencyPairResult.HELD else FrequencyPairResult.FAILED
         if (transmitting) return FrequencyPairResult.HELD
         val settings = options().normalized()
         val satelliteFirmware = settings.satelliteFirmware(firmwareVersion)
@@ -206,7 +222,7 @@ internal class N76Controller(
         if (updates == 1) {
             if (settings.openSquelchOnTrack && !radioMonitor && setMonitorLocked(true)) monitorByTracking = true
             if (settings.recordOnTrack && (settings.recordRadio || settings.recordMicrophone))
-                recorder?.start(display?.satelliteName.orEmpty(), audio?.state?.value?.connected == true)
+                performRecordingOperation { it.start(display?.satelliteName.orEmpty(), audio?.state?.value?.connected == true) }
         }
         diagnose("frequency/applied", "rx=${target.rxHz} tx=${target.txHz ?: "disabled"} ack=0")
         return FrequencyPairResult.APPLIED
@@ -223,12 +239,10 @@ internal class N76Controller(
     }
 
     override suspend fun setSplitModes(rxMode: String?, txMode: String?): Boolean = io(false) {
-        // Native satellite mode is FM. Never silently substitute FM for USB/LSB/CW.
-        if (listOfNotNull(rxMode, txMode).any { it.uppercase() != "FM" }) {
-            report("mode/unsupported", "N76 satellite tracking requires FM")
-            return@io false
-        }
-        isConnected && readStatus() == false
+        // N76 CAT always operates in FM, independently of transponder metadata.
+        val accepted = isConnected && readStatus() == false
+        if (accepted) state.update { it.copy(rxMode = "FM", txMode = "FM") }
+        accepted
     }
     override suspend fun setMode(mode: String): Boolean = setSplitModes(mode, mode)
     override suspend fun setVfo(vfoA: Boolean): Boolean = vfoA && isConnected
@@ -236,7 +250,7 @@ internal class N76Controller(
 
     override suspend fun setSplitMode(enabled: Boolean): Boolean = io(false) {
         if (!isConnected) return@io false
-        if (!enabled && options().recordOnTrack) recorder?.stop()
+        if (!enabled && options().recordOnTrack) performRecordingOperation { it.stop() }
         if (enabled || pair == null) return@io true
         val transmitting = readStatus() ?: return@io false
         if (transmitting) { stopPending = true; return@io true }
@@ -289,7 +303,7 @@ internal class N76Controller(
     }
 
     private suspend fun startVoicePtt(): Boolean = io(false) {
-        recorder?.stopPlayback()
+        if (recorder != null && !performRecordingOperation { it.stopPlayback() }) return@io false
         val session = audio
         if (!isConnected || pair?.txHz == null || readStatus() != false) return@io false
         ownsPtt = true
@@ -340,11 +354,12 @@ internal class N76Controller(
     override suspend fun setAudioForeground(enabled: Boolean) {
         if (!enabled) audio?.stopTransmit()
         io(false) {
-            if (!enabled) { recorder?.stop(); recorder?.stopPlayback() }
+            if (!enabled) stopRecordingSafely()
             val session = audio ?: return@io true
             if (enabled && isConnected) { if (prepareAudioRelay()) session.connect() }
             else { session.disconnect(); if (isConnected) restoreAudioRelay() }
             state.update { it.copy(bluetoothAudioConnected = session.state.value.connected,
+                bluetoothAudioError = if (session.state.value.connected) null else session.state.value.error ?: it.bluetoothAudioError,
                 capabilities = CAPABILITIES) }
             true
         }
@@ -361,61 +376,105 @@ internal class N76Controller(
     }
 
     override suspend fun recordingAction(action: RadioRecordingAction): Boolean = io(false) {
-        val recording = recorder ?: return@io false
-        val result = when (action) {
+        if (action == RadioRecordingAction.PLAY_LAST && (ownsPtt || readStatus() != false)) {
+            recordingOperationError = "Stop transmission before playing a recording"
+            syncRecordingState()
+            return@io false
+        }
+        performRecordingOperation { recording -> when (action) {
             RadioRecordingAction.START -> recording.start(display?.satelliteName.orEmpty(), audio?.state?.value?.connected == true)
             RadioRecordingAction.STOP -> recording.stop()
-            RadioRecordingAction.PLAY_LAST -> if (ownsPtt || readStatus() != false) false else recording.playLast()
+            RadioRecordingAction.PLAY_LAST -> recording.playLast()
             RadioRecordingAction.STOP_PLAYBACK -> recording.stopPlayback()
+        } }
+    }
+
+    override suspend fun saveRecording(destinationUri: String): Boolean = io(false) {
+        performRecordingOperation { it.save(destinationUri) }
+    }
+
+    private suspend fun performRecordingOperation(block: suspend (N76Recording) -> Boolean): Boolean {
+        val recording = recorder ?: return false
+        return try {
+            val accepted = block(recording)
+            if (accepted) recordingOperationError = null
+            syncRecordingState()
+            accepted
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            recordingOperationError = error.message ?: "Recording operation failed"
+            diagnostics.record(ControlDiagnosticSource.RADIO, "n76/recording/operation", "${error.javaClass.simpleName}: ${error.message}", ControlDiagnosticSeverity.ERROR)
+            syncRecordingState()
+            false
         }
-        val snapshot = recording.state.value
+    }
+
+    private suspend fun stopRecordingSafely() {
+        performRecordingOperation { it.stop() }
+        performRecordingOperation { it.stopPlayback() }
+    }
+
+    private fun syncRecordingState() {
+        val snapshot = recorder?.state?.value ?: return
         state.update { it.copy(recording = snapshot.recording, playingRecording = snapshot.playing,
-            lastRecording = snapshot.lastFile, error = snapshot.error ?: it.error) }
-        result
+            lastRecording = snapshot.lastFile, recordingError = snapshot.error ?: recordingOperationError,
+            recordingExportError = snapshot.exportError, recordingExporting = snapshot.exporting,
+            recordingExported = snapshot.lastFile != null && snapshot.lastFile == snapshot.exportedFile) }
     }
 
     private suspend fun prepareAudioRelay(): Boolean {
         if (readStatus() != false) return false
-        val settings = request(33) ?: return false
+        val settings = request(33, disconnectOnTimeout = false) ?: return false
         if (settings.size < 3) {
-            report("audio/relay", "Bluetooth audio is unavailable")
+            state.update { it.copy(bluetoothAudioError = "Bluetooth audio is unavailable") }
+            diagnose("audio/relay", "Malformed BSS settings; length=${settings.size}")
             return false
         }
         if (settings[2].toInt() and 2 != 0) return true
         settings[2] = (settings[2].toInt() or 2).toByte()
-        if (request(34, settings) == null) return false
         audioRelayChanged = true
-        return request(33)?.let { it.size >= 3 && it[2].toInt() and 2 != 0 } == true
+        if (request(34, settings, disconnectOnTimeout = false) == null) return false
+        return request(33, disconnectOnTimeout = false)?.let { it.size >= 3 && it[2].toInt() and 2 != 0 } == true
     }
 
     private suspend fun restoreAudioRelay() {
         if (!audioRelayChanged || readStatus() != false) return
-        val current = request(33) ?: return
+        val current = request(33, disconnectOnTimeout = false) ?: return
         if (current.size < 3) return
+        if (current[2].toInt() and 2 == 0) { audioRelayChanged = false; return }
         current[2] = (current[2].toInt() and 2.inv()).toByte()
-        if (request(34, current) != null) audioRelayChanged = false
+        if (request(34, current, disconnectOnTimeout = false) != null) audioRelayChanged = false
     }
 
     private suspend fun readStatus(): Boolean? {
-        val bytes = request(N76Protocol.GET_HT_STATUS, attempts = 2)
+        val bytes = request(N76Protocol.GET_HT_STATUS, attempts = 2, disconnectOnTimeout = ownsPtt)
         if (bytes == null || bytes.size < 4) {
             state.update { it.copy(transmitStateKnown = false) }
-            if (bytes != null && state.value.connected) dropConnection("N76 malformed transmit status")
+            statusFailures++
+            if (state.value.connected) {
+                if (bytes != null || !transport.isConnected || statusFailures >= 3)
+                    dropConnection(if (bytes != null) "N76 malformed transmit status" else "N76 status timed out after $statusFailures failed polls")
+                else state.update { it.copy(error = "N76 status temporarily unavailable") }
+            }
             return null
         }
+        if (statusFailures != 0) diagnose("status/recovered", "Status query recovered after $statusFailures failed polls")
+        statusFailures = 0
         val tx = bytes[0].toInt() and 0x40 != 0
-        state.update { it.copy(txSource = if (tx) 1 else 0, transmitStateKnown = true) }
+        state.update { it.copy(txSource = if (tx) 1 else 0, transmitStateKnown = true,
+            error = it.error.takeUnless { message -> message == "N76 status temporarily unavailable" }) }
         return tx
     }
 
-    private suspend fun request(command: Int, payload: ByteArray = byteArrayOf(), attempts: Int = 1): ByteArray? {
+    private suspend fun request(command: Int, payload: ByteArray = byteArrayOf(), attempts: Int = 1,
+        disconnectOnTimeout: Boolean = true): ByteArray? {
         currentCoroutineContext().ensureActive()
         // GAIA has no sequence number. Finish this bounded transaction before allowing
         // cancellation to issue teardown, so its late ACK cannot acknowledge a stop.
-        return withContext(NonCancellable) { requestTransaction(command, payload, attempts) }
+        return withContext(NonCancellable) { requestTransaction(command, payload, attempts, disconnectOnTimeout) }
     }
 
-    private suspend fun requestTransaction(command: Int, payload: ByteArray, attempts: Int): ByteArray? {
+    private suspend fun requestTransaction(command: Int, payload: ByteArray, attempts: Int, disconnectOnTimeout: Boolean): ByteArray? {
         if (!transport.isConnected) return null
         drain()
         repeat(attempts) { attempt ->
@@ -430,7 +489,10 @@ internal class N76Controller(
                 response?.let { packet ->
                     val status = packet.payload.firstOrNull()?.toInt()?.and(255)
                     if (status != 0) {
-                        report("reply/rejected", "command=$command status=${status ?: "missing"}")
+                        if (disconnectOnTimeout || command == N76Protocol.GET_HT_STATUS)
+                            report("reply/rejected", "command=$command status=${status ?: "missing"}")
+                        else diagnostics.record(ControlDiagnosticSource.RADIO, "n76/audio/rejected",
+                            "command=$command status=${status ?: "missing"}", ControlDiagnosticSeverity.WARNING)
                         return null
                     }
                     return packet.payload.copyOfRange(1, packet.payload.size)
@@ -439,8 +501,12 @@ internal class N76Controller(
             }
             diagnose("reply/retry", "command=$command attempt=${attempt + 1}")
         }
-        report("reply/timeout", "command=$command attempts=$attempts")
-        if (state.value.connected) dropConnection("N76 reply timed out; reconnect")
+        if (disconnectOnTimeout) {
+            report("reply/timeout", "command=$command attempts=$attempts")
+            if (state.value.connected) dropConnection("N76 reply timed out; reconnect")
+        } else diagnostics.record(ControlDiagnosticSource.RADIO,
+            if (command == N76Protocol.GET_HT_STATUS) "n76/status/retry" else "n76/audio/retry",
+            "command=$command attempts=$attempts; retaining CAT connection", ControlDiagnosticSeverity.WARNING)
         return null
     }
 
@@ -473,13 +539,17 @@ internal class N76Controller(
         decoder.clear(); pair = null; display = null; contextKey = null
         txTone = null; requestedTone = null; updates = 0; stopPending = false
         radioMonitor = false; monitorByTracking = false; audioRelayChanged = false
+        statusFailures = 0
+        recordingOperationError = null
     }
     private suspend fun dropConnection(message: String) {
+        diagnostics.record(ControlDiagnosticSource.RADIO, "n76/connection/closed",
+            "origin=controller reason=$message", ControlDiagnosticSeverity.ERROR)
         if (ownsPtt && controlPtt && transport.isConnected) {
             runCatching { transport.write(N76Protocol.frame(N76Protocol.DO_PROG_FUNC, N76Protocol.ptt(false))) }
         }
         audio?.disconnect(); ownsPtt = false
-        recorder?.stop(); recorder?.stopPlayback()
+        stopRecordingSafely()
         controlPtt = false
         transport.disconnect()
         reset()
