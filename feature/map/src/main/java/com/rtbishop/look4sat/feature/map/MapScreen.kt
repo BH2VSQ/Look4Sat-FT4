@@ -105,6 +105,7 @@ import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
+import com.rtbishop.look4sat.core.domain.utility.clipLon
 import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.R
@@ -1824,8 +1825,9 @@ private fun setPositions(
             markerPool.clear()
             iconCache.evictAll()
             dotIcon = null
-            footprintPolyline = null
-            footprintPoints = null
+            footprintOverlay = null
+            footprintArcs.clear()
+            footprintLines.clear()
             mapView.addMapListener(DelayedMapListener(object : MapListener {
                 override fun onScroll(event: ScrollEvent?) = refreshPositions(mapView)
                 override fun onZoom(event: ZoomEvent?) = refreshPositions(mapView)
@@ -1944,7 +1946,9 @@ private fun setSatelliteTrack(satTrack: List<List<GeoPos>>, mapView: MapView) {
     // pass, so it runs on every state update — during a drag, on every slider step. Rebuilding
     // it meant a fresh FolderOverlay, one Polyline per lap and ~1000 new GeoPoints per step,
     // which is pure churn: nothing about the geometry changed. The identity check skips it.
-    if (satTrack === lastTrack && lastTrackView === mapView) return
+    if (satTrack === lastTrack && lastTrackView === mapView &&
+        mapView.overlays.getOrNull(OVERLAY_TRACK) is FolderOverlay
+    ) return
     lastTrack = satTrack
     lastTrackView = mapView
     val trackOverlay = FolderOverlay()
@@ -1962,33 +1966,48 @@ private fun setSatelliteTrack(satTrack: List<List<GeoPos>>, mapView: MapView) {
     }
 }
 
-/** Reusable footprint Polyline — created once, points updated in-place each frame */
-private var footprintPolyline: Polyline? = null
-private var footprintPoints: ArrayList<GeoPoint>? = null
+/** Footprint circle, split into arcs that each stay on one side of the date line */
+private var footprintOverlay: FolderOverlay? = null
+private val footprintArcs = ArrayList<MutableList<GeoPoint>>(4)
+private val footprintLines = ArrayList<Polyline>(4)
 
 private fun setFootprint(orbitalPos: OrbitalPos, mapView: MapView) {
     try {
         val rangeCircle = orbitalPos.getRangeCircle()
-        var pts = footprintPoints
-        if (pts == null || pts.size != rangeCircle.size) {
-            pts = ArrayList(rangeCircle.size)
-            for (gp in rangeCircle) pts.add(GeoPoint(gp.latitude, gp.longitude))
-            footprintPoints = pts
-        } else {
-            for (i in rangeCircle.indices) {
-                pts[i].latitude = rangeCircle[i].latitude
-                pts[i].longitude = rangeCircle[i].longitude
+        // One polyline per arc, but the overlay itself is reused: replacing it detaches objects
+        // osmdroid is still drawing (same reason as the marker folder).
+        val overlay = footprintOverlay?.takeIf { mapView.overlays.getOrNull(OVERLAY_FOOTPRINT) === it }
+            ?: FolderOverlay().also {
+                footprintOverlay = it
+                mapView.overlays[OVERLAY_FOOTPRINT] = it
             }
+        overlay.items.clear()
+        // The circle's longitudes are unwrapped around the subpoint, so they run past ±180 and a
+        // single polyline would step across the date line — osmdroid draws that step as a line
+        // straight over to the other side of the map (the circle looks broken and wrapped). Clip
+        // each point and start a new arc wherever the clipped value jumps the meridian.
+        var arcCount = 0
+        var arc: MutableList<GeoPoint>? = null
+        var previousLon = 0.0
+        var hasPrevious = false
+        for (point in rangeCircle) {
+            val lon = clipLon(point.longitude)
+            if (arc == null || (hasPrevious && abs(lon - previousLon) > 180.0)) {
+                arc = footprintArcs.getOrNull(arcCount)
+                    ?: ArrayList<GeoPoint>(rangeCircle.size).also { footprintArcs.add(it) }
+                arc.clear()
+                arcCount++
+            }
+            arc.add(GeoPoint(point.latitude, lon))
+            previousLon = lon
+            hasPrevious = true
         }
-        val polyline = footprintPolyline ?: Polyline().apply {
-            outlinePaint.set(footprintPaint)
-            footprintPolyline = this
+        while (footprintLines.size < arcCount) {
+            footprintLines.add(Polyline().apply { outlinePaint.set(footprintPaint) })
         }
-        polyline.setPoints(pts)
-        // Only touch the overlay list when this is not already the installed instance: the
-        // assignment goes through osmdroid's observable list and is wasted work every step.
-        if (mapView.overlays.getOrNull(OVERLAY_FOOTPRINT) !== polyline) {
-            mapView.overlays[OVERLAY_FOOTPRINT] = polyline
+        for (index in 0 until arcCount) {
+            footprintLines[index].setPoints(footprintArcs[index])
+            overlay.add(footprintLines[index])
         }
     } catch (e: Exception) {
         println(e)
