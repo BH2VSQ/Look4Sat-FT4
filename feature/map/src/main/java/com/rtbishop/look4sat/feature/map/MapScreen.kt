@@ -1160,35 +1160,48 @@ private fun TimeScrubBar(
     // stops reporting once it has caught up.
     LaunchedEffect(easing, spanMs) {
         if (!easing) return@LaunchedEffect
-        var lastFrameMs = 0.0
-        var lastReportedMs = Long.MIN_VALUE
-        while (true) {
-            var reported = Long.MIN_VALUE
-            var settled = false
-            withFrameNanos { frameNs ->
-                val frameMs = frameNs / 1_000_000.0
-                val deltaMs = if (lastFrameMs == 0.0) 16.0 else (frameMs - lastFrameMs)
-                lastFrameMs = frameMs
-                val factor = (1.0 - exp(-deltaMs / SCRUB_EASE_MS)).coerceIn(0.0, 1.0)
-                shownFraction += ((fingerFraction - shownFraction) * factor).toFloat()
-                if (abs(fingerFraction - shownFraction) < SCRUB_EASE_EPSILON) {
-                    shownFraction = fingerFraction
-                    settled = true
+        try {
+            var lastFrameMs = 0.0
+            var lastReportedMs = Long.MIN_VALUE
+            while (true) {
+                var reported = Long.MIN_VALUE
+                var settled = false
+                withFrameNanos { frameNs ->
+                    val frameMs = frameNs / 1_000_000.0
+                    val deltaMs = if (lastFrameMs == 0.0) 16.0 else (frameMs - lastFrameMs)
+                    lastFrameMs = frameMs
+                    val factor = (1.0 - exp(-deltaMs / SCRUB_EASE_MS)).coerceIn(0.0, 1.0)
+                    shownFraction += ((fingerFraction - shownFraction) * factor).toFloat()
+                    if (abs(fingerFraction - shownFraction) < SCRUB_EASE_EPSILON) {
+                        shownFraction = fingerFraction
+                        settled = true
+                    }
+                    val timeMs = (shownFraction * spanMs).toLong()
+                    if (timeMs != lastReportedMs) {
+                        lastReportedMs = timeMs
+                        reported = timeMs
+                    }
                 }
-                val timeMs = (shownFraction * spanMs).toLong()
-                if (timeMs != lastReportedMs) {
-                    lastReportedMs = timeMs
-                    reported = timeMs
+                if (reported != Long.MIN_VALUE) onScrub(reported)
+                // Finger up and clock caught up: settle on the exact value, then hand the map back to
+                // the tick loop (which is what makes the camera stop following).
+                if (settled && !dragging) {
+                    onScrub((shownFraction * spanMs).toLong())
+                    onScrubEnd()
+                    easing = false
+                    break
                 }
             }
-            if (reported != Long.MIN_VALUE) onScrub(reported)
-            // Finger up and clock caught up: settle on the exact value, then hand the map back to
-            // the tick loop (which is what makes the camera stop following).
-            if (settled && !dragging) {
-                onScrub((shownFraction * spanMs).toLong())
-                onScrubEnd()
+        } finally {
+            // Also runs when this effect is cancelled instead of finishing — which happens whenever
+            // `spanMs` changes (i.e. the selection moved to a satellite with another period) or the
+            // bar leaves the composition. Without this the scrub flag stayed set: the tick loop
+            // stands down while it is set, so the map and its ground track froze on the last
+            // scrubbed instant until the user dragged again.
+            if (easing) {
                 easing = false
-                break
+                dragging = false
+                onScrubEnd()
             }
         }
     }
