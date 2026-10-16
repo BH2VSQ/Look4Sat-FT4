@@ -442,13 +442,22 @@ private fun MapScreen(
             selectedRegion?.second?.code
         mapView.invalidate()
     }
-    LaunchedEffect(uiState.track) {
-        // In grid mode the map is centered on the local grid square; following
-        // the satellite subpoint here would override that centering on every
-        // track update, so skip the tracking animation entirely.
-        if (uiState.isGridMode) return@LaunchedEffect
-        val firstPos = uiState.track?.firstOrNull()?.firstOrNull() ?: return@LaunchedEffect
-        mapView.controller.animateTo(GeoPoint(firstPos.latitude, firstPos.longitude))
+    // Camera: go to the selected satellite once per entry and once per selection change.
+    // Keyed on the satellite, NOT on the track: keying it on the track meant (a) on a re-entry the
+    // track instance was unchanged, so the effect never ran and the camera stayed on the opening
+    // world view instead of the satellite, and (b) once the track started being kept up to date,
+    // every refresh re-issued the pan and fought the user's own panning. Keying it on the catnum
+    // fixes both: a fresh composition always runs it (entry), a satellite change runs it, a track
+    // refresh does not. Issued from post{} because a camera call before the first layout is
+    // discarded (same trap as the restored viewport below).
+    val followedCatNum = uiState.mapData?.catNum ?: 0
+    LaunchedEffect(followedCatNum) {
+        if (uiState.isGridMode || followedCatNum == 0) return@LaunchedEffect
+        mapView.post {
+            uiState.mapData?.osmPos?.let { point ->
+                mapView.controller.animateTo(GeoPoint(point.latitude, point.longitude))
+            }
+        }
     }
     // Time scrub: keep the scrubbed satellite in view. Only its own entry is patched into
     // `positions`, so without this the camera would stay where the live map left it and the
@@ -1941,26 +1950,30 @@ private fun getCachedTextIcon(name: String, mapView: MapView): Drawable {
 private var lastTrack: List<List<GeoPos>>? = null
 private var lastTrackView: MapView? = null
 
+/** Ground-track overlay, reused across updates: replacing the folder every time would detach the
+ *  polylines osmdroid is drawing (same reason the marker layer reuses its folder). */
+private var trackOverlay: FolderOverlay? = null
+private val trackLines = ArrayList<Polyline>(4)
+
 private fun setSatelliteTrack(satTrack: List<List<GeoPos>>, mapView: MapView) {
-    // The track only changes when the selection changes, but this call sits in the map update
-    // pass, so it runs on every state update — during a drag, on every slider step. Rebuilding
-    // it meant a fresh FolderOverlay, one Polyline per lap and ~1000 new GeoPoints per step,
-    // which is pure churn: nothing about the geometry changed. The identity check skips it.
-    if (satTrack === lastTrack && lastTrackView === mapView &&
-        mapView.overlays.getOrNull(OVERLAY_TRACK) is FolderOverlay
-    ) return
+    if (satTrack === lastTrack && lastTrackView === mapView) return
     lastTrack = satTrack
     lastTrackView = mapView
-    val trackOverlay = FolderOverlay()
     try {
-        satTrack.forEach { track ->
-            Polyline().apply {
-                setPoints(track.map { GeoPoint(it.latitude, it.longitude) })
-                outlinePaint.set(trackPaint)
-                trackOverlay.add(this)
+        val overlay = trackOverlay?.takeIf { mapView.overlays.getOrNull(OVERLAY_TRACK) === it }
+            ?: FolderOverlay().also {
+                trackOverlay = it
+                mapView.overlays[OVERLAY_TRACK] = it
             }
+        overlay.items.clear()
+        satTrack.forEachIndexed { index, track ->
+            val line = trackLines.getOrNull(index) ?: Polyline().apply {
+                outlinePaint.set(trackPaint)
+                trackLines.add(this)
+            }
+            line.setPoints(track.map { GeoPoint(it.latitude, it.longitude) })
+            overlay.add(line)
         }
-        mapView.overlays[OVERLAY_TRACK] = trackOverlay
     } catch (e: Exception) {
         println(e)
     }
@@ -2169,6 +2182,13 @@ private fun clearMapCaches() {
     lastPositions = null
     lastAction = null
     lastMapView = null
+    lastTrack = null
+    lastTrackView = null
+    trackOverlay = null
+    trackLines.clear()
+    footprintOverlay = null
+    footprintArcs.clear()
+    footprintLines.clear()
     configuredTileMapView = null
     configuredTileSource = null
 }

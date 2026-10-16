@@ -572,48 +572,105 @@ class MapViewModel(
         return satData to orbitalPass
     }
 
-    /** Refresh window for the ground track: the line is a curve for one instant, so it is redrawn
-     *  once the map time has drifted this far from the instant it was drawn for. */
-    private val TRACK_REFRESH_MIN_MS = 10_000L
+    /**
+     * Sample step of the repository's track prediction (mirrors the 15 s loop in SatelliteRepo),
+     * used to timestamp the samples so the window can be slid instead of re-predicted.
+     */
+    private val TRACK_SAMPLE_MS = 15_000L
 
+    /**
+     * Largest drift the drawn track is slid through. Anything longer (any real scrub, a page
+     * reentry after minutes off-screen) is cheaper to re-predict from scratch than to extend.
+     */
+    private val TRACK_SLIDE_MAX_MS = 5 * 60_000L
+
+    /** Satellite the samples below belong to, null when there is no track yet. */
+    private var trackSatellite: OrbitalObject? = null
+
+    /** Ground-track samples, oldest first: instant -> subpoint. */
+    private var trackSamples = ArrayList<Pair<Long, GeoPos>>()
+
+    /** Length of the drawn track: 2.4 orbital periods from the map instant. */
+    private fun trackWindowMs(sat: OrbitalObject) = (sat.data.orbitalPeriod * 2.4 * 60_000.0).toLong()
+
+    /** Predicts the whole ground-track window that starts at [date]. */
     private suspend fun getSatTrack(orbitalObject: OrbitalObject, pos: GeoPos, date: Date) {
+        val startMs = date.time
+        val endMs = startMs + trackWindowMs(orbitalObject)
+        val predicted = satelliteRepo.getTrack(orbitalObject, pos, startMs, endMs)
+        val samples = ArrayList<Pair<Long, GeoPos>>(predicted.size + 1)
+        predicted.forEachIndexed { index, satPos ->
+            samples.add(startMs + index * TRACK_SAMPLE_MS to satPos.toMapGeoPos())
+        }
+        trackSatellite = orbitalObject
+        trackSamples = samples
+        publishTrack(samples, startMs)
+    }
+
+    /**
+     * Puts the ground track on [timeMs] the cheap way: the head is re-anchored on the satellite
+     * itself (one prediction) and, every 15 s of map time, one more sample is appended at the
+     * tail — instead of re-deriving the whole 2.4-lap curve. The track is a curve for an instant,
+     * so leaving [timeMs] out of it is what made the line walk away from the satellite while the
+     * map was live (the scrub path hid it, because a scrub rebuilt the track).
+     */
+    private suspend fun syncTrack(orbitalObject: OrbitalObject, pos: GeoPos, timeMs: Long) {
+        val samples = trackSamples
+        val rebuild = trackSatellite !== orbitalObject || samples.isEmpty() ||
+            abs(timeMs - trackTimeMs) > TRACK_SLIDE_MAX_MS
+        if (rebuild) {
+            getSatTrack(orbitalObject, pos, Date(timeMs))
+            return
+        }
+        if (timeMs == trackTimeMs) return
+        val endMs = timeMs + trackWindowMs(orbitalObject)
+        var head = 0
+        while (head < samples.size && samples[head].first < timeMs) head++
+        if (head > 0) samples.subList(0, head).clear()
+        val tailMs = samples.lastOrNull()?.first ?: timeMs
+        if (tailMs + TRACK_SAMPLE_MS <= endMs) {
+            val from = tailMs + TRACK_SAMPLE_MS
+            satelliteRepo.getTrack(orbitalObject, pos, from, endMs).forEachIndexed { index, satPos ->
+                samples.add(from + index * TRACK_SAMPLE_MS to satPos.toMapGeoPos())
+            }
+        }
+        val exact = satelliteRepo.getPosition(orbitalObject, pos, timeMs).toMapGeoPos()
+        if (samples.isEmpty()) samples.add(timeMs to exact) else samples[0] = timeMs to exact
+        publishTrack(samples, timeMs)
+    }
+
+    /** Splits the samples into date-line-safe laps and publishes them to the map. */
+    private fun publishTrack(samples: List<Pair<Long, GeoPos>>, anchorMs: Long) {
         val satTracks = mutableListOf<List<GeoPos>>()
         val currentTrack = mutableListOf<GeoPos>()
-        val endDate = Date(date.time + (orbitalObject.data.orbitalPeriod * 2.4 * 60000L).toLong())
         // Longitude of the previous sample, NaN before the first one. Starting this at 0.0 (as it
-        // used to) hid every crossing between the first two samples, and the ±170 test below missed
-        // the crossings that land just inside the range — either way the two points either side of
-        // the date line ended up in one polyline, which osmdroid draws as a straight line all the
-        // way across the map at a constant latitude (the "broken track wrapped to the other side").
+        // used to) hid every crossing between the first two samples, and the ±170 test it used
+        // missed the crossings that land just inside the range — either way the two points either
+        // side of the date line ended up in one polyline, which osmdroid draws as a straight line
+        // all the way across the map at a constant latitude (the "broken track wrapped to the
+        // other side"). Any step wider than a half turn is a date-line crossing.
         var oldLongitude = Double.NaN
-        satelliteRepo.getTrack(orbitalObject, pos, date.time, endDate.time).forEach { satPos ->
-            val currentPosition = satPos.toMapGeoPos()
-            val jumped = !oldLongitude.isNaN() &&
-                abs(currentPosition.longitude - oldLongitude) > 180.0
+        samples.forEach { (_, position) ->
+            val jumped = !oldLongitude.isNaN() && abs(position.longitude - oldLongitude) > 180.0
             if (jumped) {
-                // Close the lap on the meridian it left, start a new one on the other side.
                 val meridian = if (oldLongitude > 0.0) 180.0 else -180.0
-                currentTrack.add(GeoPos(currentPosition.latitude, meridian))
+                currentTrack.add(GeoPos(position.latitude, meridian))
                 satTracks.add(ArrayList(currentTrack))
                 currentTrack.clear()
             }
-            oldLongitude = currentPosition.longitude
-            currentTrack.add(currentPosition)
+            oldLongitude = position.longitude
+            currentTrack.add(position)
         }
         satTracks.add(currentTrack)
-        trackTimeMs = date.time
+        trackTimeMs = anchorMs
         _uiState.update { it.copy(track = satTracks) }
     }
 
     /**
-     * Recomputes the selected satellite's ground track once the map time has moved past
-     * [TRACK_REFRESH_MIN_MS] since the line was drawn. Without this the track keeps describing the
-     * instant of the selection while the markers, footprint and readout follow the scrub, so the
-     * line drifts away from the satellite it belongs to.
+     * Keeps the drawn track on [timeMs] while the selection is unchanged.
      */
     private suspend fun maybeRefreshTrack(selected: OrbitalObject, pos: GeoPos, timeMs: Long) {
-        if (abs(timeMs - trackTimeMs) < TRACK_REFRESH_MIN_MS) return
-        getSatTrack(selected, pos, Date(timeMs))
+        syncTrack(selected, pos, timeMs)
     }
 
     companion object {
