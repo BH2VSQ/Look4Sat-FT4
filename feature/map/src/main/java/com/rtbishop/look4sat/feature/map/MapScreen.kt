@@ -2032,18 +2032,50 @@ private fun setSatelliteTrack(satTrack: List<List<GeoPos>>, mapView: MapView) {
                 mapView.overlays[OVERLAY_TRACK] = it
             }
         overlay.items.clear()
-        satTrack.forEachIndexed { index, track ->
-            val line = trackLines.getOrNull(index) ?: Polyline().apply {
-                outlinePaint.set(trackPaint)
-                trackLines.add(this)
+        var lineIndex = 0
+        satTrack.forEach { track ->
+            // osmdroid keeps longitudes as given but draws overlays in ONE world copy, so a lap
+            // that runs up to ±180 loses everything on the far side of the meridian (the line stops
+            // at it and nothing appears on the other side). Award boundaries solve the same thing
+            // with a whole-turn offset towards the view centre; here the offsets are baked in
+            // instead, so the track stays correct while panning without needing the view centre.
+            for (turn in trackTurnsFor(track)) {
+                val offset = turn * 360.0
+                val line = trackLines.getOrNull(lineIndex) ?: Polyline().apply {
+                    outlinePaint.set(trackPaint)
+                    trackLines.add(this)
+                }
+                lineIndex++
+                line.setPoints(
+                    if (offset == 0.0) track.map { GeoPoint(it.latitude, it.longitude) }
+                    else track.map { GeoPoint(it.latitude, it.longitude + offset) }
+                )
+                overlay.add(line)
             }
-            line.setPoints(track.map { GeoPoint(it.latitude, it.longitude) })
-            overlay.add(line)
         }
     } catch (e: Exception) {
         println(e)
     }
 }
+
+/**
+ * Whole 360° turns to draw [track] at: just the real position, or one copy either side when it runs
+ * close to the antimeridian. Only near ±180 does the far half need a copy in the neighbouring world
+ * — everywhere else one copy is exactly where it belongs, and the extra points would be dead weight.
+ */
+private fun trackTurnsFor(track: List<GeoPos>): IntArray {
+    val nearDateLine = track.any { abs(it.longitude) > TRACK_DATELINE_MARGIN }
+    return if (nearDateLine) intArrayOf(-1, 0, 1) else intArrayOf(0)
+}
+
+/** [trackTurnsFor] for osmdroid points (the footprint arcs). */
+private fun turnsForPoints(points: List<GeoPoint>): IntArray {
+    val nearDateLine = points.any { abs(it.longitude) > TRACK_DATELINE_MARGIN }
+    return if (nearDateLine) intArrayOf(-1, 0, 1) else intArrayOf(0)
+}
+
+/** Within this many degrees of ±180 a line needs its neighbouring world copies drawn too. */
+private const val TRACK_DATELINE_MARGIN = 176.0
 
 /** Footprint circle, split into arcs that each stay on one side of the date line */
 private var footprintOverlay: FolderOverlay? = null
@@ -2081,12 +2113,23 @@ private fun setFootprint(orbitalPos: OrbitalPos, mapView: MapView) {
             previousLon = lon
             hasPrevious = true
         }
-        while (footprintLines.size < arcCount) {
-            footprintLines.add(Polyline().apply { outlinePaint.set(footprintPaint) })
-        }
+        var lineIndex = 0
         for (index in 0 until arcCount) {
-            footprintLines[index].setPoints(footprintArcs[index])
-            overlay.add(footprintLines[index])
+            val arc = footprintArcs[index]
+            // Same world-copy reasoning as the track: near the meridian the arc that continues on
+            // the other side is drawn outside the visible copy unless it also exists one world over.
+            for (turn in turnsForPoints(arc)) {
+                while (footprintLines.size <= lineIndex) {
+                    footprintLines.add(Polyline().apply { outlinePaint.set(footprintPaint) })
+                }
+                val line = footprintLines[lineIndex]
+                lineIndex++
+                line.setPoints(
+                    if (turn == 0) arc
+                    else arc.map { GeoPoint(it.latitude, it.longitude + turn * 360.0) }
+                )
+                overlay.add(line)
+            }
         }
     } catch (e: Exception) {
         println(e)
