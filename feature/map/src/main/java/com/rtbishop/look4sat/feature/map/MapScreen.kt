@@ -546,17 +546,15 @@ private fun MapScreen(
                         setTerminator(uiState.sunLatDeg, uiState.sunLonDeg, view)
                         setSubSolarPoint(uiState.sunLatDeg, uiState.sunLonDeg, view, uiState.isLightUi)
                         setMoonPosition(uiState.moonLatDeg, uiState.moonLonDeg, view, uiState.isLightUi)
-                        // Time scrub: chase the scrubbed satellite in the same pass that moved its
-                        // marker and footprint, interpolating across one slider step so the map
-                        // glides instead of stepping. Doing this from a separate effect applied the
-                        // camera after the markers, and the two alternating on screen was the shake.
+                        // Time scrub: keep the scrubbed satellite centred, in the same pass that
+                        // moves its marker so the two can never disagree. The pan is applied
+                        // directly instead of as an osmdroid animation: the eased clock advances
+                        // every frame now, and re-issuing an 80 ms animation that often made the
+                        // camera trail the satellite (a moving target restarts it before it gets
+                        // anywhere) instead of following it.
                         if (uiState.isScrubbing) {
                             uiState.mapData?.osmPos?.let { point ->
-                                view.controller.animateTo(
-                                    GeoPoint(point.latitude, point.longitude),
-                                    view.zoomLevelDouble,
-                                    SCRUB_FOLLOW_MS
-                                )
+                                view.controller.setCenter(GeoPoint(point.latitude, point.longitude))
                             }
                         }
                     }
@@ -1746,9 +1744,6 @@ private const val VIEWPORT_MARGIN = 8.0
 
 /** Debounce for viewport-driven marker refreshes, in milliseconds */
 private const val MAP_LISTENER_DELAY = 128L
-
-/** Camera interpolation window while dragging: two slider steps, so it tracks without lag. */
-private const val SCRUB_FOLLOW_MS = 80L
 
 /** Shared dot icon used when too many satellites are visible to label them */
 private var dotIcon: Drawable? = null
