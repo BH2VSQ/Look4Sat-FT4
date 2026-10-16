@@ -74,6 +74,17 @@ abstract class OrbitalObject(val data: OrbitalData) {
         }
     }
 
+    /**
+     * Serialised per satellite on purpose: this object owns its whole prediction workspace (the
+     * position/velocity vectors, `julUTC`, `orbitalPos`) and every entry point below resets and
+     * rewrites it. Two callers predicting the SAME satellite — the map's tick loop, its scrub step
+     * and its off-path refresh worker, the radar and mutual screens, the tracking service — would
+     * otherwise trample each other, and the loser finishes on the untouched default: a sub-satellite
+     * point of exactly latitude 0, longitude 0, which the map drew as track lines fanning out of the
+     * Gulf of Guinea. The lock is the satellite instance, so different satellites still predict
+     * concurrently. See OrbitalObjectConcurrencyTest.
+     */
+    @Synchronized
     fun getPosition(pos: GeoPos, time: Long): OrbitalPos {
         orbitalPos = OrbitalPos()
         // Date/time at which the position and velocity were calculated
@@ -99,6 +110,7 @@ abstract class OrbitalObject(val data: OrbitalData) {
      * eclipse, and squint calculations that aren't needed when just searching for
      * horizon crossings.
      */
+    @Synchronized
     fun getElevation(pos: GeoPos, time: Long): Double {
         julUTC = calcCurrentDaynum(time) + 2444238.5
         val tsince = (julUTC - julEpoch) * MIN_PER_DAY
@@ -113,6 +125,7 @@ abstract class OrbitalObject(val data: OrbitalData) {
      * Full position calculation that also populates azimuth, altitude, etc.
      * Used when we need all fields (AOS/LOS refinement, track computation).
      */
+    @Synchronized
     fun getFullPosition(pos: GeoPos, time: Long): OrbitalPos {
         orbitalPos = OrbitalPos()
         julUTC = calcCurrentDaynum(time) + 2444238.5
