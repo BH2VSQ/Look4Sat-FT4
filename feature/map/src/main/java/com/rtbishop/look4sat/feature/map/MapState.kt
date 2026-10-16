@@ -55,7 +55,13 @@ data class MapState(
      *  above the slider shows this, so it stays in step with the markers. */
     val mapTimeMs: Long = 0L,
     /** True while the time slider is under the finger; the prediction loop stands down then. */
-    val isScrubbing: Boolean = false
+    val isScrubbing: Boolean = false,
+    /**
+     * Incremented on every scrub-driven state update. The map follows the satellite for each new
+     * value, which is what keeps a *tap* on the slider tracking too: a tap starts and finishes
+     * inside one frame, so [isScrubbing] is never observed true for it.
+     */
+    val scrubSerial: Long = 0L
 )
 
 sealed interface MapAction {

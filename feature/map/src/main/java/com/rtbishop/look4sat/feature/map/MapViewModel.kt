@@ -418,7 +418,8 @@ class MapViewModel(
                 sunLonDeg = sunPos.longitude,
                 moonLatDeg = moonPos.declination, // sub-lunar latitude = declination
                 moonLonDeg = if (moonPos.gha <= 180.0) -moonPos.gha else 360.0 - moonPos.gha,
-                mapTimeMs = date.time
+                mapTimeMs = date.time,
+                scrubSerial = state.scrubSerial + 1
             )
         }
     }

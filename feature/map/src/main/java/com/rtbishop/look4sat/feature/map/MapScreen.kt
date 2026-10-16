@@ -562,10 +562,14 @@ private fun MapScreen(
                         // every frame now, and re-issuing an 80 ms animation that often made the
                         // camera trail the satellite (a moving target restarts it before it gets
                         // anywhere) instead of following it.
-                        if (uiState.isScrubbing) {
+                        // Also fires for a new scrub SERIAL, not just while isScrubbing: a tap on
+                        // the slider starts and finishes within one frame, so the flag is never
+                        // seen true and the satellite used to end up off-screen.
+                        if (uiState.isScrubbing || uiState.scrubSerial != lastFollowedScrubSerial) {
                             uiState.mapData?.osmPos?.let { point ->
                                 view.controller.setCenter(GeoPoint(point.latitude, point.longitude))
                             }
+                            lastFollowedScrubSerial = uiState.scrubSerial
                         }
                     }
                     scrubInProgress = uiState.isScrubbing
@@ -1814,6 +1818,9 @@ private var lastAction: ((OrbitalObject) -> Unit)? = null
 @Volatile
 private var scrubInProgress = false
 
+/** Last [MapState.scrubSerial] the camera was centred for (see the map update pass). */
+private var lastFollowedScrubSerial = 0L
+
 /** Pool of reusable Marker objects keyed by satellite name, to avoid re-creation every frame */
 private val markerPool = HashMap<String, Marker>()
 private var lastMapView: MapView? = null
@@ -2205,6 +2212,7 @@ private fun clearMapCaches() {
     lastPositions = null
     lastAction = null
     lastMapView = null
+    lastFollowedScrubSerial = 0L
     lastTrack = null
     lastTrackView = null
     trackOverlay = null
