@@ -98,6 +98,9 @@ class MapViewModel(
     /** Wall clock of the last full-constellation refresh during a drag, in milliseconds. */
     private var lastFullScrubAtMs = 0L
 
+    /** Map instant the currently drawn ground track was computed for (0 = none yet). */
+    private var trackTimeMs = 0L
+
     /**
      * Requests for an off-path constellation refresh, conflated so at most one is ever pending.
      * The heavy batch runs on its own worker: putting it on the slider path is what made a drag
@@ -191,6 +194,8 @@ class MapViewModel(
                     val glided = glidePositions(state.positions, selected, null, state.mapTimeMs)
                     if (glided == null) state else state.copy(positions = glided)
                 }
+                // The constellation is on the new instant now, and the track describes an instant.
+                maybeRefreshTrack(selected, stationPos, timeMs)
             }
         }
         val (selectedCatNum, _) = satelliteRepo.selectedPass.value
@@ -317,7 +322,9 @@ class MapViewModel(
             // dispatcher. On Main that posts one continuation per satellite per tick, which
             // floods the looper and ANRs for users tracking thousands of objects.
             dataUpdateJob = launch(Dispatchers.Default) {
-                val dateNow = Date()
+                // The track belongs to the instant the map is showing, not to wall clock: with an
+                // active scrub offset the line has to start where the markers are.
+                val dateNow = Date(System.currentTimeMillis() + timeOffsetMs)
                 getStationPosition()
                 getSatTrack(orbitalObject, stationPos, dateNow)
                 // Scale update interval based on satellite count to avoid excessive CPU usage
@@ -382,6 +389,8 @@ class MapViewModel(
                 mapTimeMs = date.time
             )
         }
+        // The ground track describes one instant: keep it on the instant the map is showing.
+        maybeRefreshTrack(selected, pos, date.time)
     }
 
     /**
@@ -563,6 +572,10 @@ class MapViewModel(
         return satData to orbitalPass
     }
 
+    /** Refresh window for the ground track: the line is a curve for one instant, so it is redrawn
+     *  once the map time has drifted this far from the instant it was drawn for. */
+    private val TRACK_REFRESH_MIN_MS = 10_000L
+
     private suspend fun getSatTrack(orbitalObject: OrbitalObject, pos: GeoPos, date: Date) {
         val satTracks = mutableListOf<List<GeoPos>>()
         val currentTrack = mutableListOf<GeoPos>()
@@ -588,7 +601,19 @@ class MapViewModel(
             currentTrack.add(currentPosition)
         }
         satTracks.add(currentTrack)
+        trackTimeMs = date.time
         _uiState.update { it.copy(track = satTracks) }
+    }
+
+    /**
+     * Recomputes the selected satellite's ground track once the map time has moved past
+     * [TRACK_REFRESH_MIN_MS] since the line was drawn. Without this the track keeps describing the
+     * instant of the selection while the markers, footprint and readout follow the scrub, so the
+     * line drifts away from the satellite it belongs to.
+     */
+    private suspend fun maybeRefreshTrack(selected: OrbitalObject, pos: GeoPos, timeMs: Long) {
+        if (abs(timeMs - trackTimeMs) < TRACK_REFRESH_MIN_MS) return
+        getSatTrack(selected, pos, Date(timeMs))
     }
 
     companion object {
