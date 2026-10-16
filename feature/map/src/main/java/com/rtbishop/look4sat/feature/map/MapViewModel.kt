@@ -567,20 +567,21 @@ class MapViewModel(
         val satTracks = mutableListOf<List<GeoPos>>()
         val currentTrack = mutableListOf<GeoPos>()
         val endDate = Date(date.time + (orbitalObject.data.orbitalPeriod * 2.4 * 60000L).toLong())
-        var oldLongitude = 0.0
+        // Longitude of the previous sample, NaN before the first one. Starting this at 0.0 (as it
+        // used to) hid every crossing between the first two samples, and the ±170 test below missed
+        // the crossings that land just inside the range — either way the two points either side of
+        // the date line ended up in one polyline, which osmdroid draws as a straight line all the
+        // way across the map at a constant latitude (the "broken track wrapped to the other side").
+        var oldLongitude = Double.NaN
         satelliteRepo.getTrack(orbitalObject, pos, date.time, endDate.time).forEach { satPos ->
             val currentPosition = satPos.toMapGeoPos()
-            if (oldLongitude < -170.0 && currentPosition.longitude > 170.0) {
-                // adding left terminal position
-                currentTrack.add(GeoPos(currentPosition.latitude, -180.0))
-                val finishedTrack = mutableListOf<GeoPos>().apply { addAll(currentTrack) }
-                satTracks.add(finishedTrack)
-                currentTrack.clear()
-            } else if (oldLongitude > 170.0 && currentPosition.longitude < -170.0) {
-                // adding right terminal position
-                currentTrack.add(GeoPos(currentPosition.latitude, 180.0))
-                val finishedTrack = mutableListOf<GeoPos>().apply { addAll(currentTrack) }
-                satTracks.add(finishedTrack)
+            val jumped = !oldLongitude.isNaN() &&
+                abs(currentPosition.longitude - oldLongitude) > 180.0
+            if (jumped) {
+                // Close the lap on the meridian it left, start a new one on the other side.
+                val meridian = if (oldLongitude > 0.0) 180.0 else -180.0
+                currentTrack.add(GeoPos(currentPosition.latitude, meridian))
+                satTracks.add(ArrayList(currentTrack))
                 currentTrack.clear()
             }
             oldLongitude = currentPosition.longitude
