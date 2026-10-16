@@ -71,6 +71,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -130,6 +131,8 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import java.net.URLEncoder
+import kotlin.math.abs
+import kotlin.math.exp
 
 // Overlay indices
 private const val OVERLAY_TDT_LABELS = 0
@@ -1085,12 +1088,14 @@ private fun formatTime(epochMs: Long, isUtc: Boolean): String {
 // region Time scrub bar
 
 /**
- * Slider-to-map update interval while dragging, in milliseconds. Throttling keeps the per-pixel
- * callbacks off the satellite prediction path; 80 ms (12.5 fps) read as visible stepping, and
- * with the per-step work cut down (marker/track/footprint are no longer rebuilt) 40 ms (25 fps)
- * is affordable and reads as continuous.
+ * Time constant of the eased scrub clock, in milliseconds. The readout and the map chase the
+ * finger over roughly this long (settling in about three times it): the steps between two finger
+ * positions, each worth tens of seconds of orbit, become continuous motion instead of jumps.
  */
-private const val SCRUB_THROTTLE_MS = 40L
+private const val SCRUB_EASE_MS = 100.0
+
+/** Fraction of the span at which the eased clock counts as caught up (~0.05 % of the track). */
+private const val SCRUB_EASE_EPSILON = 0.0005f
 
 /** Width reserved for the drag bubble, used to keep it inside the slider's track. */
 private val scrubBubbleWidth = 64.dp
@@ -1117,16 +1122,50 @@ private fun TimeScrubBar(
     onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Local thumb fraction: it has to follow the finger even between throttled updates.
-    var fraction by remember { mutableStateOf(0f) }
+    // Finger position: the thumb follows it 1:1 and it is the value the clock eases towards.
+    var fingerFraction by remember { mutableStateOf(0f) }
+    // Reported position: the readout and the map ease onto the finger's value over a few frames.
+    // One slider pixel is ~48 s of orbit, so pushing the raw finger value stepped the satellite
+    // and its footprint by hundreds of kilometres on every update — during a quick drag that reads
+    // as teleporting. Easing turns those steps into continuous motion and settles exactly.
+    var shownFraction by remember { mutableStateOf(0f) }
     var dragging by remember { mutableStateOf(false) }
-    // "Now" captured when the gesture starts: the bubble must not jitter with the wall clock
-    // while the fingerprint of the drag is already deciding the instant.
+    // "Now" captured when the gesture starts: the readout must not jitter with the wall clock
+    // while the finger is already deciding the instant.
     var anchorMs by remember { mutableStateOf(0L) }
-    val lastPushMs = remember { longArrayOf(0L) }
-    // Re-sync when the offset changes from outside (the "Now" button).
+    // Re-sync when the offset changes from outside (the reset button).
     LaunchedEffect(offsetMs, spanMs) {
-        if (!dragging) fraction = (offsetMs.toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
+        if (!dragging) {
+            fingerFraction = (offsetMs.toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
+            shownFraction = fingerFraction
+        }
+    }
+    // Easing loop: while the finger is down, chase it frame by frame and report the eased instant.
+    // Frame-rate independent exponential approach; the map only ever moves by small increments, so
+    // even a flick glides — and the loop stops reporting once it has caught up.
+    LaunchedEffect(dragging, spanMs) {
+        if (!dragging) return@LaunchedEffect
+        var lastFrameMs = 0.0
+        var lastReportedMs = Long.MIN_VALUE
+        while (true) {
+            var reported = Long.MIN_VALUE
+            withFrameNanos { frameNs ->
+                val frameMs = frameNs / 1_000_000.0
+                val deltaMs = if (lastFrameMs == 0.0) 16.0 else (frameMs - lastFrameMs)
+                lastFrameMs = frameMs
+                val factor = (1.0 - exp(-deltaMs / SCRUB_EASE_MS)).coerceIn(0.0, 1.0)
+                shownFraction += ((fingerFraction - shownFraction) * factor).toFloat()
+                if (abs(fingerFraction - shownFraction) < SCRUB_EASE_EPSILON) {
+                    shownFraction = fingerFraction
+                }
+                val timeMs = (shownFraction * spanMs).toLong()
+                if (timeMs != lastReportedMs) {
+                    lastReportedMs = timeMs
+                    reported = timeMs
+                }
+            }
+            if (reported != Long.MIN_VALUE) onScrub(reported)
+        }
     }
     // The bar has no backing panel: it sits straight on the map. Contrast for its labels comes
     // from a soft halo (plus the clock's own capsule) instead of a black box behind them.
@@ -1139,20 +1178,20 @@ private fun TimeScrubBar(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Fixed-height slot so the readout never moves the slider under the finger. The clock
-            // stays visible: while the finger is down it tracks the thumb (the state only follows
-            // the throttled steps), otherwise it shows the instant the map is rendering.
+            // stays visible: while the finger is down it shows the eased instant (the same one the
+            // map is rendering), otherwise the instant the tick loop last rendered.
             Box(modifier = Modifier.fillMaxWidth().height(22.dp)) {
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = formatTime(
-                            if (dragging) anchorMs + (fraction * spanMs).toLong() else mapTimeMs,
+                            if (dragging) anchorMs + (shownFraction * spanMs).toLong() else mapTimeMs,
                             isUtc
                         ),
                         color = MaterialTheme.colorScheme.primary,
                         fontSize = 12.sp,
                         maxLines = 1,
                         modifier = Modifier
-                            .offset(x = ((maxWidth - scrubBubbleWidth) * fraction).coerceAtLeast(0.dp))
+                            .offset(x = ((maxWidth - scrubBubbleWidth) * fingerFraction).coerceAtLeast(0.dp))
                             .background(ComposeColor.Black.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     )
@@ -1163,23 +1202,22 @@ private fun TimeScrubBar(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Slider(
-                    value = fraction,
+                    value = fingerFraction,
                     onValueChange = { value ->
                         if (!dragging) {
                             dragging = true
                             anchorMs = System.currentTimeMillis()
+                            // Start the eased clock where the finger grabbed the track, so the
+                            // readout does not glide in from wherever it was before.
+                            shownFraction = value
                             onScrubStart()
                         }
-                        fraction = value
-                        val nowMs = System.currentTimeMillis()
-                        if (nowMs - lastPushMs[0] >= SCRUB_THROTTLE_MS) {
-                            lastPushMs[0] = nowMs
-                            onScrub((value * spanMs).toLong())
-                        }
+                        fingerFraction = value
                     },
                     onValueChangeFinished = {
+                        // Settle exactly on the finger's last value and hand back to the tick loop.
                         dragging = false
-                        onScrub((fraction * spanMs).toLong())
+                        onScrub((fingerFraction * spanMs).toLong())
                         onScrubEnd()
                     },
                     valueRange = 0f..1f,
