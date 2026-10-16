@@ -1147,6 +1147,16 @@ private fun TimeScrubBar(
     // "Now" captured when the gesture starts: the readout must not jitter with the wall clock
     // while the finger is already deciding the instant.
     var anchorMs by remember { mutableStateOf(0L) }
+    // The instant the finger is pointing at. It is frozen for as long as the gesture lasts, which is
+    // what the readout shows and what the map must therefore render.
+    fun pickedInstantMs(fraction: Float): Long = anchorMs + (fraction * spanMs).toLong()
+    // What goes to the map: the picked instant expressed as an offset from the moment the map reads
+    // it. Reporting `fraction * span` as-is (i.e. "offset from now") made the map time creep forward
+    // with the wall clock during a hold — the satellite drifted while the readout stood still — and
+    // jump forward by the whole hold on release, so a two-minute hold landed two minutes past the
+    // instant the finger had chosen.
+    fun offsetFor(fraction: Float): Long =
+        (pickedInstantMs(fraction) - System.currentTimeMillis()).coerceAtLeast(0L)
     // Re-sync when the offset changes from outside (the reset button).
     LaunchedEffect(offsetMs, spanMs) {
         if (!easing) {
@@ -1162,9 +1172,9 @@ private fun TimeScrubBar(
         if (!easing) return@LaunchedEffect
         try {
             var lastFrameMs = 0.0
-            var lastReportedMs = Long.MIN_VALUE
+            var lastPickedMs = Long.MIN_VALUE
             while (true) {
-                var reported = Long.MIN_VALUE
+                var changed = false
                 var settled = false
                 withFrameNanos { frameNs ->
                     val frameMs = frameNs / 1_000_000.0
@@ -1176,17 +1186,17 @@ private fun TimeScrubBar(
                         shownFraction = fingerFraction
                         settled = true
                     }
-                    val timeMs = (shownFraction * spanMs).toLong()
-                    if (timeMs != lastReportedMs) {
-                        lastReportedMs = timeMs
-                        reported = timeMs
+                    val pickedMs = pickedInstantMs(shownFraction)
+                    if (pickedMs != lastPickedMs) {
+                        lastPickedMs = pickedMs
+                        changed = true
                     }
                 }
-                if (reported != Long.MIN_VALUE) onScrub(reported)
-                // Finger up and clock caught up: settle on the exact value, then hand the map back to
-                // the tick loop (which is what makes the camera stop following).
+                if (changed) onScrub(offsetFor(shownFraction))
+                // Finger up and clock caught up: settle on the exact instant, then hand the map back
+                // to the tick loop (which is what makes the camera stop following).
                 if (settled && !dragging) {
-                    onScrub((shownFraction * spanMs).toLong())
+                    onScrub(offsetFor(shownFraction))
                     onScrubEnd()
                     easing = false
                     break
@@ -1222,7 +1232,7 @@ private fun TimeScrubBar(
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = formatTime(
-                            if (dragging) anchorMs + (shownFraction * spanMs).toLong() else mapTimeMs,
+                            if (dragging) pickedInstantMs(shownFraction) else mapTimeMs,
                             isUtc
                         ),
                         color = MaterialTheme.colorScheme.primary,
