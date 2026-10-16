@@ -99,6 +99,14 @@ class MapViewModel(
     private var lastFullScrubAtMs = 0L
 
     /**
+     * Requests for an off-path constellation refresh, conflated so at most one is ever pending.
+     * The heavy batch runs on its own worker: putting it on the slider path is what made a drag
+     * with a big catalogue move in coarse jumps — one slow batch blocked dozens of steps, so the
+     * map advanced roughly once a second instead of following the finger.
+     */
+    private val fullRefreshRequest = MutableStateFlow(0L)
+
+    /**
      * The two most recent full-constellation snapshots and the scrubbed instants they belong to.
      * Between refreshes the other satellites are moved by extrapolating this pair (see
      * [glidePositions]) instead of re-running SGP4 for every one of them on every slider step.
@@ -150,20 +158,38 @@ class MapViewModel(
                 val selected = selectedOrbitalObject ?: return@collect
                 val nowMs = System.currentTimeMillis()
                 val scrubDate = Date(nowMs + offset)
-                // The whole map follows the scrubbed time, not just the selected satellite, so the
-                // rest of the constellation is refreshed too — but only as often as the device can
-                // afford. Last refresh's cost sets the interval on a quarter-duty budget: a big
-                // catalogue degrades to coarser steps instead of stalling the drag, a small one
-                // refreshes several times a second.
+                // Smooth step: the selected satellite is predicted for this instant exactly, every
+                // step, so the marker and its footprint follow the finger.
+                updateScrubbedState(selected, stationPos, scrubDate)
+                // Keep the rest of the constellation on the true track with an off-path refresh.
+                // The request rate follows the last batch's cost (quarter-duty budget) so a big
+                // catalogue is asked for less often, but it never blocks the steps above.
                 val interval = (lastFullScrubCostMs * 4)
                     .coerceIn(MIN_FULL_SCRUB_INTERVAL_MS, MAX_FULL_SCRUB_INTERVAL_MS)
                 if (nowMs - lastFullScrubAtMs >= interval) {
-                    val startedAt = System.nanoTime()
-                    updateMapState(selected, allSatellites, stationPos, scrubDate)
-                    lastFullScrubCostMs = (System.nanoTime() - startedAt) / 1_000_000L
-                    lastFullScrubAtMs = System.currentTimeMillis()
-                } else {
-                    updateScrubbedState(selected, stationPos, scrubDate)
+                    lastFullScrubAtMs = nowMs
+                    fullRefreshRequest.value = nowMs
+                }
+            }
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            fullRefreshRequest.collect {
+                val selected = selectedOrbitalObject ?: return@collect
+                val timeMs = System.currentTimeMillis() + timeOffsetMs
+                val startedAt = System.nanoTime()
+                val (positions, _) = predictConstellation(selected, allSatellites, stationPos, timeMs)
+                lastFullScrubCostMs = (System.nanoTime() - startedAt) / 1_000_000L
+                snapshotOld = snapshotNew
+                snapshotOldTimeMs = snapshotNewTimeMs
+                snapshotNew = positions
+                snapshotNewTimeMs = timeMs
+                // The batch lands late by definition. Re-glide it onto the instant the map is
+                // showing now and keep the selected satellite's own (newer, exact) entry, so a
+                // refresh corrects the other markers without rewinding the marker, the readout or
+                // the camera.
+                _uiState.update { state ->
+                    val glided = glidePositions(state.positions, selected, null, state.mapTimeMs)
+                    if (glided == null) state else state.copy(positions = glided)
                 }
             }
         }
@@ -329,38 +355,10 @@ class MapViewModel(
         date: Date
     ) {
         // 1. Compute all positions in parallel, collecting full OrbitalPos for the selected sat
-        val positionsMap = HashMap<OrbitalObject, GeoPos>(orbitalObjects.size)
-        var selectedSatPos: OrbitalPos? = null
-
-        coroutineScope {
-            // Chunk satellites to balance parallelism vs coroutine overhead
-            val chunkSize = maxOf(1, orbitalObjects.size / PARALLEL_CHUNKS)
-            val deferreds = orbitalObjects.chunked(chunkSize).map { chunk ->
-                async {
-                    val localPositions = ArrayList<Pair<OrbitalObject, GeoPos>>(chunk.size)
-                    var localSelectedPos: OrbitalPos? = null
-                    for (satellite in chunk) {
-                        val satPos = satelliteRepo.getPosition(satellite, pos, date.time)
-                        localPositions.add(satellite to satPos.toMapGeoPos())
-                        if (satellite === selected) {
-                            localSelectedPos = satPos
-                        }
-                    }
-                    Pair(localPositions, localSelectedPos)
-                }
-            }
-            for ((localPositions, localSelectedPos) in deferreds.awaitAll()) {
-                for (pair in localPositions) {
-                    positionsMap[pair.first] = pair.second
-                }
-                if (localSelectedPos != null) {
-                    selectedSatPos = localSelectedPos
-                }
-            }
-        }
+        val (positionsMap, predicted) = predictConstellation(selected, orbitalObjects, pos, date.time)
 
         // 2. Derive footprint, info data, sun and moon position from already-computed state
-        val satPos = selectedSatPos ?: satelliteRepo.getPosition(selected, pos, date.time)
+        val satPos = predicted ?: satelliteRepo.getPosition(selected, pos, date.time)
         val footprint = satPos
         val mapData = buildMapData(selected, satPos, date)
         val sunPos = CelestialComputer.getSunPosition(stationPos, date.time)
@@ -415,8 +413,9 @@ class MapViewModel(
 
     /**
      * Marker positions for a slider step that is not a full refresh. The selected satellite is
-     * the freshly predicted one; every other satellite keeps following the scrubbed time by
-     * extrapolating the two latest full snapshots — so the whole constellation glides at the
+     * either the freshly predicted one ([selectedPos]) or, when a background refresh lands late,
+     * the one the map is already showing; every other satellite keeps following the scrubbed time
+     * by extrapolating the two latest full snapshots — so the whole constellation glides at the
      * slider's cadence (tens of steps a second) instead of jumping at the much coarser refresh
      * cadence. The extrapolation window is a single refresh interval, so the drift stays well
      * under the marker size, and the next refresh puts everything back on the true track.
@@ -424,11 +423,13 @@ class MapViewModel(
     private fun glidePositions(
         current: Map<OrbitalObject, GeoPos>?,
         selected: OrbitalObject,
-        selectedPos: GeoPos,
+        selectedPos: GeoPos?,
         timeMs: Long
     ): Map<OrbitalObject, GeoPos>? {
         val base = current ?: return null
-        val newest = snapshotNew ?: return base.toMutableMap().apply { put(selected, selectedPos) }
+        val newest = snapshotNew ?: return base.toMutableMap().apply {
+            selectedPos?.let { put(selected, it) }
+        }
         val older = snapshotOld
         val span = snapshotNewTimeMs - snapshotOldTimeMs
         val step = timeMs - snapshotNewTimeMs
@@ -457,8 +458,51 @@ class MapViewModel(
                 longitude = longitude
             )
         }
-        glide[selected] = selectedPos
+        glide[selected] = selectedPos ?: base[selected] ?: newest[selected] ?: return glide
         return glide
+    }
+
+    /**
+     * Predicts every object in [objects] for [timeMs] in parallel chunks, returning the marker
+     * positions plus the selected satellite's full [OrbitalPos] (null when it is not in the list).
+     * Shared by the tick path and the off-path scrub refresh — the latter runs it on its own
+     * worker so a slow catalogue cannot stall the slider's single-satellite steps.
+     */
+    private suspend fun predictConstellation(
+        selected: OrbitalObject,
+        objects: List<OrbitalObject>,
+        pos: GeoPos,
+        timeMs: Long
+    ): Pair<Map<OrbitalObject, GeoPos>, OrbitalPos?> {
+        val positionsMap = HashMap<OrbitalObject, GeoPos>(objects.size)
+        var selectedSatPos: OrbitalPos? = null
+        coroutineScope {
+            // Chunk satellites to balance parallelism vs coroutine overhead
+            val chunkSize = maxOf(1, objects.size / PARALLEL_CHUNKS)
+            val deferreds = objects.chunked(chunkSize).map { chunk ->
+                async {
+                    val localPositions = ArrayList<Pair<OrbitalObject, GeoPos>>(chunk.size)
+                    var localSelectedPos: OrbitalPos? = null
+                    for (satellite in chunk) {
+                        val satPos = satelliteRepo.getPosition(satellite, pos, timeMs)
+                        localPositions.add(satellite to satPos.toMapGeoPos())
+                        if (satellite === selected) {
+                            localSelectedPos = satPos
+                        }
+                    }
+                    Pair(localPositions, localSelectedPos)
+                }
+            }
+            for ((localPositions, localSelectedPos) in deferreds.awaitAll()) {
+                for (pair in localPositions) {
+                    positionsMap[pair.first] = pair.second
+                }
+                if (localSelectedPos != null) {
+                    selectedSatPos = localSelectedPos
+                }
+            }
+        }
+        return positionsMap to selectedSatPos
     }
 
     /**
@@ -553,11 +597,11 @@ class MapViewModel(
         /** Poll interval while the time slider is under the finger (the tick loop is paused then). */
         private const val SCRUB_IDLE_DELAY = 100L
 
-        /** Floor for the constellation refresh interval while scrubbing, in milliseconds. */
-        private const val MIN_FULL_SCRUB_INTERVAL_MS = 200L
+        /** Floor for the off-path constellation refresh interval while scrubbing, in ms. */
+        private const val MIN_FULL_SCRUB_INTERVAL_MS = 300L
 
-        /** Ceiling: a catalogue too big to refresh faster still moves, just in coarser steps. */
-        private const val MAX_FULL_SCRUB_INTERVAL_MS = 1500L
+        /** Ceiling: a catalogue too slow to refresh often is still corrected, just less often. */
+        private const val MAX_FULL_SCRUB_INTERVAL_MS = 2000L
 
         fun factory(container: IMainContainer) = viewModelFactory {
             initializer {
