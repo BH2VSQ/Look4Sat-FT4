@@ -64,6 +64,7 @@ data download.
 
 ## Conventions
 
+- 每次 Git commit 都必须签名（包括 merge、amend 和 rebase 产生的提交），签名失败时不得创建未签名提交。
 - **Minimal dependencies**: Avoid adding libraries when a simple manual solution exists. Fewer deps = less maintenance.
 - **DI**: Manual — ViewModels use companion `factory()` methods with `IMainContainer` interface.
 - **Navigation**: Type-safe Compose Navigation3 with `@Serializable` data classes as nav keys.
