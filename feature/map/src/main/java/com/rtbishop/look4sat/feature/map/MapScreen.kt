@@ -27,6 +27,9 @@ import android.graphics.drawable.Drawable
 import androidx.collection.LruCache
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -78,6 +81,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -1253,6 +1257,38 @@ private fun TimeScrubBar(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // The Material slider only reports a value once the finger *moves* (a press on its
+                // own is delivered on release, as a tap), so pressing a new spot used to leave the
+                // map on the old instant until the drag started. This observes the same press
+                // without consuming it, maps the finger's x onto the track's travel and seeks right
+                // away; the slider's own drag/tap reports take over from there and correct the few
+                // pixels this mapping assumes for the thumb inset.
+                val pressSeek = Modifier.pointerInput(spanMs) {
+                    // M3's thumb is a 4 dp bar, so the travel is inset by half of it at each end.
+                    val thumbInset = 2.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val travel = size.width - thumbInset * 2f
+                        if (travel > 0f) {
+                            val fraction =
+                                ((down.position.x - thumbInset) / travel).coerceIn(0f, 1f)
+                            if (!dragging) {
+                                dragging = true
+                                easing = true
+                                anchorMs = System.currentTimeMillis()
+                                shownFraction = fraction
+                                onScrubStart()
+                            }
+                            fingerFraction = fraction
+                            onScrub(offsetFor(fraction))
+                            // The slider reports the end of its own gesture; this is the safety net
+                            // for a press it never reports at all, which would otherwise leave the
+                            // bar parked in scrub mode with the prediction loop standing down.
+                            waitForUpOrCancellation()
+                            dragging = false
+                        }
+                    }
+                }
                 Slider(
                     value = fingerFraction,
                     onValueChange = { value ->
@@ -1280,7 +1316,7 @@ private fun TimeScrubBar(
                         activeTrackColor = MaterialTheme.colorScheme.primary,
                         inactiveTrackColor = ComposeColor.Black.copy(alpha = 0.35f)
                     ),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).then(pressSeek)
                 )
                 // Always rendered: the button is part of the bar from the first frame, so the row
                 // never re-layouts when a scrub starts. It greys out while the map is live (there
