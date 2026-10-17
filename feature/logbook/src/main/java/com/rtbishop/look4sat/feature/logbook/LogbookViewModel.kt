@@ -145,6 +145,7 @@ enum class LogbookError {
     EXPORT_PREPARE,
     SAVE,
     DELETE,
+    CLEAR_ALL,
     IMPORT
 }
 
@@ -194,7 +195,8 @@ data class LogbookState(
     val lotwAuditing: Boolean = false,
     val lotwProfileSaved: Boolean = false,
     val showStation: Boolean = false,
-    val stationCallsign: String = ""
+    val stationCallsign: String = "",
+    val showClearAllConfirmation: Boolean = false
 ) {
     val filteredRecords: List<QsoRecord> get() = records.filter { record ->
         (query.isBlank() || listOf(record.theirCallsign, record.myCallsign, record.satelliteName, record.theirGrid, record.myGrid, record.comment)
@@ -222,6 +224,9 @@ sealed interface LogbookAction {
     data class RequestDelete(val record: QsoRecord) : LogbookAction
     data object ConfirmDelete : LogbookAction
     data object DismissDelete : LogbookAction
+    data object RequestClearAll : LogbookAction
+    data object ConfirmClearAll : LogbookAction
+    data object DismissClearAll : LogbookAction
     data class Import(val content: String) : LogbookAction
     data object ClearNotice : LogbookAction
     data class Search(val value: String) : LogbookAction
@@ -305,6 +310,11 @@ class LogbookViewModel(
             is LogbookAction.RequestDelete -> mutableState.update { it.copy(deleteCandidate = action.record) }
             LogbookAction.ConfirmDelete -> deleteCandidate()
             LogbookAction.DismissDelete -> mutableState.update { it.copy(deleteCandidate = null) }
+            LogbookAction.RequestClearAll -> if (mutableState.value.records.isNotEmpty() && !mutableState.value.isBusy) {
+                mutableState.update { it.copy(showClearAllConfirmation = true) }
+            }
+            LogbookAction.ConfirmClearAll -> clearAllRecords()
+            LogbookAction.DismissClearAll -> mutableState.update { it.copy(showClearAllConfirmation = false) }
             is LogbookAction.Import -> importAdi(action.content)
             LogbookAction.ClearNotice -> mutableState.update {
                 it.copy(importResult = null, error = null)
@@ -557,6 +567,31 @@ class LogbookViewModel(
             throw cancelled
         } catch (_: Exception) {
             mutableState.update { it.copy(error = LogbookError.DELETE) }
+        } finally {
+            mutableState.update { it.copy(isBusy = false) }
+        }
+    }
+
+    private fun clearAllRecords() = viewModelScope.launch {
+        if (mutableState.value.isBusy) return@launch
+        mutableState.update { it.copy(isBusy = true) }
+        try {
+            repository.deleteAll()
+            mutableState.update {
+                it.copy(
+                    showClearAllConfirmation = false,
+                    error = null,
+                    importResult = null,
+                    query = "",
+                    modeFilter = SATELLITE_MODE_FILTER,
+                    confirmationFilter = LogbookFilter.ALL,
+                    groupByCallsign = false
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            mutableState.update { it.copy(showClearAllConfirmation = false, error = LogbookError.CLEAR_ALL) }
         } finally {
             mutableState.update { it.copy(isBusy = false) }
         }

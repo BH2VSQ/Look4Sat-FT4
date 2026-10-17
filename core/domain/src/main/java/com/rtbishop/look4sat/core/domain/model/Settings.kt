@@ -76,8 +76,25 @@ data class OtherSettings(
     val stateOfAutoLotwSync: Boolean = true,
     val compassOffsetDegrees: Float = 0f,
     val mapSource: String = MapSource.OSM,
-    val tiandituKey: String = ""
+    val tiandituKey: String = "",
+    /** Which tool occupies the fourth slot in the app's bottom navigation. */
+    val bottomBarTool: String = BottomBarTool.FT4
 )
+
+/** Persisted identifiers for the configurable fourth bottom-navigation slot. */
+object BottomBarTool {
+    const val FT4 = "ft4"
+    const val MAP = "map"
+    const val GRID_FINDER = "grid_finder"
+    const val MUTUAL = "mutual"
+    const val AMSAT = "amsat"
+    const val PASS_SCHEDULE = "pass_schedule"
+
+    fun normalize(value: String): String = when (value) {
+        FT4, MAP, GRID_FINDER, MUTUAL, AMSAT, PASS_SCHEDULE -> value
+        else -> FT4
+    }
+}
 
 object MapSource {
     const val OSM = "osm"

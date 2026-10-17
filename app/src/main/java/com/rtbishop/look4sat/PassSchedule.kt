@@ -23,7 +23,7 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -51,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -75,11 +76,13 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rtbishop.look4sat.core.domain.predict.CelestialComputer
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
 import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.PassRadarPreview
+import com.rtbishop.look4sat.core.presentation.PassDateDivider
 import com.rtbishop.look4sat.core.presentation.elevationColor
 import com.rtbishop.look4sat.core.presentation.infiniteMarquee
 import kotlinx.coroutines.delay
@@ -89,6 +92,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -417,7 +421,7 @@ class PassScheduleAlarmReceiver : BroadcastReceiver() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PassScheduleDestination(navigateUp: () -> Unit) {
     val context = LocalContext.current
@@ -439,6 +443,9 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
         }
     }
     val showTrackingSettings = remember { mutableStateOf(false) }
+    val scheduleDays = remember(passes, isUtc, stationPosition) {
+        groupPassScheduleByDate(passes, isUtc, stationPosition)
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -637,7 +644,7 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -671,20 +678,112 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                items(passes, key = { "${it.catNum}-${it.aosTime}" }) { pass ->
-                    PassScheduleItem(
-                        pass = pass,
-                        now = currentTime,
-                        isUtc = isUtc,
-                        satelliteRepo = container.satelliteRepo,
-                        stationPosition = stationPosition
-                    )
+                scheduleDays.forEach { day ->
+                    stickyHeader(key = "schedule_date_${day.label}") {
+                        PassDateDivider(
+                            label = day.label,
+                            sunriseTime = day.sunriseTime,
+                            sunsetTime = day.sunsetTime
+                        )
+                    }
+                    items(day.passes, key = { "${it.catNum}-${it.aosTime}" }) { pass ->
+                        PassScheduleItem(
+                            pass = pass,
+                            now = currentTime,
+                            isUtc = isUtc,
+                            satelliteRepo = container.satelliteRepo,
+                            stationPosition = stationPosition
+                        )
+                    }
                 }
                 item { Spacer(Modifier.height(8.dp)) }
             }
         }
     }
 }
+private data class PassScheduleDay(
+    val label: String,
+    val sunriseTime: String,
+    val sunsetTime: String,
+    val passes: List<OrbitalPass>
+)
+
+private fun groupPassScheduleByDate(
+    passes: List<OrbitalPass>,
+    isUtc: Boolean,
+    stationPosition: GeoPos
+): List<PassScheduleDay> {
+    if (passes.isEmpty()) return emptyList()
+    val displayTimeZone = if (isUtc) TimeZone.getTimeZone("UTC") else TimeZone.getDefault()
+    val datePattern = if (Locale.getDefault().language == "zh") {
+        "yyyy'年'M'月'd'日' EEEE"
+    } else {
+        "EEE, dd MMM yyyy"
+    }
+    val dateFormatter = SimpleDateFormat(datePattern, Locale.getDefault()).also {
+        it.timeZone = displayTimeZone
+    }
+    val timeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault()).also {
+        it.timeZone = displayTimeZone
+    }
+    val grouped = LinkedHashMap<String, List<OrbitalPass>>()
+    val deepSpacePasses = passes.filter { it.isDeepSpace }
+    if (deepSpacePasses.isNotEmpty()) {
+        grouped[DEEP_SPACE_PASS_GROUP] = deepSpacePasses
+    }
+    passes.filterNot { it.isDeepSpace }
+        .groupByTo(LinkedHashMap()) { dateFormatter.format(Date(it.aosTime)) }
+        .forEach { (label, dayPasses) -> grouped[label] = dayPasses }
+
+    return grouped.map { (label, dayPasses) ->
+        // Match the main pass prediction page: sunrise/sunset are calculated from local midnight,
+        // then formatted using the active UTC/local display preference.
+        val dateAnchor = if (label == DEEP_SPACE_PASS_GROUP) {
+            System.currentTimeMillis()
+        } else {
+            dayPasses.first().aosTime
+        }
+        val localMidnight = startOfDayMillis(dateAnchor, TimeZone.getDefault())
+        val riseSet = findSunRiseSetForDisplayDay(stationPosition, localMidnight)
+        PassScheduleDay(
+            label = label,
+            sunriseTime = if (riseSet.riseTimeMillis > 0L) timeFormatter.format(Date(riseSet.riseTimeMillis)) else "--:--",
+            sunsetTime = if (riseSet.setTimeMillis > 0L) timeFormatter.format(Date(riseSet.setTimeMillis)) else "--:--",
+            passes = dayPasses
+        )
+    }
+}
+
+private const val DEEP_SPACE_PASS_GROUP = "DeepSpace (period >225min)"
+
+private fun startOfDayMillis(timeMillis: Long, timeZone: TimeZone): Long =
+    Calendar.getInstance(timeZone, Locale.getDefault()).apply {
+        this.timeInMillis = timeMillis
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+private fun findSunRiseSetForDisplayDay(
+    observer: GeoPos,
+    localMidnightMillis: Long
+): CelestialComputer.RiseSetTimes {
+    val threshold = 0.8333
+    val dayEnd = localMidnightMillis + 86_400_000L
+    if (CelestialComputer.getSunPosition(observer, localMidnightMillis).elevation > -threshold) {
+        // Polar day / white-night handling matching the main pass list's calculation.
+        for (offset in 1..3) {
+            val result = CelestialComputer.findSunRiseSet(observer, localMidnightMillis - offset * 86_400_000L)
+            if (result.riseTimeMillis in localMidnightMillis..dayEnd &&
+                result.setTimeMillis in localMidnightMillis..dayEnd
+            ) return result
+        }
+        return CelestialComputer.RiseSetTimes(0L, 0L)
+    }
+    return CelestialComputer.findSunRiseSet(observer, localMidnightMillis)
+}
+
 @Composable
 private fun PassScheduleItem(
     pass: OrbitalPass,
@@ -719,114 +818,125 @@ private fun PassScheduleItem(
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(horizontal = 12.dp, vertical = 2.dp),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerLow
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = pass.name,
-                        modifier = Modifier.weight(1f).padding(end = 6.dp).infiniteMarquee(),
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontSize = 21.sp,
-                        lineHeight = 22.sp
-                    )
-                    Text(
-                        text = stringResource(R.string.pass_schedule_countdown, countdown),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontSize = 18.sp,
-                        lineHeight = 19.sp
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = if (pass.isDeepSpace) stringResource(R.string.pass_deep_space) else durationStr,
-                        modifier = Modifier.weight(1f),
-                        fontSize = 18.sp,
-                        lineHeight = 19.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${pass.altitude} km",
-                        modifier = Modifier.weight(1f),
-                        fontSize = 18.sp,
-                        lineHeight = 19.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    val elevColor = elevationColor(pass.maxElevation)
-                    Text(
-                        text = "${pass.maxElevation}°",
-                        modifier = Modifier.weight(0.7f),
-                        fontSize = 18.sp,
-                        lineHeight = 19.sp,
-                        color = elevColor,
-                        maxLines = 1,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    Text(
-                        text = stringResource(R.string.pass_aosLos, pass.aosAzimuth.toInt(), pass.losAzimuth.toInt()),
-                        modifier = Modifier.weight(1.2f),
-                        fontSize = 18.sp,
-                        lineHeight = 19.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.End
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = pass.name,
+                            modifier = Modifier.weight(1f).padding(end = 6.dp).infiniteMarquee(),
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontSize = 21.sp,
+                            lineHeight = 22.sp
+                        )
+                        Text(
+                            text = stringResource(R.string.pass_schedule_countdown, countdown),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontSize = 18.sp,
+                            lineHeight = 19.sp
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (pass.isDeepSpace) stringResource(R.string.pass_deep_space) else durationStr,
+                            modifier = Modifier.weight(1f),
+                            fontSize = 18.sp,
+                            lineHeight = 19.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${pass.altitude} km",
+                            modifier = Modifier.weight(1f),
+                            fontSize = 18.sp,
+                            lineHeight = 19.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        val elevColor = elevationColor(pass.maxElevation)
+                        Text(
+                            text = "${pass.maxElevation}°",
+                            modifier = Modifier.weight(0.7f),
+                            fontSize = 18.sp,
+                            lineHeight = 19.sp,
+                            color = elevColor,
+                            maxLines = 1,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Text(
+                            text = stringResource(R.string.pass_aosLos, pass.aosAzimuth.toInt(), pass.losAzimuth.toInt()),
+                            modifier = Modifier.weight(1.2f),
+                            fontSize = 18.sp,
+                            lineHeight = 19.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        val defaultTime = "--:--:--"
+                        Text(
+                            text = if (pass.isDeepSpace) defaultTime else aosTimeStr,
+                            fontSize = 16.sp,
+                            lineHeight = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        LinearProgressIndicator(
+                            progress = { if (pass.isDeepSpace) 1f else pass.progress.coerceIn(0f, 1f) },
+                            drawStopIndicator = {},
+                            modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                        )
+                        Text(
+                            text = if (pass.isDeepSpace) defaultTime else losTimeStr,
+                            fontSize = 16.sp,
+                            lineHeight = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                    }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    val defaultTime = "--:--:--"
-                    Text(
-                        text = if (pass.isDeepSpace) defaultTime else aosTimeStr,
-                        fontSize = 16.sp,
-                        lineHeight = 17.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1
-                    )
-                    LinearProgressIndicator(
-                        progress = { if (pass.isDeepSpace) 1f else pass.progress.coerceIn(0f, 1f) },
-                        drawStopIndicator = {},
-                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
-                    )
-                    Text(
-                        text = if (pass.isDeepSpace) defaultTime else losTimeStr,
-                        fontSize = 16.sp,
-                        lineHeight = 17.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1
-                    )
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                PassRadarPreview(
+                    pass = pass,
+                    satelliteRepo = satelliteRepo,
+                    stationPosition = stationPosition,
+                    modifier = Modifier.size(44.dp)
+                )
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            PassRadarPreview(
-                pass = pass,
-                satelliteRepo = satelliteRepo,
-                stationPosition = stationPosition,
-                modifier = Modifier.size(44.dp)
-            )
         }
-        HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.background)
+        HorizontalDivider(
+            thickness = 2.dp,
+            color = MaterialTheme.colorScheme.background,
+            modifier = Modifier.padding(horizontal = 12.dp)
+        )
     }
 }

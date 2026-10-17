@@ -27,6 +27,7 @@ import com.rtbishop.look4sat.core.domain.control.IControlDiagnostics
 import com.rtbishop.look4sat.core.domain.repository.IDatabaseRepo
 import com.rtbishop.look4sat.core.domain.ft4.IFt4AudioTransmitter
 import com.rtbishop.look4sat.core.domain.ft4.IFt4Service
+import com.rtbishop.look4sat.core.domain.model.BottomBarTool
 import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
@@ -318,6 +319,9 @@ class SettingsViewModel(
             is SettingsAction.ToggleNightMode -> settingsRepo.updateOtherSettings { it.copy(stateOfNightMode = action.value) }
             is SettingsAction.UpdateMapSettings -> settingsRepo.updateOtherSettings {
                 it.copy(mapSource = action.mapSource, tiandituKey = action.tiandituKey)
+            }
+            is SettingsAction.SetBottomBarTool -> settingsRepo.updateOtherSettings {
+                it.copy(bottomBarTool = BottomBarTool.normalize(action.value))
             }
             is SettingsAction.SetFt4Callsign -> settingsRepo.updateFt4Settings {
                 it.copy(operatorCallsign = action.value)

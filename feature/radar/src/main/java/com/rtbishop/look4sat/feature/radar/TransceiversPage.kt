@@ -106,6 +106,7 @@ import kotlin.time.Duration.Companion.milliseconds
 fun TransceiversPage(
     transceivers: List<SatRadio>,
     selectedUuid: String?,
+    favoriteUuids: Set<String> = emptySet(),
     radioControl: RadioControlSubState,
     onAction: (RadarAction) -> Unit,
     connectRadios: () -> Unit,
@@ -146,6 +147,8 @@ fun TransceiversPage(
                     radio = radio,
                     isExpanded = isExpanded,
                     radioControl = radioControl,
+                    isFavorite = radio.uuid in favoriteUuids,
+                    onToggleFavorite = { radio.catnum?.let { onAction(RadarAction.ToggleFavoriteTransponder(radio.uuid, it)) } },
                     onAction = { action ->
                         if (action == RadarAction.ConnectRadios) connectRadios() else onAction(action)
                     },
@@ -282,6 +285,8 @@ private fun TransceiverItem(
     radio: SatRadio,
     isExpanded: Boolean,
     radioControl: RadioControlSubState,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
     onAction: (RadarAction) -> Unit,
     onToggle: () -> Unit
 ) {
@@ -333,13 +338,26 @@ private fun TransceiverItem(
                         .weight(1f)
                         .infiniteMarquee()
                 )
-                // Right arrow slot — always reserved
-                val iconTint = if (isExpanded) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.outlineVariant
+                // Favorite toggle is satellite-specific and independent of row expansion.
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onToggleFavorite() }
                 ) {
+                    Text(
+                        text = if (isFavorite) "★" else "☆",
+                        color = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 22.sp,
+                        lineHeight = 24.sp
+                    )
+                }
+                val iconTint = if (isExpanded) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outlineVariant
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(24.dp)) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_radios),
                         contentDescription = null,

@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -70,6 +71,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -625,19 +627,77 @@ fun Modifier.layoutPadding(): Modifier {
 }
 
 @Composable
+fun PassDateDivider(label: String, sunriseTime: String, sunsetTime: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Normal,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_sun),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(text = sunriseTime, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_moon),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(text = sunsetTime, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+            }
+        }
+    }
+}
+
+@Composable
 fun ScreenColumn(
     topBar: @Composable (Boolean) -> Unit = {},
     floatingBar: @Composable () -> Unit = {},
+    removeLightThemePanelBackground: Boolean = false,
     content: @Composable (Boolean) -> Unit = {}
 ) {
     val isVertical = isVerticalLayout()
-    Surface(color = MaterialTheme.colorScheme.background) {
-        Box(modifier = Modifier.layoutPadding(), contentAlignment = Alignment.BottomCenter) {
-            Column(verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.extraSmall)) {
+    val isLightColorScheme = MaterialTheme.colorScheme.background.luminance() > 0.5f
+    val panelColor = if (removeLightThemePanelBackground && isLightColorScheme) {
+        MaterialTheme.colorScheme.background
+    } else {
+        MaterialTheme.colorScheme.surfaceContainer
+    }
+    // The root and its Column must explicitly occupy the available screen area.
+    // Otherwise a weighted content Surface can be measured against a wrap-content
+    // parent, causing the top bar and the pass list to overlap or appear centered.
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize().layoutPadding(),
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.extraSmall)
+            ) {
                 topBar(isVertical)
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceContainer
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    color = panelColor
                 ) { content(isVertical) }
             }
             floatingBar()

@@ -25,6 +25,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,12 +41,14 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -77,8 +80,10 @@ import com.rtbishop.look4sat.core.presentation.MainTheme
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.ProjectWikiBody
 import com.rtbishop.look4sat.core.presentation.PassRadarPreview
+import com.rtbishop.look4sat.core.presentation.PassDateDivider
 import com.rtbishop.look4sat.core.presentation.R
-import com.rtbishop.look4sat.core.presentation.ScreenColumn
+import com.rtbishop.look4sat.core.presentation.LocalSpacing
+import com.rtbishop.look4sat.core.presentation.layoutPadding
 import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.SwipeableItem
 import com.rtbishop.look4sat.core.presentation.TimerRow
@@ -175,10 +180,18 @@ private fun PassesScreen(
             )
         }
     }
-    ScreenColumn(
-        topBar = { isVerticalLayout ->
+    // Keep the home screen layout self-contained. This prevents shared ScreenColumn
+    // background/layout tweaks from measuring the header and pass list incorrectly.
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().layoutPadding(),
+            verticalArrangement = Arrangement.spacedBy(LocalSpacing.current.extraSmall)
+        ) {
             TopBar(
-                isVerticalLayout = isVerticalLayout,
+                isVerticalLayout = isVerticalLayout(),
                 startAction = {
                     IconCard(action = { onAction(PassesAction.TogglePassesDialog) }, resId = R.drawable.ic_filter)
                 },
@@ -192,20 +205,21 @@ private fun PassesScreen(
                     IconCard(action = navigateToMap, resId = R.drawable.ic_map)
                 }
             )
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                PassesList(
+                    isRefreshing = uiState.isRefreshing,
+                    isUtc = uiState.isUtc,
+                    passes = uiState.itemsList,
+                    groupedPasses = uiState.groupedPasses,
+                    sunTimes = uiState.sunTimes,
+                    focusedCatNum = uiState.focusedCatNum,
+                    navigateToRadar = navigateToRadar,
+                    onAction = onAction,
+                    satelliteRepo = satelliteRepo,
+                    stationPosition = stationPosition
+                )
+            }
         }
-    ) { _ ->
-        PassesList(
-            isRefreshing = uiState.isRefreshing,
-            isUtc = uiState.isUtc,
-            passes = uiState.itemsList,
-            groupedPasses = uiState.groupedPasses,
-            sunTimes = uiState.sunTimes,
-            focusedCatNum = uiState.focusedCatNum,
-            navigateToRadar = navigateToRadar,
-            onAction = onAction,
-            satelliteRepo = satelliteRepo,
-            stationPosition = stationPosition
-        )
     }
 }
 
@@ -225,7 +239,10 @@ private fun PassesList(
 ) {
     val isVerticalLayout = isVerticalLayout()
     val refreshState = rememberPullToRefreshState()
-    ElevatedCard(modifier = Modifier.fillMaxSize()) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxSize(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             state = refreshState,
@@ -254,7 +271,7 @@ private fun PassesList(
                             if (headerVisible) {
                                 stickyHeader(key = "header_$dateLabel") {
                                     val (rise, set) = sunTimes[dateLabel] ?: ("--:--" to "--:--")
-                                    StickyDateHeader(label = dateLabel, sunriseTime = rise, sunsetTime = set)
+                                    PassDateDivider(label = dateLabel, sunriseTime = rise, sunsetTime = set)
                                 }
                             }
                             val visiblePasses = if (targetFocus == null) dayPasses
@@ -278,45 +295,6 @@ private fun PassesList(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StickyDateHeader(label: String, sunriseTime: String, sunsetTime: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-    ) {
-        Text(
-            text = label,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Normal,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_sun),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(text = sunriseTime, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_moon),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(text = sunsetTime, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }

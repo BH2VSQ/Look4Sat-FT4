@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 
@@ -44,6 +45,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.rtbishop.look4sat.core.domain.model.BottomBarTool
 import com.rtbishop.look4sat.core.domain.model.DataSourcesSettings
 import com.rtbishop.look4sat.core.domain.time.ClockSource
 import com.rtbishop.look4sat.core.domain.model.OtherSettings
@@ -115,6 +119,7 @@ private fun SettingsScreen(
     val context = LocalContext.current
     var showUpdateChecker by rememberSaveable { mutableStateOf(false) }
     var showMapSettings by rememberSaveable { mutableStateOf(false) }
+    var showBottomToolSettings by rememberSaveable { mutableStateOf(false) }
     var showProjectWiki by rememberSaveable { mutableStateOf(false) }
     if (showProjectWiki) {
         ProjectWikiDialog(onDismiss = { showProjectWiki = false })
@@ -165,6 +170,53 @@ private fun SettingsScreen(
             onSave = { mapSource, tiandituKey ->
                 onAction(SettingsAction.UpdateMapSettings(mapSource, tiandituKey))
                 showMapSettings = false
+            }
+        )
+    }
+
+    if (showBottomToolSettings) {
+        val options = listOf(
+            BottomBarTool.FT4 to R.string.nav_ft4,
+            BottomBarTool.MAP to R.string.nav_map,
+            BottomBarTool.GRID_FINDER to R.string.gridfinder_title,
+            BottomBarTool.MUTUAL to R.string.nav_mutual,
+            BottomBarTool.AMSAT to R.string.nav_amsat,
+            BottomBarTool.PASS_SCHEDULE to R.string.pass_schedule_title
+        )
+        AlertDialog(
+            onDismissRequest = { showBottomToolSettings = false },
+            title = { Text(stringResource(R.string.prefs_bottom_tool_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.prefs_bottom_tool_description))
+                    options.forEach { (tool, labelRes) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.small)
+                                .clickable {
+                                    onAction(SettingsAction.SetBottomBarTool(tool))
+                                    showBottomToolSettings = false
+                                }
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = uiState.otherSettings.bottomBarTool == tool,
+                                onClick = {
+                                    onAction(SettingsAction.SetBottomBarTool(tool))
+                                    showBottomToolSettings = false
+                                }
+                            )
+                            Text(stringResource(labelRes), modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBottomToolSettings = false }) {
+                    Text(stringResource(R.string.btn_cancel))
+                }
             }
         )
     }
@@ -319,6 +371,7 @@ private fun SettingsScreen(
     }
 
     ScreenColumn(
+        removeLightThemePanelBackground = true,
         topBar = { isVerticalLayout ->
             if (isVerticalLayout) {
                 TopBar {
@@ -435,6 +488,12 @@ private fun SettingsScreen(
                 )
             }
             item { MapSettingsCard(onClick = { showMapSettings = true }) }
+            item {
+                BottomToolSettingsCard(
+                    selectedToolLabel = bottomBarToolLabel(uiState.otherSettings.bottomBarTool),
+                    onClick = { showBottomToolSettings = true }
+                )
+            }
             item { ProjectWikiCard(onClick = { showProjectWiki = true }) }
             item { CardCredits() }
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -793,6 +852,39 @@ private fun OtherCardPreview() = MainTheme {
         shouldSeeWhatsNew = false
     )
     OtherCard(settings = values, onCompassCalibration = {}, onAction = {})
+}
+
+
+@Composable
+private fun bottomBarToolLabel(tool: String): String = stringResource(
+    when (BottomBarTool.normalize(tool)) {
+        BottomBarTool.MAP -> R.string.nav_map
+        BottomBarTool.GRID_FINDER -> R.string.gridfinder_title
+        BottomBarTool.MUTUAL -> R.string.nav_mutual
+        BottomBarTool.AMSAT -> R.string.nav_amsat
+        BottomBarTool.PASS_SCHEDULE -> R.string.pass_schedule_title
+        else -> R.string.nav_ft4
+    }
+)
+
+@Composable
+private fun BottomToolSettingsCard(selectedToolLabel: String, onClick: () -> Unit) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            Text(
+                text = stringResource(R.string.prefs_bottom_tool_title),
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(stringResource(R.string.prefs_bottom_tool_current, selectedToolLabel))
+            Spacer(modifier = Modifier.height(6.dp))
+            CardButton(
+                onClick = onClick,
+                text = stringResource(R.string.prefs_bottom_tool_choose),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
 }
 
 @Composable

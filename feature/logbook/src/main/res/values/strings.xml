@@ -83,4 +83,8 @@
     <string name="logbook_error_save">The contact could not be saved.</string>
     <string name="logbook_error_delete">The contact could not be deleted.</string>
     <string name="logbook_error_import">The ADI file could not be imported.</string>
+    <string name="logbook_clear_all_title">Reset logbook</string>
+    <string name="logbook_confirm_clear_all">Permanently delete all %1$d QSO records from this device? This cannot be undone. Export your ADI log first if you need a backup.</string>
+    <string name="logbook_clear_all_confirm">Delete all</string>
+    <string name="logbook_error_clear_all">Unable to reset the logbook.</string>
 </resources>

@@ -77,4 +77,8 @@
     <string name="logbook_error_save">无法保存通联记录。</string>
     <string name="logbook_error_delete">无法删除通联记录。</string>
     <string name="logbook_error_import">无法导入 ADI 文件。</string>
+    <string name="logbook_clear_all_title">重置日志本</string>
+    <string name="logbook_confirm_clear_all">确定永久删除本机日志本中的全部 %1$d 条通联记录吗？此操作无法撤销。若需要备份，请先导出 ADI 文件。</string>
+    <string name="logbook_clear_all_confirm">全部删除</string>
+    <string name="logbook_error_clear_all">重置日志本失败。</string>
 </resources>

@@ -23,6 +23,7 @@ import android.location.LocationManager
 import androidx.core.content.edit
 import androidx.core.location.LocationListenerCompat
 import androidx.core.location.LocationManagerCompat
+import com.rtbishop.look4sat.core.domain.model.BottomBarTool
 import com.rtbishop.look4sat.core.domain.model.DataSourcesSettings
 import com.rtbishop.look4sat.core.domain.model.DatabaseState
 import com.rtbishop.look4sat.core.domain.model.Ft4Settings
@@ -136,6 +137,7 @@ class SettingsRepo(
     private val keyHighElevation = "highElevation"
     private val keyMapSource = "mapSource"
     private val keyTiandituKey = "tiandituKey"
+    private val keyBottomBarTool = "bottomBarTool"
     private val keyFt4OperatorCallsign = "ft4OperatorCallsign"
     private val keyFt4DecodeEnabled = "ft4DecodeEnabled"
     private val keyFt4DecodeDepth = "ft4DecodeDepth"
@@ -915,7 +917,8 @@ class SettingsRepo(
             val new = transform(current).let {
                 it.copy(
                     mapSource = MapSource.normalize(it.mapSource),
-                    tiandituKey = it.tiandituKey.trim()
+                    tiandituKey = it.tiandituKey.trim(),
+                    bottomBarTool = BottomBarTool.normalize(it.bottomBarTool)
                 )
             }
             preferences.edit {
@@ -936,6 +939,7 @@ class SettingsRepo(
                 putLong(keyHighElevation, new.highElevation.toRawBits())
                 putString(keyMapSource, new.mapSource)
                 putString(keyTiandituKey, new.tiandituKey)
+                putString(keyBottomBarTool, new.bottomBarTool)
             }
             new
         }
@@ -958,7 +962,8 @@ class SettingsRepo(
         lowElevation = Double.fromBits(preferences.getLong(keyLowElevation, 15.0.toRawBits())),
         highElevation = Double.fromBits(preferences.getLong(keyHighElevation, 45.0.toRawBits())),
         mapSource = MapSource.normalize(preferences.getString(keyMapSource, null).orEmpty()),
-        tiandituKey = preferences.getString(keyTiandituKey, null).orEmpty().trim()
+        tiandituKey = preferences.getString(keyTiandituKey, null).orEmpty().trim(),
+        bottomBarTool = BottomBarTool.normalize(preferences.getString(keyBottomBarTool, null).orEmpty())
     )
     //endregion
 
@@ -1310,6 +1315,32 @@ class SettingsRepo(
             if (mode.isBlank()) "{}" else """{"$catnum": "${mode.uppercase()}"}"""
         }
         preferences.edit { putString(keySatelliteModes, updated) }
+    }
+    //endregion
+
+    //region # Per-satellite favorite transponders
+    private val keyFavoriteTransponders = "favoriteTransponders"
+
+    override fun getFavoriteTransponders(catnum: Int): List<String> {
+        val json = preferences.getString(keyFavoriteTransponders, "{}") ?: "{}"
+        return try {
+            val array = JSONObject(json).optJSONArray(catnum.toString()) ?: return emptyList()
+            (0 until array.length()).mapNotNull { index -> array.optString(index).takeIf { it.isNotBlank() } }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    override fun setFavoriteTransponders(catnum: Int, uuids: List<String>) {
+        val json = preferences.getString(keyFavoriteTransponders, "{}") ?: "{}"
+        val obj = try { JSONObject(json) } catch (_: Exception) { JSONObject() }
+        val normalized = uuids.filter { it.isNotBlank() }.distinct()
+        if (normalized.isEmpty()) {
+            obj.remove(catnum.toString())
+        } else {
+            obj.put(catnum.toString(), org.json.JSONArray(normalized))
+        }
+        preferences.edit { putString(keyFavoriteTransponders, obj.toString()) }
     }
     //endregion
 

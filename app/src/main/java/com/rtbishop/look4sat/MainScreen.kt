@@ -78,6 +78,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
+import com.rtbishop.look4sat.core.domain.model.BottomBarTool
 import com.rtbishop.look4sat.core.domain.repository.MutualPassData
 import com.rtbishop.look4sat.core.presentation.DeeplinkResolver
 import com.rtbishop.look4sat.core.presentation.ElevationThresholds
@@ -233,26 +234,29 @@ fun MainScreen(
         }
     }
     val fadeTransition = fadeIn(animationSpec = tween(350)) togetherWith fadeOut(animationSpec = tween(350))
+    val context = LocalContext.current
+    val container = (context.applicationContext as IContainerProvider).getMainContainer()
+    val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
+    val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
+    val primaryTool = bottomBarScreen(otherSettings.bottomBarTool)
     val navItems = listOf(
         Screen.Satellites,
         Screen.Passes,
         Screen.Logbook,
-        Screen.Ft4,
+        primaryTool,
         Screen.More,
         Screen.Settings
     )
+    // The configurable fourth slot is removed from More. If another tool replaces FT4,
+    // FT4 is added to More rather than becoming inaccessible.
     val moreItems = listOf(
         Screen.GridFinder,
         Screen.Map,
         Screen.Mutual,
         Screen.AMSAT,
-        Screen.PassSchedule
-    )
-
-    val context = LocalContext.current
-    val container = (context.applicationContext as IContainerProvider).getMainContainer()
-    val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
-    val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
+        Screen.PassSchedule,
+        Screen.Ft4
+    ).filter { it != primaryTool }
     // Activity-scoped so the mutual query results survive navigation to Radar and back
     val mutualViewModel: MutualViewModel = viewModel(
         viewModelStoreOwner = context as ViewModelStoreOwner,
@@ -300,26 +304,23 @@ fun MainScreen(
                 onDismiss = { showMoreSheet = false },
                 onDestinationSelected = { screen ->
                     showMoreSheet = false
-                    if (currentKey != screen) navigateToScreen(screen)
+                    if (screen is Screen.Ft4) {
+                        navigateToFt4()
+                    } else if (currentKey != screen) {
+                        navigateToScreen(screen)
+                    }
                 }
             )
         }
         NavigationSuiteScaffold(
             navigationSuiteItems = {
                 navItems.forEach { screen ->
-                    val isSelected = when (currentKey) {
-                        is Screen.Satellites -> screen is Screen.Satellites
-                        is Screen.Passes -> screen is Screen.Passes
-                        is Screen.Ft4 -> screen is Screen.Ft4
-                        is Screen.Logbook -> screen is Screen.Logbook
-                        is Screen.Settings -> screen is Screen.Settings
-                        is Screen.Map,
-                        is Screen.GridFinder,
-                        is Screen.AMSAT,
-                        is Screen.PassSchedule,
-                        is Screen.Mutual -> screen is Screen.More
+                    val isSelected = when {
+                        currentKey == screen -> true
+                        screen is Screen.More && currentKey is Screen && currentKey in moreItems -> true
+                        screen is Screen.More && showMoreSheet -> true
                         else -> false
-                    } || (screen is Screen.More && showMoreSheet)
+                    }
                     item(
                         icon = { Icon(painterResource(screen.iconResId), stringResource(screen.titleResId)) },
                         label = { Text(stringResource(screen.titleResId)) },
@@ -475,6 +476,16 @@ fun MainScreen(
             }
         }
     }
+}
+
+
+private fun bottomBarScreen(value: String): Screen = when (BottomBarTool.normalize(value)) {
+    BottomBarTool.MAP -> Screen.Map
+    BottomBarTool.GRID_FINDER -> Screen.GridFinder
+    BottomBarTool.MUTUAL -> Screen.Mutual
+    BottomBarTool.AMSAT -> Screen.AMSAT
+    BottomBarTool.PASS_SCHEDULE -> Screen.PassSchedule
+    else -> Screen.Ft4
 }
 
 @Composable
