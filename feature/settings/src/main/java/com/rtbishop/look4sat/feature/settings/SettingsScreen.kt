@@ -36,7 +36,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 
@@ -45,8 +44,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -175,49 +172,10 @@ private fun SettingsScreen(
     }
 
     if (showBottomToolSettings) {
-        val options = listOf(
-            BottomBarTool.FT4 to R.string.nav_ft4,
-            BottomBarTool.MAP to R.string.nav_map,
-            BottomBarTool.GRID_FINDER to R.string.gridfinder_title,
-            BottomBarTool.MUTUAL to R.string.nav_mutual,
-            BottomBarTool.AMSAT to R.string.nav_amsat,
-            BottomBarTool.PASS_SCHEDULE to R.string.pass_schedule_title
-        )
-        AlertDialog(
-            onDismissRequest = { showBottomToolSettings = false },
-            title = { Text(stringResource(R.string.prefs_bottom_tool_title)) },
-            text = {
-                Column {
-                    Text(stringResource(R.string.prefs_bottom_tool_description))
-                    options.forEach { (tool, labelRes) ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(MaterialTheme.shapes.small)
-                                .clickable {
-                                    onAction(SettingsAction.SetBottomBarTool(tool))
-                                    showBottomToolSettings = false
-                                }
-                                .padding(vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = uiState.otherSettings.bottomBarTool == tool,
-                                onClick = {
-                                    onAction(SettingsAction.SetBottomBarTool(tool))
-                                    showBottomToolSettings = false
-                                }
-                            )
-                            Text(stringResource(labelRes), modifier = Modifier.padding(start = 6.dp))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showBottomToolSettings = false }) {
-                    Text(stringResource(R.string.btn_cancel))
-                }
-            }
+        BottomToolDialog(
+            currentTool = uiState.otherSettings.bottomBarTool,
+            onDismiss = { showBottomToolSettings = false },
+            onSave = { tool -> onAction(SettingsAction.SetBottomBarTool(tool)) }
         )
     }
 

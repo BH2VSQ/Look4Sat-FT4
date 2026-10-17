@@ -577,11 +577,32 @@ class LogbookViewModel(
         mutableState.update { it.copy(isBusy = true) }
         try {
             repository.deleteAll()
+
+            // The map's award and VUCC layers are cached separately from the logbook
+            // in settings preferences. Clear every QSO-derived map cache as part of
+            // the same reset so old worked-grid counts/details cannot survive.
+            settingsRepo.setWorkedGrids(emptySet())
+            settingsRepo.setWorkedGridQsos(emptyMap())
+            settingsRepo.setRoamedGrids(emptySet())
+
+            // These cursors describe the data represented by the caches above. Reset
+            // them as well so the next LoTW/Wavelog sync performs a full rebuild rather
+            // than merging only new confirmations into an intentionally empty cache.
+            settingsRepo.setLastLotwSyncDate("")
+            settingsRepo.setLastLotwSyncCallsign("")
+            settingsRepo.setWavelogSyncCursors(emptyMap())
+            settingsRepo.setWavelogSyncUrl("")
+            settingsRepo.setLastWavelogSyncEpochMs(0L)
+            settingsRepo.setLastWavelogFullSyncEpochMs(0L)
+
             mutableState.update {
                 it.copy(
                     showClearAllConfirmation = false,
                     error = null,
                     importResult = null,
+                    lotwDownloadSummary = null,
+                    lotwDownloadError = null,
+                    workedGridsCount = 0,
                     query = "",
                     modeFilter = SATELLITE_MODE_FILTER,
                     confirmationFilter = LogbookFilter.ALL,

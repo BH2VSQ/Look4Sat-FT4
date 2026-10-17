@@ -450,6 +450,30 @@ class LoTWRepositoryTest {
     }
 
     @Test
+    fun syncReportKeepsCounterpartAndOwnMultiGridSetsSeparate() {
+        // This is the production sync path. GRIDSQUARE + VUCC_GRIDS describe
+        // the opposite station, while MY_GRIDSQUARE + MY_VUCC_GRIDS describe
+        // our operating location. All descriptors use their actual ADIF lengths.
+        val qso = "<CALL:5>K1ABC\n" +
+            "<QSO_DATE:8>20260820\n<TIME_ON:4>1130\n" +
+            "<STATION_CALLSIGN:6>BA7OPF\n<MODE:2>CW\n" +
+            "<PROP_MODE:3>SAT\n<SAT_NAME:5>FO-29\n<QSL_RCVD:1>Y\n" +
+            "<GRIDSQUARE:6>OM60IL\n<VUCC_GRIDS:13>EN52en,EN53fa\n" +
+            "<MY_GRIDSQUARE:4>OL62\n<MY_VUCC_GRIDS:9>OL72,OL73\n<EOR>\n"
+
+        val result = repo.parseSyncReport(
+            report(qso), defaultCallsign = "BA7OPF", assumeConfirmed = false
+        )!!
+
+        assertEquals(setOf("OM60", "EN52", "EN53"), result.grids)
+        assertEquals(setOf("OL62", "OL72", "OL73"), result.roamedGrids)
+        val detail = result.qsos.getValue("EN52").single()
+        assertEquals("OL62", detail.myGrid)
+        assertEquals(setOf("OL62", "OL72", "OL73"), detail.myGrids)
+        assertEquals(listOf("OM60", "EN52", "EN53"), detail.theirGrids)
+    }
+
+    @Test
     fun reportQueryUsesAllQsosForFullAndConfirmationsForIncremental() {
         val full = repo.buildReportQuery("BA7OPF", "secret", confirmedOnly = false, since = "")
         assertTrue(full.contains("qso_qsl=no"))

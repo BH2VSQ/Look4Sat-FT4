@@ -14,7 +14,12 @@ class ConfirmedGridStoreTest {
     )
 
     @Test fun multipleGridsCountOnceForCountryAndRegionAwards() {
-        val record = contact().copy(theirGrid = "PM74AB", vuccGrids = listOf("PM74", "PM75", "ZZ99"))
+        val record = contact().copy(
+            theirGrid = "PM74AB",
+            theirVuccGrids = listOf("PM75", "ZZ99"),
+            myGrid = "OL62",
+            vuccGrids = listOf("OL63")
+        )
         val store = confirmedGridStore(listOf(record, contact().copy(lotwConfirmed = false, theirGrid = "OL62")))
         assertEquals(setOf("PM74", "PM75"), store.qsosByGrid.keys)
         val progress = store.awards.associateBy { it.type }

@@ -100,6 +100,22 @@ class WavelogSyncTest {
     }
 
     @Test
+    fun gridDataIncludesPrimaryGridWhenMultiGridFieldContainsOnlyAdditionalSquares() {
+        val qso = record(
+            start = 1_000L,
+            theirGrid = "EN52",
+            theirVucc = listOf("EN53"),
+            myGrid = "OL62"
+        ).copy(vuccGrids = listOf("OL63"))
+
+        val data = buildWavelogGridData(listOf(qso))
+        assertEquals(setOf("EN52", "EN53"), data.grids)
+        assertEquals(setOf("OL62", "OL63"), data.roamedGrids)
+        assertEquals(listOf("EN52", "EN53"), data.gridQsos.getValue("EN52").single().theirGrids)
+        assertEquals(setOf("OL62", "OL63"), data.gridQsos.getValue("EN52").single().myGrids)
+    }
+
+    @Test
     fun gridDataIgnoresNonSatelliteRecordsAndBlankGrids() {
         val data = buildWavelogGridData(
             listOf(

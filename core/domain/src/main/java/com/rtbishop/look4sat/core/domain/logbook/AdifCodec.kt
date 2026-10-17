@@ -103,9 +103,11 @@ object AdifCodec {
             theirCallsign = call,
             myCallsign = values["STATION_CALLSIGN"].orEmpty().uppercase(Locale.US),
             theirGrid = values["GRIDSQUARE"].orEmpty().uppercase(Locale.US),
-            theirVuccGrids = decodeGrids(values["VUCC_GRIDS"]),
+            // Once a multi-grid field is present, expose the complete normalized
+            // set (primary GRIDSQUARE + VUCC_GRIDS), not only the raw field value.
+            theirVuccGrids = decodeGridSet(values["GRIDSQUARE"], values["VUCC_GRIDS"]),
             myGrid = values["MY_GRIDSQUARE"].orEmpty().uppercase(Locale.US),
-            vuccGrids = decodeGrids(values["MY_VUCC_GRIDS"]),
+            vuccGrids = decodeGridSet(values["MY_GRIDSQUARE"], values["MY_VUCC_GRIDS"]),
             sentReport = values["RST_SENT"].orEmpty(),
             receivedReport = values["RST_RCVD"].orEmpty(),
             txFrequencyHz = mhzToHz(values["FREQ"]),
@@ -174,6 +176,20 @@ object AdifCodec {
         .map { it.trim().uppercase(Locale.US) }
         .filter { it.matches(gridPattern) }
         .distinct()
+
+    /**
+     * The model's multi-grid properties represent the complete 4-character set.
+     * ADIF producers are inconsistent about whether VUCC_GRIDS repeats the
+     * primary GRIDSQUARE, so add the primary when the multi-grid field exists and
+     * normalize every valid locator to its VUCC (four-character) square. A plain
+     * single-grid record without the multi-grid field keeps the legacy empty list.
+     */
+    private fun decodeGridSet(primary: String?, multi: String?): List<String> {
+        if (multi.isNullOrBlank()) return emptyList()
+        return (decodeGrids(primary) + decodeGrids(multi))
+            .map { it.take(4) }
+            .distinct()
+    }
 
     private fun StringBuilder.appendOptional(name: String, value: String) {
         if (value.isNotBlank()) append(field(name, value))
