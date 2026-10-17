@@ -55,6 +55,14 @@ interface ISatelliteRepo {
         modes: List<String>
     )
 
+    /** Predict passes for the schedule without changing the shared main pass list or its filters. */
+    suspend fun getSchedulePasses(
+        catNums: Set<Int>,
+        startTime: Long,
+        hoursAhead: Int,
+        minElevation: Double
+    ): List<OrbitalPass>
+
     /** Get the current position of a single satellite. */
     suspend fun getPosition(sat: OrbitalObject, pos: GeoPos, time: Long): OrbitalPos
 

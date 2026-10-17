@@ -245,7 +245,8 @@ fun MainScreen(
         Screen.GridFinder,
         Screen.Map,
         Screen.Mutual,
-        Screen.AMSAT
+        Screen.AMSAT,
+        Screen.PassSchedule
     )
 
     val context = LocalContext.current
@@ -315,6 +316,7 @@ fun MainScreen(
                         is Screen.Map,
                         is Screen.GridFinder,
                         is Screen.AMSAT,
+                        is Screen.PassSchedule,
                         is Screen.Mutual -> screen is Screen.More
                         else -> false
                     } || (screen is Screen.More && showMoreSheet)
@@ -408,6 +410,9 @@ fun MainScreen(
                             )
                         }
                         entry<Screen.AMSAT> { SatStatusDestination() }
+                        entry<Screen.PassSchedule> {
+                            PassScheduleDestination(navigateUp = navigateBack)
+                        }
                         entry<Screen.Logbook> {
                             LogbookScreenDestination(navigateUp = navigateBack, navigateToMap = navigateToMap)
                         }

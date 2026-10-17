@@ -1677,6 +1677,13 @@ private class FakeSatelliteRepo(private val position: OrbitalPos) : ISatelliteRe
         modes: List<String>
     ) = Unit
 
+    override suspend fun getSchedulePasses(
+        catNums: Set<Int>,
+        startTime: Long,
+        hoursAhead: Int,
+        minElevation: Double
+    ): List<OrbitalPass> = emptyList()
+
     override suspend fun getPosition(sat: OrbitalObject, pos: GeoPos, time: Long): OrbitalPos {
         requestedTimes += time
         return (positionAt?.invoke(time) ?: position).copy(time = time)

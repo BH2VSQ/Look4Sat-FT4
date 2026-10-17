@@ -251,6 +251,36 @@ class SatelliteRepo(
         return if (invertAosTimeWindow) !inRange else inRange
     }
 
+    override suspend fun getSchedulePasses(
+        catNums: Set<Int>,
+        startTime: Long,
+        hoursAhead: Int,
+        minElevation: Double
+    ): List<OrbitalPass> = withContext(dispatcher) {
+        if (catNums.isEmpty() || hoursAhead <= 0) return@withContext emptyList()
+        val endTime = startTime + hoursAhead * 60L * 60L * 1000L
+        val normalizedTime = startTime / 60_000L * 60_000L
+        val stationPos = settingsRepo.stationPosition.value
+        val targets = _satellites.value.filter { it.data.catnum in catNums && !it.data.isDeepSpace }
+        coroutineScope {
+            targets.map { satellite ->
+                async {
+                    coroutineContext.ensureActive()
+                    if (!satellite.willBeSeen(stationPos)) return@async emptyList()
+                    satellite.getPasses(stationPos, normalizedTime, hoursAhead).filter { pass ->
+                        !pass.isDeepSpace &&
+                            pass.aosTime >= startTime &&
+                            pass.aosTime < endTime &&
+                            pass.losTime > startTime &&
+                            pass.maxElevation >= minElevation
+                    }
+                }
+            }.awaitAll().flatten()
+                .distinctBy { it.catNum to it.aosTime }
+                .sortedBy { it.aosTime }
+        }
+    }
+
     private suspend fun OrbitalObject.getPasses(pos: GeoPos, time: Long, hours: Int): List<OrbitalPass> {
         val passes = mutableListOf<OrbitalPass>()
         val endDate = time + hours * 60L * 60L * 1000L
