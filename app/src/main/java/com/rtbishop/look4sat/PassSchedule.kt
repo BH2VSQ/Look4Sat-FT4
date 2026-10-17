@@ -76,8 +76,10 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
+import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.presentation.R
+import com.rtbishop.look4sat.core.presentation.PassRadarPreview
 import com.rtbishop.look4sat.core.presentation.elevationColor
 import com.rtbishop.look4sat.core.presentation.infiniteMarquee
 import kotlinx.coroutines.delay
@@ -95,13 +97,13 @@ private const val PASS_SCHEDULE_PREFS = "pass_schedule_preferences"
 private const val PASS_SCHEDULE_CHANNEL = "satellite_pass_schedule"
 private const val PASS_SCHEDULE_WINDOW_HOURS = 72
 private val PASS_REMINDER_PRESETS = listOf(5, 10, 15, 30, 60)
+private val PASS_REMINDER_OPTIONS = listOf(0) + PASS_REMINDER_PRESETS
 
 private data class PassScheduleConfig(
     val satelliteIds: Set<Int> = emptySet(),
-    val minimumElevation: Int = 10,
-    val notifyAtStart: Boolean = false,
-    val notifyBefore: Boolean = false,
-    val reminderMinutes: Int = 10
+    val minimumElevation: Float = 10f,
+    /** 0 means at AOS; positive values are minutes before AOS. */
+    val reminderMinutes: Set<Int> = emptySet()
 )
 
 private data class ScheduledPass(
@@ -117,25 +119,39 @@ private object PassScheduleStore {
 
     fun readConfig(context: Context): PassScheduleConfig {
         val prefs = prefs(context)
+        val legacyReminder = prefs.getInt("reminder_minutes", 10)
+            .takeIf { it in PASS_REMINDER_PRESETS } ?: 10
+        val reminderMinutes = prefs.getStringSet("reminder_minutes_set", null)
+            ?.mapNotNull(String::toIntOrNull)
+            ?.filter { it in PASS_REMINDER_OPTIONS }
+            ?.toSet()
+            ?: buildSet {
+                if (prefs.getBoolean("notify_at_start", false)) add(0)
+                if (prefs.getBoolean("notify_before", false)) add(legacyReminder)
+            }
+        val legacyElevation = runCatching { prefs.getInt("minimum_elevation", 10).toFloat() }.getOrDefault(10f)
+        val storedElevation = runCatching {
+            prefs.getFloat("minimum_elevation_value", legacyElevation)
+        }.getOrDefault(legacyElevation)
         return PassScheduleConfig(
             satelliteIds = prefs.getStringSet("satellite_ids", emptySet()).orEmpty()
                 .mapNotNull(String::toIntOrNull).toSet(),
-            minimumElevation = prefs.getInt("minimum_elevation", 10).coerceIn(0, 90),
-            notifyAtStart = prefs.getBoolean("notify_at_start", false),
-            notifyBefore = prefs.getBoolean("notify_before", false) && !prefs.getBoolean("notify_at_start", false),
-            reminderMinutes = prefs.getInt("reminder_minutes", 10).let { stored ->
-                stored.takeIf { it in PASS_REMINDER_PRESETS } ?: 10
-            }
+            minimumElevation = storedElevation.coerceIn(0f, 90f),
+            reminderMinutes = reminderMinutes
         )
     }
 
     fun saveConfig(context: Context, config: PassScheduleConfig) {
+        val reminderMinutes = config.reminderMinutes.intersect(PASS_REMINDER_OPTIONS.toSet())
         prefs(context).edit()
             .putStringSet("satellite_ids", config.satelliteIds.map { it.toString() }.toSet())
-            .putInt("minimum_elevation", config.minimumElevation.coerceIn(0, 90))
-            .putBoolean("notify_at_start", config.notifyAtStart)
-            .putBoolean("notify_before", config.notifyBefore)
-            .putInt("reminder_minutes", config.reminderMinutes.takeIf { it in PASS_REMINDER_PRESETS } ?: 10)
+            .putInt("minimum_elevation", config.minimumElevation.coerceIn(0f, 90f).toInt())
+            .putFloat("minimum_elevation_value", config.minimumElevation.coerceIn(0f, 90f))
+            .putStringSet("reminder_minutes_set", reminderMinutes.map { it.toString() }.toSet())
+            // Keep the legacy keys in sync for older builds that may still be installed.
+            .putBoolean("notify_at_start", 0 in reminderMinutes)
+            .putBoolean("notify_before", reminderMinutes.any { it > 0 })
+            .putInt("reminder_minutes", reminderMinutes.firstOrNull { it > 0 } ?: 10)
             .apply()
     }
 
@@ -179,6 +195,7 @@ private object PassScheduleNotificationScheduler {
     const val EXTRA_AOS_TIME = "aos_time"
     const val EXTRA_KIND = "kind"
     const val EXTRA_MAX_ELEVATION = "max_elevation"
+    const val EXTRA_REMINDER_MINUTES = "reminder_minutes"
     const val KIND_START = "start"
     const val KIND_BEFORE = "before"
 
@@ -193,7 +210,11 @@ private object PassScheduleNotificationScheduler {
         val oldEvents = PassScheduleStore.readEvents(context)
         oldEvents.forEach { event ->
             cancelEventAlarm(context, alarmManager, event, KIND_START)
+            // Cancel the previous single-reminder alarm and every multi-select alarm.
             cancelEventAlarm(context, alarmManager, event, KIND_BEFORE)
+            PASS_REMINDER_PRESETS.forEach { minutes ->
+                cancelEventAlarm(context, alarmManager, event, KIND_BEFORE, minutes)
+            }
         }
         cancelRefresh(context, alarmManager)
         val futureEvents = events.filter { it.losTime > System.currentTimeMillis() }
@@ -202,12 +223,17 @@ private object PassScheduleNotificationScheduler {
         PassScheduleStore.saveEvents(context, futureEvents)
         val now = System.currentTimeMillis()
         futureEvents.forEach { event ->
-            if (config.notifyAtStart && event.aosTime > now) {
-                scheduleEvent(context, alarmManager, event, KIND_START, event.aosTime)
-            }
-            val beforeTime = event.aosTime - config.reminderMinutes * 60_000L
-            if (config.notifyBefore && beforeTime > now) {
-                scheduleEvent(context, alarmManager, event, KIND_BEFORE, beforeTime)
+            config.reminderMinutes.forEach { minutes ->
+                if (minutes == 0) {
+                    if (event.aosTime > now) {
+                        scheduleEvent(context, alarmManager, event, KIND_START, event.aosTime)
+                    }
+                } else {
+                    val beforeTime = event.aosTime - minutes * 60_000L
+                    if (beforeTime > now) {
+                        scheduleEvent(context, alarmManager, event, KIND_BEFORE, beforeTime, minutes)
+                    }
+                }
             }
         }
         if (config.satelliteIds.isNotEmpty()) {
@@ -262,7 +288,8 @@ private object PassScheduleNotificationScheduler {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
-        val id = (intent.getIntExtra(EXTRA_CAT_NUM, 0) * 31 + aosTime.hashCode()) * 31 + kind.hashCode()
+        val reminderMinutes = intent.getIntExtra(EXTRA_REMINDER_MINUTES, 0)
+        val id = ((intent.getIntExtra(EXTRA_CAT_NUM, 0) * 31 + aosTime.hashCode()) * 31 + kind.hashCode()) * 31 + reminderMinutes
         runCatching { NotificationManagerCompat.from(context).notify(id, notification) }
     }
 
@@ -281,25 +308,35 @@ private object PassScheduleNotificationScheduler {
         manager: AlarmManager,
         event: ScheduledPass,
         kind: String,
-        triggerAt: Long
+        triggerAt: Long,
+        reminderMinutes: Int? = null
     ) {
+        val alarmKey = if (kind == KIND_BEFORE && reminderMinutes != null) "$kind/$reminderMinutes" else kind
         val intent = Intent(context, PassScheduleAlarmReceiver::class.java).apply {
             action = ACTION_ALERT
-            data = Uri.parse("look4sat://pass-schedule/${event.catNum}/${event.aosTime}/$kind")
+            data = Uri.parse("look4sat://pass-schedule/${event.catNum}/${event.aosTime}/$alarmKey")
             putExtra(EXTRA_CAT_NUM, event.catNum)
             putExtra(EXTRA_SATELLITE_NAME, event.name)
             putExtra(EXTRA_AOS_TIME, event.aosTime)
             putExtra(EXTRA_KIND, kind)
             putExtra(EXTRA_MAX_ELEVATION, event.maxElevation)
+            putExtra(EXTRA_REMINDER_MINUTES, reminderMinutes ?: 0)
         }
         setAlarm(context, manager, triggerAt,
             PendingIntent.getBroadcast(context, 0, intent, pendingFlags()))
     }
 
-    private fun cancelEventAlarm(context: Context, manager: AlarmManager, event: ScheduledPass, kind: String) {
+    private fun cancelEventAlarm(
+        context: Context,
+        manager: AlarmManager,
+        event: ScheduledPass,
+        kind: String,
+        reminderMinutes: Int? = null
+    ) {
+        val alarmKey = if (kind == KIND_BEFORE && reminderMinutes != null) "$kind/$reminderMinutes" else kind
         val intent = Intent(context, PassScheduleAlarmReceiver::class.java).apply {
             action = ACTION_ALERT
-            data = Uri.parse("look4sat://pass-schedule/${event.catNum}/${event.aosTime}/$kind")
+            data = Uri.parse("look4sat://pass-schedule/${event.catNum}/${event.aosTime}/$alarmKey")
         }
         PendingIntent.getBroadcast(context, 0, intent, pendingFlags())?.let(manager::cancel)
     }
@@ -388,11 +425,13 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
     val satellites by container.satelliteRepo.satellites.collectAsStateWithLifecycle()
     val currentlyTrackedIds by container.settingsRepo.selectedIds.collectAsStateWithLifecycle()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
+    val stationPosition by container.settingsRepo.stationPosition.collectAsStateWithLifecycle()
     val isUtc = otherSettings.stateOfUtc
     var config by remember(context) { mutableStateOf(PassScheduleStore.readConfig(context)) }
     var passes by remember { mutableStateOf<List<OrbitalPass>>(emptyList()) }
     var isCalculating by remember { mutableStateOf(false) }
     var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
+    var minimumElevationSlider by remember(config.minimumElevation) { mutableStateOf(config.minimumElevation) }
     LaunchedEffect(Unit) {
         while (true) {
             currentTime = System.currentTimeMillis()
@@ -426,8 +465,6 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
         currentlyTrackedIds,
         config.satelliteIds,
         config.minimumElevation,
-        config.notifyAtStart,
-        config.notifyBefore,
         config.reminderMinutes
     ) {
         // The repository is populated asynchronously after app startup. Wait for it
@@ -531,13 +568,16 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
                 }
 
                 HorizontalDivider()
-                Text(stringResource(R.string.pass_schedule_minimum_elevation, config.minimumElevation),
+                Text(stringResource(R.string.pass_schedule_minimum_elevation, minimumElevationSlider),
                     style = MaterialTheme.typography.titleMedium)
                 Slider(
-                    value = config.minimumElevation.toFloat(),
-                    onValueChange = { updateConfig(config.copy(minimumElevation = it.toInt().coerceIn(0, 90))) },
+                    value = minimumElevationSlider,
+                    onValueChange = { minimumElevationSlider = it.coerceIn(0f, 90f) },
+                    onValueChangeFinished = {
+                        updateConfig(config.copy(minimumElevation = minimumElevationSlider))
+                    },
                     valueRange = 0f..90f,
-                    steps = 89
+                    steps = 0
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("0°", style = MaterialTheme.typography.labelSmall)
@@ -546,32 +586,23 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
 
                 HorizontalDivider()
                 Text(stringResource(R.string.pass_schedule_notifications), style = MaterialTheme.typography.titleMedium)
-                val selectedReminder = when {
-                    config.notifyAtStart -> 0
-                    config.notifyBefore -> config.reminderMinutes
-                    else -> -1
-                }
-                val reminderRows = listOf(listOf(0, 5, 10), listOf(15, 30, 60))
+                val reminderRows = listOf(PASS_REMINDER_OPTIONS.take(3), PASS_REMINDER_OPTIONS.drop(3))
                 reminderRows.forEach { rowMinutes ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         rowMinutes.forEach { minutes ->
-                            val selected = selectedReminder == minutes
+                            val selected = minutes in config.reminderMinutes
                             FilterChip(
                                 selected = selected,
                                 onClick = {
-                                    val next = when {
-                                        selected -> config.copy(notifyAtStart = false, notifyBefore = false)
-                                        minutes == 0 -> config.copy(notifyAtStart = true, notifyBefore = false)
-                                        else -> config.copy(
-                                            notifyAtStart = false,
-                                            notifyBefore = true,
-                                            reminderMinutes = minutes
-                                        )
-                                    }
-                                    updateConfig(next, requestNotificationPermissionIfNeeded = !selected)
+                                    val reminders = config.reminderMinutes.toMutableSet()
+                                    if (selected) reminders.remove(minutes) else reminders.add(minutes)
+                                    updateConfig(
+                                        config.copy(reminderMinutes = reminders),
+                                        requestNotificationPermissionIfNeeded = !selected
+                                    )
                                 },
                                 modifier = Modifier.weight(1f),
                                 label = {
@@ -641,7 +672,13 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
                     }
                 }
                 items(passes, key = { "${it.catNum}-${it.aosTime}" }) { pass ->
-                    PassScheduleItem(pass = pass, now = currentTime, isUtc = isUtc)
+                    PassScheduleItem(
+                        pass = pass,
+                        now = currentTime,
+                        isUtc = isUtc,
+                        satelliteRepo = container.satelliteRepo,
+                        stationPosition = stationPosition
+                    )
                 }
                 item { Spacer(Modifier.height(8.dp)) }
             }
@@ -649,7 +686,13 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
     }
 }
 @Composable
-private fun PassScheduleItem(pass: OrbitalPass, now: Long, isUtc: Boolean) {
+private fun PassScheduleItem(
+    pass: OrbitalPass,
+    now: Long,
+    isUtc: Boolean,
+    satelliteRepo: com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo,
+    stationPosition: GeoPos
+) {
     val timeZone = remember(isUtc) {
         if (isUtc) TimeZone.getTimeZone("UTC") else TimeZone.getDefault()
     }
@@ -676,104 +719,113 @@ private fun PassScheduleItem(pass: OrbitalPass, now: Long, isUtc: Boolean) {
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(1.dp),
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 6.dp, vertical = 4.dp)
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = pass.name,
-                    modifier = Modifier.weight(1f).padding(end = 6.dp).infiniteMarquee(),
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                val elevColor = elevationColor(pass.maxElevation)
-                Icon(
-                    painter = painterResource(R.drawable.ic_elevation),
-                    contentDescription = null,
-                    tint = elevColor,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(text = "${pass.maxElevation}°", color = elevColor)
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.Start,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (pass.isDeepSpace) {
-                        Text(
-                            text = stringResource(R.string.pass_deep_space),
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    } else {
-                        Text(text = durationStr, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = pass.name,
+                        modifier = Modifier.weight(1f).padding(end = 6.dp).infiniteMarquee(),
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 21.sp,
+                        lineHeight = 22.sp
+                    )
+                    Text(
+                        text = stringResource(R.string.pass_schedule_countdown, countdown),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontSize = 18.sp,
+                        lineHeight = 19.sp
+                    )
                 }
                 Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(text = "${pass.altitude} km", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                }
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.End,
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
+                        text = if (pass.isDeepSpace) stringResource(R.string.pass_deep_space) else durationStr,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 18.sp,
+                        lineHeight = 19.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${pass.altitude} km",
+                        modifier = Modifier.weight(1f),
+                        fontSize = 18.sp,
+                        lineHeight = 19.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    val elevColor = elevationColor(pass.maxElevation)
+                    Text(
+                        text = "${pass.maxElevation}°",
+                        modifier = Modifier.weight(0.7f),
+                        fontSize = 18.sp,
+                        lineHeight = 19.sp,
+                        color = elevColor,
+                        maxLines = 1,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Text(
                         text = stringResource(R.string.pass_aosLos, pass.aosAzimuth.toInt(), pass.losAzimuth.toInt()),
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                        modifier = Modifier.weight(1.2f),
+                        fontSize = 18.sp,
+                        lineHeight = 19.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    val defaultTime = "--:--:--"
+                    Text(
+                        text = if (pass.isDeepSpace) defaultTime else aosTimeStr,
+                        fontSize = 16.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
+                    )
+                    LinearProgressIndicator(
+                        progress = { if (pass.isDeepSpace) 1f else pass.progress.coerceIn(0f, 1f) },
+                        drawStopIndicator = {},
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                    )
+                    Text(
+                        text = if (pass.isDeepSpace) defaultTime else losTimeStr,
+                        fontSize = 16.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
                     )
                 }
             }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                val defaultTime = "   - - : - -   "
-                Text(
-                    text = if (pass.isDeepSpace) defaultTime else aosTimeStr,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                LinearProgressIndicator(
-                    progress = { if (pass.isDeepSpace) 100f else pass.progress },
-                    drawStopIndicator = {},
-                    modifier = Modifier.fillMaxWidth(0.75f)
-                )
-                Text(
-                    text = if (pass.isDeepSpace) defaultTime else losTimeStr,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Text(
-                    text = stringResource(R.string.pass_schedule_countdown, countdown),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium
-                )
-            }
+            Spacer(modifier = Modifier.width(8.dp))
+            PassRadarPreview(
+                pass = pass,
+                satelliteRepo = satelliteRepo,
+                stationPosition = stationPosition,
+                modifier = Modifier.size(44.dp)
+            )
         }
         HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.background)
     }

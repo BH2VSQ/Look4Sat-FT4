@@ -922,7 +922,7 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="pass_schedule_tracking_settings">Tracking settings</string>
     <string name="pass_schedule_tracking_hint">Choose among satellites currently selected for tracking. Passes are recalculated for the next 3 days.</string>
     <string name="pass_schedule_no_tracked_satellites">No satellites are currently selected on the Satellites page.</string>
-    <string name="pass_schedule_minimum_elevation">Minimum peak elevation: %1$d°</string>
+    <string name="pass_schedule_minimum_elevation">Minimum peak elevation: %1$.1f°</string>
     <string name="pass_schedule_notifications">Notifications</string>
     <string name="pass_schedule_notify_at_start">Pass start</string>
     <string name="pass_schedule_notify_before">Notify before the pass</string>

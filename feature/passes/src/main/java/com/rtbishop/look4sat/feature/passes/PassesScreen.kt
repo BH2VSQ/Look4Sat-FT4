@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -67,12 +68,15 @@ import com.rtbishop.look4sat.core.domain.predict.DeepSpaceObject
 import com.rtbishop.look4sat.core.domain.predict.NearEarthObject
 import com.rtbishop.look4sat.core.domain.predict.OrbitalData
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
+import com.rtbishop.look4sat.core.domain.predict.GeoPos
+import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.presentation.EmptyListCard
 import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.MainTheme
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.ProjectWikiBody
+import com.rtbishop.look4sat.core.presentation.PassRadarPreview
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.ScreenColumn
 import com.rtbishop.look4sat.core.presentation.SharedDialog
@@ -96,7 +100,15 @@ fun PassesDestination(
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val viewModel: PassesViewModel = viewModel(factory = PassesViewModel.factory(container))
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
-    PassesScreen(uiState, viewModel::onAction, navigateToRadar, navigateToMap)
+    val stationPosition = container.settingsRepo.stationPosition.collectAsStateWithLifecycle().value
+    PassesScreen(
+        uiState = uiState,
+        onAction = viewModel::onAction,
+        navigateToRadar = navigateToRadar,
+        navigateToMap = navigateToMap,
+        satelliteRepo = container.satelliteRepo,
+        stationPosition = stationPosition
+    )
 }
 
 @Composable
@@ -104,7 +116,9 @@ private fun PassesScreen(
     uiState: PassesState,
     onAction: (PassesAction) -> Unit,
     navigateToRadar: (Int, Long) -> Unit,
-    navigateToMap: () -> Unit
+    navigateToMap: () -> Unit,
+    satelliteRepo: ISatelliteRepo,
+    stationPosition: GeoPos
 ) {
     if (uiState.isPassesDialogShown) {
         PassesFilterDialog(
@@ -188,7 +202,9 @@ private fun PassesScreen(
             sunTimes = uiState.sunTimes,
             focusedCatNum = uiState.focusedCatNum,
             navigateToRadar = navigateToRadar,
-            onAction = onAction
+            onAction = onAction,
+            satelliteRepo = satelliteRepo,
+            stationPosition = stationPosition
         )
     }
 }
@@ -203,7 +219,9 @@ private fun PassesList(
     sunTimes: Map<String, Pair<String, String>>,
     focusedCatNum: Int?,
     navigateToRadar: (Int, Long) -> Unit,
-    onAction: (PassesAction) -> Unit
+    onAction: (PassesAction) -> Unit,
+    satelliteRepo: ISatelliteRepo,
+    stationPosition: GeoPos
 ) {
     val isVerticalLayout = isVerticalLayout()
     val refreshState = rememberPullToRefreshState()
@@ -251,7 +269,9 @@ private fun PassesList(
                                         navigateToRadar = navigateToRadar,
                                         modifier = Modifier.animateItem(),
                                         isVerticalLayout = isVerticalLayout,
-                                        isUtc = isUtc
+                                        isUtc = isUtc,
+                                        satelliteRepo = satelliteRepo,
+                                        stationPosition = stationPosition
                                     )
                                 }
                             }
@@ -326,7 +346,9 @@ private fun PassItem(
     navigateToRadar: (Int, Long) -> Unit,
     modifier: Modifier = Modifier,
     isVerticalLayout: Boolean = true,
-    isUtc: Boolean = false
+    isUtc: Boolean = false,
+    satelliteRepo: ISatelliteRepo? = null,
+    stationPosition: GeoPos = GeoPos(0.0, 0.0)
 ) {
     val horizontalPadding = if (isVerticalLayout) 6.dp else 10.dp
     val timeZone = remember(isUtc) {
@@ -342,106 +364,107 @@ private fun PassItem(
         "${seconds / 60}m ${seconds % 60}s"
     }
 
-    Column(
-        modifier = modifier.clickable { navigateToRadar(pass.catNum, pass.aosTime) }
-    ) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(1.dp),
+    Column(modifier = modifier.clickable { navigateToRadar(pass.catNum, pass.aosTime) }) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(color = MaterialTheme.colorScheme.surface)
-                .padding(horizontal = horizontalPadding, vertical = 4.dp)
+                .padding(horizontal = horizontalPadding, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = pass.name,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 6.dp)
-                        .infiniteMarquee(),
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                val elevColor = elevationColor(pass.maxElevation)
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_elevation),
-                    contentDescription = null,
-                    tint = elevColor,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "${pass.maxElevation}°",
-                    color = elevColor
-                )
-            }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.Start,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (pass.isDeepSpace) {
-                        Text(
-                            text = stringResource(R.string.pass_deep_space),
-                            fontSize = 15.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    } else {
-                        Text(text = durationStr, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = pass.name,
+                        modifier = Modifier.weight(1f).padding(end = 5.dp).infiniteMarquee(),
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 18.sp,
+                        lineHeight = 19.sp
+                    )
+                    val elevColor = elevationColor(pass.maxElevation)
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_elevation),
+                        contentDescription = null,
+                        tint = elevColor,
+                        modifier = Modifier.size(17.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text(text = "${pass.maxElevation}°", color = elevColor, fontSize = 17.sp, lineHeight = 18.sp)
                 }
                 Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "${pass.altitude} km", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-                }
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                    Text(
+                        text = if (pass.isDeepSpace) stringResource(R.string.pass_deep_space) else durationStr,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 16.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${pass.altitude} km",
+                        modifier = Modifier.weight(1f),
+                        fontSize = 16.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
                     Text(
                         text = stringResource(
                             id = R.string.pass_aosLos,
                             pass.aosAzimuth.toInt(),
                             pass.losAzimuth.toInt()
                         ),
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                        modifier = Modifier.weight(1f),
+                        fontSize = 16.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    val defaultTime = "--:--:--"
+                    Text(
+                        text = if (pass.isDeepSpace) defaultTime else aosTimeStr,
+                        fontSize = 14.sp,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
+                    )
+                    LinearProgressIndicator(
+                        progress = { if (pass.isDeepSpace) 1f else pass.progress.coerceIn(0f, 1f) },
+                        drawStopIndicator = {},
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
+                    )
+                    Text(
+                        text = if (pass.isDeepSpace) defaultTime else losTimeStr,
+                        fontSize = 14.sp,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
                     )
                 }
             }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                val defaultTime = "   - - : - -   "
-                Text(
-                    text = if (pass.isDeepSpace) defaultTime else aosTimeStr,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                LinearProgressIndicator(
-                    progress = { if (pass.isDeepSpace) 100f else pass.progress },
-                    drawStopIndicator = {},
-                    modifier = Modifier.fillMaxWidth(0.75f)
-                )
-                Text(
-                    text = if (pass.isDeepSpace) defaultTime else losTimeStr,
-                    fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
+            androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
+            PassRadarPreview(
+                pass = pass,
+                satelliteRepo = satelliteRepo,
+                stationPosition = stationPosition,
+                modifier = Modifier.size(44.dp)
+            )
         }
         HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.background)
     }

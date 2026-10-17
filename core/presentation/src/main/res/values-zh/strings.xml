@@ -874,7 +874,7 @@
     <string name="pass_schedule_tracking_settings">跟踪设置</string>
     <string name="pass_schedule_tracking_hint">从当前已选中的跟踪卫星中选择要加入日程的目标，自动刷新未来 3 天的过境。</string>
     <string name="pass_schedule_no_tracked_satellites">当前没有已选中的跟踪卫星，请先前往卫星页面选择。</string>
-    <string name="pass_schedule_minimum_elevation">最低过境峰值仰角：%1$d°</string>
+    <string name="pass_schedule_minimum_elevation">最低过境峰值仰角：%1$.1f°</string>
     <string name="pass_schedule_notifications">通知提醒</string>
     <string name="pass_schedule_notify_at_start">过境开始</string>
     <string name="pass_schedule_notify_before">过境前提醒</string>
