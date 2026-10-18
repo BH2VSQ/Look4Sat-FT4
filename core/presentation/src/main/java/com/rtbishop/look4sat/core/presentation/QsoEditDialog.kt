@@ -51,6 +51,7 @@ import com.rtbishop.look4sat.core.domain.logbook.LoTWSatelliteAliases
 import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
 import com.rtbishop.look4sat.core.domain.logbook.displayMode
+import com.rtbishop.look4sat.core.domain.logbook.displayTheirGrid
 import com.rtbishop.look4sat.core.domain.logbook.frequencyBand
 import java.math.BigDecimal
 import java.text.SimpleDateFormat
@@ -232,7 +233,7 @@ fun QsoEditDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                ReadOnlyField(stringResource(R.string.qso_edit_grid), record.theirGrid)
+                ReadOnlyField(stringResource(R.string.qso_edit_grid), record.displayTheirGrid)
                 if (txHz == null) {
                     Text(
                         text = stringResource(R.string.qso_edit_warn_no_freq),

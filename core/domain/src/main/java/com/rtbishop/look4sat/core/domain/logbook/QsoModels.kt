@@ -9,6 +9,8 @@
  */
 package com.rtbishop.look4sat.core.domain.logbook
 
+import java.util.Locale
+
 enum class QsoStatus { DRAFT, COMPLETE, ABORTED }
 
 data class QsoRecord(
@@ -63,5 +65,19 @@ data class QsoRecord(
     val region: String = "",
     val comment: String = ""
 )
+
+/** Complete counterpart grid label, including legacy records with no primary grid. */
+val QsoRecord.displayTheirGrid: String
+    get() {
+        val grids = (listOf(theirGrid) + theirVuccGrids)
+            .map { it.trim().uppercase(Locale.US).take(4) }
+            .filter { it.matches(Regex("[A-R]{2}[0-9]{2}")) }
+            .distinct()
+        return when {
+            grids.size > 1 -> grids.joinToString(", ")
+            theirGrid.isNotBlank() -> theirGrid.trim()
+            else -> grids.firstOrNull().orEmpty()
+        }
+    }
 
 data class AdifImportResult(val imported: Int, val skipped: Int, val updated: Int = 0)

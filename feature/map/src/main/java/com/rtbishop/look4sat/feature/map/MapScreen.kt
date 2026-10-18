@@ -52,6 +52,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -104,6 +108,7 @@ import com.rtbishop.look4sat.core.domain.model.firstCallsByGrid
 import com.rtbishop.look4sat.core.domain.model.MapSource
 import com.rtbishop.look4sat.core.domain.model.myStationGrids
 import com.rtbishop.look4sat.core.domain.model.scopedToStation
+import com.rtbishop.look4sat.core.domain.model.scopedToStations
 import com.rtbishop.look4sat.core.domain.model.stationGridSetKey
 import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
@@ -264,6 +269,15 @@ fun MapDestination(
     val viewModel: MapViewModel = viewModel(factory = MapViewModel.factory(container))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val mapView = rememberMapViewWithLifecycle(mapFilterViewModel, restoreViewport = uiState.isGridMode)
+    // The VUCC station selector is saved in the existing SharedPreferences settings
+    // store, so it survives page switches and a full app restart. Empty = All.
+    var selectedStationIds by remember(container) {
+        mutableStateOf(container.settingsRepo.getVuccSelectedStationIds())
+    }
+    val updateSelectedStationIds: (Set<String>) -> Unit = { ids ->
+        selectedStationIds = ids
+        container.settingsRepo.setVuccSelectedStationIds(ids)
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Save the viewport when leaving the page, but only in grid mode: the
     // satellite mode intentionally keeps its original behavior (default center,
@@ -299,6 +313,8 @@ fun MapDestination(
         onAction = viewModel::onAction,
         mapView = mapView,
         mapFilterViewModel = mapFilterViewModel,
+        selectedStationIds = selectedStationIds,
+        onSelectedStationIdsChange = updateSelectedStationIds,
         onMatchGrid = onMatchGrid,
         matchCalculating = matchCalculating
     )
@@ -310,6 +326,8 @@ private fun MapScreen(
     onAction: (MapAction) -> Unit,
     mapView: MapView,
     mapFilterViewModel: MapFilterViewModel,
+    selectedStationIds: Set<String>,
+    onSelectedStationIdsChange: (Set<String>) -> Unit,
     onMatchGrid: (String) -> Unit,
     matchCalculating: Boolean
 ) {
@@ -362,34 +380,34 @@ private fun MapScreen(
             StationGroup(id = key, grids = grids, worked = worked)
         }.sortedByDescending { it.workedCount }
     }
-    // Selected 台址 for VUCC counting; defaults to the group with the most
-    // worked grids. Null = "All" (every 台址 combined). Empty when the store
-    // carries no per-QSO myGrid data (requires a LoTW resync) — the selector
-    // is hidden then and VUCC falls back to the global count.
-    var selectedStationId by remember(stationGroups) {
-        mutableStateOf(stationGroups.maxByOrNull { it.workedCount }?.id)
-    }
-    val awardProgress: List<AwardProgress> = remember(uiState.workedGridQsos, stationGroups, selectedStationId) {
-        val base = AwardCalculator.calculate(uiState.workedGridQsos)
-        val worked = stationGroups.firstOrNull { it.id == selectedStationId }?.worked
-        if (worked == null) base
-        else base.map { p ->
-            if (p.type == AwardType.VUCC) p.copy(workedKeys = worked, count = worked.size) else p
+    // Restore valid saved station IDs when data arrives or is refreshed.
+    // Do not clear a saved selection while the station list is still loading.
+    LaunchedEffect(stationGroups, selectedStationIds) {
+        if (stationGroups.isNotEmpty() && selectedStationIds.isNotEmpty()) {
+            val valid = selectedStationIds.intersect(stationGroups.map { it.id }.toSet())
+            if (valid != selectedStationIds) onSelectedStationIdsChange(valid)
         }
     }
-    // Worked grids drawn on the map: filtered by the selected 台址 (null = all).
-    // Drives both the green fills and the tap listener below, so switching the
-    // selector changes which cells are green.
-    val workedGrids = remember(uiState.workedGrids, stationGroups, selectedStationId) {
-        if (selectedStationId == null) uiState.workedGrids
-        else stationGroups.firstOrNull { it.id == selectedStationId }?.worked ?: emptySet()
+    // Union of worked squares across the selected stations. Each station's
+    // existing covering rule is preserved by StationGroup.worked.
+    val workedGrids = remember(uiState.workedGrids, stationGroups, selectedStationIds) {
+        if (selectedStationIds.isEmpty()) uiState.workedGrids
+        else stationGroups.asSequence()
+            .filter { it.id in selectedStationIds }
+            .flatMap { it.worked.asSequence() }
+            .toSet()
     }
-    // First callsign worked in each grid (earliest QSO by time), used by the
-    // "首通呼号" label mode. Scoped to the selected 台址 like the fills: with a
-    // specific operated grid chosen, the label must show ITS first contact, not
-    // another 台址's (user decision 2026-10-05); "All" = global first call.
-    val firstCallsByGrid: Map<String, String> = remember(uiState.workedGridQsos, selectedStationId) {
-        uiState.workedGridQsos.firstCallsByGrid(selectedStationId)
+    val awardProgress: List<AwardProgress> = remember(uiState.workedGridQsos, workedGrids, selectedStationIds) {
+        val base = AwardCalculator.calculate(uiState.workedGridQsos)
+        if (selectedStationIds.isEmpty()) base
+        else base.map { p ->
+            if (p.type == AwardType.VUCC) p.copy(workedKeys = workedGrids, count = workedGrids.size) else p
+        }
+    }
+    // First callsign must be recomputed within the UNION of selected station
+    // scopes, not from the globally earliest contact or one arbitrary station.
+    val firstCallsByGrid: Map<String, String> = remember(uiState.workedGridQsos, selectedStationIds) {
+        uiState.workedGridQsos.firstCallsByGrid(selectedStationIds)
     }
     val isGridMode = uiState.isGridMode
     // True when this composition restored a saved viewport. Only grid mode
@@ -596,13 +614,13 @@ private fun MapScreen(
                     )
                 }
                 // Top-left: 台址 selector for VUCC counting (grid mode only).
-                // Shown whenever per-grid QSO data exists; "All" (null) is available.
+                // Shown whenever per-grid QSO data exists; empty selection means All.
                 if (uiState.isGridMode && selectedAward == AwardType.VUCC && stationGroups.isNotEmpty()) {
                     VuccGridSelector(
                         stations = stationGroups,
                         allCount = uiState.workedGrids.size,
-                        selected = selectedStationId,
-                        onSelect = { selectedStationId = it },
+                        selected = selectedStationIds,
+                        onSelect = onSelectedStationIdsChange,
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .padding(8.dp)
@@ -638,10 +656,10 @@ private fun MapScreen(
     selectedGrid?.let { grid ->
         WorkedGridQsoDialog(
             grid = grid,
-            // Scope to the selected 台址 (null = All): a specific station location
-            // must not show other locations' QSOs (bug report 2026-10-05).
+            // A multi-selection shows the union of QSO details without duplicates,
+            // preserving each station's covering scope; empty selection means All.
             qsos = uiState.workedGridQsos[grid].orEmpty()
-                .scopedToStation(selectedStationId)
+                .scopedToStations(selectedStationIds)
                 .sortedBy { it.epochMs },
             marked = uiState.markedGrids[grid].orEmpty(),
             isUtc = uiState.isUtc,
@@ -1413,33 +1431,40 @@ private data class StationGroup(
 private fun VuccGridSelector(
     stations: List<StationGroup>,
     allCount: Int,
-    selected: String?,
-    onSelect: (String?) -> Unit,
+    selected: Set<String>,
+    onSelect: (Set<String>) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    // Most-worked 台址 first; selection is made on tap. "All" sits last.
+    // Preserve the former ordering: most-worked first, All last.
     val sorted = remember(stations) { stations.sortedByDescending { it.workedCount } }
-    val selectedLabel = stations.firstOrNull { it.id == selected }?.label
+    val selectedCount = remember(stations, selected, allCount) {
+        if (selected.isEmpty()) allCount
+        else stations.asSequence().filter { it.id in selected }
+            .flatMap { it.worked.asSequence() }.toSet().size
+    }
+    val label = when {
+        selected.isEmpty() -> "All ($allCount)"
+        selected.size == 1 -> {
+            val station = stations.firstOrNull { it.id in selected }
+            "${station?.label ?: "1 station"} ($selectedCount)"
+        }
+        else -> "${selected.size} stations ($selectedCount)"
+    }
     Surface(
         color = ComposeColor.Black.copy(alpha = 0.45f),
         shape = RoundedCornerShape(8.dp),
         modifier = modifier
     ) {
-        // Width = widest child (header or list item), never the full screen:
-        // the expanded rows use fillMaxWidth, which would otherwise stretch
-        // this box to the whole map width.
-        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+        Box {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .fillMaxWidth()
                     .clickable { expanded = !expanded }
                     .padding(start = 10.dp, end = 6.dp, top = 4.dp, bottom = 4.dp)
             ) {
                 Text(
-                    text = if (selectedLabel == null) "All ($allCount)"
-                    else "$selectedLabel (${stations.firstOrNull { it.id == selected }?.workedCount ?: 0})",
+                    text = label,
                     color = ComposeColor.White,
                     fontSize = 12.sp,
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
@@ -1451,50 +1476,70 @@ private fun VuccGridSelector(
                     modifier = Modifier.padding(start = 4.dp)
                 )
             }
-            if (expanded) {
-                androidx.compose.material3.HorizontalDivider(color = ComposeColor.White.copy(alpha = 0.2f))
+            // Popup dismisses on outside tap; checkbox taps apply immediately
+            // and deliberately keep the menu open (no Apply/Done button).
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                containerColor = ComposeColor.Black.copy(alpha = 0.90f),
+                modifier = Modifier.heightIn(max = 420.dp)
+            ) {
                 sorted.forEach { station ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                onSelect(station.id)
-                                expanded = false
-                            }
-                            .padding(horizontal = 10.dp, vertical = 3.dp)
-                    ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "${station.label} (${station.workedCount})",
+                                color = ComposeColor.White,
+                                fontSize = 12.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        },
+                        leadingIcon = {
+                            Checkbox(
+                                checked = station.id in selected,
+                                onCheckedChange = null,
+                                modifier = Modifier.scale(0.8f),
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedColor = ComposeColor.White
+                                )
+                            )
+                        },
+                        onClick = {
+                            onSelect(
+                                if (station.id in selected) selected - station.id
+                                else selected + station.id
+                            )
+                        }
+                    )
+                }
+                // All is mutually exclusive with specific station selections.
+                DropdownMenuItem(
+                    text = {
                         Text(
-                            text = "${station.label} (${station.workedCount})",
-                            color = if (station.id == selected) MaterialTheme.colorScheme.primary else ComposeColor.White,
+                            text = "All ($allCount)",
+                            color = ComposeColor.White,
                             fontSize = 12.sp,
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         )
-                    }
-                }
-                // "All" always listed last: shows every worked grid combined.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            onSelect(null)
-                            expanded = false
-                        }
-                        .padding(horizontal = 10.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = "All ($allCount)",
-                        color = if (selected == null) MaterialTheme.colorScheme.primary else ComposeColor.White,
-                        fontSize = 12.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                    )
-                }
+                    },
+                    leadingIcon = {
+                        Checkbox(
+                            checked = selected.isEmpty(),
+                            onCheckedChange = null,
+                            modifier = Modifier.scale(0.8f),
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = MaterialTheme.colorScheme.primary,
+                                uncheckedColor = ComposeColor.White
+                            )
+                        )
+                    },
+                    onClick = { onSelect(emptySet()) }
+                )
             }
         }
     }
 }
-
 /**
  * Compact pill toggle for switching between satellite view and grid mode,
  * floated over the map's top-right corner. The label reflects the active
