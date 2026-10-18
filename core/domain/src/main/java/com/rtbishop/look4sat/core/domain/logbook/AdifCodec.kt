@@ -97,15 +97,22 @@ object AdifCodec {
         val end = values["QSO_DATE_OFF"]?.let { endDate ->
             values["TIME_OFF"]?.let { endTime -> parse(endDate, endTime) }
         }
+        // LoTW omits GRIDSQUARE when the other station operated on a grid line
+        // or corner and supplies only VUCC_GRIDS. Keep the first valid grid in
+        // theirGrid for legacy single-grid UI/editor fields, while retaining the
+        // complete normalized set in theirVuccGrids.
+        val theirVuccGrids = decodeGridSet(values["GRIDSQUARE"], values["VUCC_GRIDS"])
+        val theirGrid = values["GRIDSQUARE"].orEmpty().uppercase(Locale.US)
+            .ifBlank { theirVuccGrids.firstOrNull().orEmpty() }
         QsoRecord(
             startUtcMillis = start,
             endUtcMillis = end,
             theirCallsign = call,
             myCallsign = values["STATION_CALLSIGN"].orEmpty().uppercase(Locale.US),
-            theirGrid = values["GRIDSQUARE"].orEmpty().uppercase(Locale.US),
+            theirGrid = theirGrid,
             // Once a multi-grid field is present, expose the complete normalized
             // set (primary GRIDSQUARE + VUCC_GRIDS), not only the raw field value.
-            theirVuccGrids = decodeGridSet(values["GRIDSQUARE"], values["VUCC_GRIDS"]),
+            theirVuccGrids = theirVuccGrids,
             myGrid = values["MY_GRIDSQUARE"].orEmpty().uppercase(Locale.US),
             vuccGrids = decodeGridSet(values["MY_GRIDSQUARE"], values["MY_VUCC_GRIDS"]),
             sentReport = values["RST_SENT"].orEmpty(),

@@ -57,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
 import com.rtbishop.look4sat.core.domain.logbook.QsoStatus
 import com.rtbishop.look4sat.core.domain.logbook.displayMode
+import com.rtbishop.look4sat.core.domain.logbook.displayTheirGrid
 import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.presentation.CardButton
@@ -382,7 +383,7 @@ private fun QsoCard(record: QsoRecord, onEdit: () -> Unit, onDelete: () -> Unit)
                         R.string.logbook_reports_grid,
                         record.sentReport.ifBlank { unavailable },
                         record.receivedReport.ifBlank { unavailable },
-                        record.theirGrid.ifBlank { unavailable }
+                        record.displayTheirGrid.ifBlank { unavailable }
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
