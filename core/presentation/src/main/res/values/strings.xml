@@ -144,6 +144,7 @@
     <string name="map_grid_mode">Grid mode</string>
     <string name="map_satellite_mode">Satellite mode</string>
     <string name="map_first_call_mode">First call</string>
+    <string name="map_time_reset">Reset</string>
     <string name="map_azimuth">Azimuth: %.1f°</string>
     <string name="map_elevation">Elevation: %.1f°</string>
     <string name="map_altitude">Altitude: %.0f km</string>
@@ -268,6 +269,18 @@
     <string name="prefs_logbook_callsign_switch">Use another certificate</string>
     <string name="prefs_logbook_station_label">Station</string>
     <string name="prefs_logbook_station_all">All</string>
+    <string name="prefs_logbook_query">Query</string>
+    <string name="prefs_logbook_query_title">Query logbook</string>
+    <string name="prefs_logbook_query_hint">Search callsign, satellite or grid</string>
+    <string name="prefs_logbook_query_hits">%1$d matches</string>
+    <string name="prefs_logbook_query_clear">Clear</string>
+    <string name="prefs_logbook_query_back">Back</string>
+    <string name="prefs_logbook_query_empty">No records match the query</string>
+    <string name="prefs_logbook_query_all">All</string>
+    <string name="prefs_logbook_query_confirmed">LoTW confirmed</string>
+    <string name="prefs_logbook_query_unconfirmed">Unconfirmed</string>
+    <string name="prefs_logbook_query_incomplete">Draft / aborted</string>
+    <string name="prefs_logbook_query_all_modes">All modes</string>
     <string name="prefs_logbook_upload_wavelog_title">Upload to Wavelog</string>
     <string name="lotw_upload_grid_title">Upload check</string>
     <string name="lotw_upload_grid_fix">Fix station location</string>

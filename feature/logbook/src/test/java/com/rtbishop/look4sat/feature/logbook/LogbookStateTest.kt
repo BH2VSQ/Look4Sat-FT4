@@ -1,6 +1,7 @@
 package com.rtbishop.look4sat.feature.logbook
 
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
+import com.rtbishop.look4sat.core.domain.logbook.QsoStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -33,6 +34,35 @@ class LogbookStateTest {
         )
 
         assertEquals(records, LogbookState(records = records, modeFilter = "").filteredRecords)
+    }
+
+    @Test
+    fun satelliteFilterCombinesWithQueryAndConfirmation() {
+        val confirmedSatellite = record(id = 1, satelliteName = "FO-29").copy(lotwConfirmed = true)
+        val unconfirmedSatellite = record(id = 2, satelliteName = "FO-29")
+        val confirmedGround = record(id = 3).copy(lotwConfirmed = true)
+        val state = LogbookState(
+            records = listOf(confirmedSatellite, unconfirmedSatellite, confirmedGround),
+            query = "  k1abc  ",
+            confirmationFilter = LogbookFilter.CONFIRMED
+        )
+
+        assertEquals(listOf(confirmedSatellite), state.filteredRecords)
+    }
+
+    @Test
+    fun exactModeFilterCombinesWithQueryAndDraftStatus() {
+        val draft = record(id = 1, satelliteName = "FO-29").copy(mode = "CW", status = QsoStatus.DRAFT)
+        val complete = draft.copy(id = 2, status = QsoStatus.COMPLETE)
+        val otherMode = draft.copy(id = 3, mode = "FM")
+        val state = LogbookState(
+            records = listOf(draft, complete, otherMode),
+            query = "fo-29",
+            modeFilter = "CW",
+            confirmationFilter = LogbookFilter.DRAFTS
+        )
+
+        assertEquals(listOf(draft), state.filteredRecords)
     }
 
     private fun record(

@@ -123,6 +123,7 @@
     <string name="map_grid_mode">网格模式</string>
     <string name="map_satellite_mode">卫星模式</string>
     <string name="map_first_call_mode">首通呼号</string>
+    <string name="map_time_reset">重置</string>
     <string name="map_azimuth">方位角：%.1f°</string>
     <string name="map_elevation">仰角：%.1f°</string>
     <string name="map_altitude">高度：%.0f km</string>
@@ -237,6 +238,18 @@
     <string name="prefs_logbook_callsign_switch">换一张证书</string>
     <string name="prefs_logbook_station_label">台址</string>
     <string name="prefs_logbook_station_all">全部</string>
+    <string name="prefs_logbook_query">查询</string>
+    <string name="prefs_logbook_query_title">查询日志</string>
+    <string name="prefs_logbook_query_hint">搜索呼号、卫星或网格</string>
+    <string name="prefs_logbook_query_hits">命中 %1$d 条</string>
+    <string name="prefs_logbook_query_clear">清除</string>
+    <string name="prefs_logbook_query_back">返回</string>
+    <string name="prefs_logbook_query_empty">没有符合条件的记录</string>
+    <string name="prefs_logbook_query_all">全部</string>
+    <string name="prefs_logbook_query_confirmed">LoTW 已确认</string>
+    <string name="prefs_logbook_query_unconfirmed">待确认</string>
+    <string name="prefs_logbook_query_incomplete">草稿／中止</string>
+    <string name="prefs_logbook_query_all_modes">全部模式</string>
     <string name="prefs_logbook_upload_wavelog_title">上传到 Wavelog</string>
     <string name="lotw_upload_grid_title">上传前核对</string>
     <string name="lotw_upload_grid_fix">修改台址</string>

@@ -241,9 +241,15 @@ class AwardBoundaryOverlay : Overlay() {
         for (i in regions.indices) {
             val region = regions[i]
             val b = regionBounds.getOrNull(i) ?: continue
-            // Cull: region bbox outside the visible span (with wrap slack).
-            if (b[1] > topLat || b[3] < bottomLat) continue
-            if (b[0] > rightLon || b[2] < leftLon) continue
+            // Cull: region bbox outside the visible span — tested against the wrap as well. A region
+            // whose stored longitudes sit the other side of ±180 (Russia's eastern tip, Fiji, New
+            // Zealand) is drawn by projectionToX on the NEAR side of the meridian, so comparing it
+            // against the unwrapped visible span dropped exactly the half that the antimeridian
+            // split exists to keep: the boundary stopped at ±180 with nothing on the other side.
+            val lonVisible = spansOverlap(b[0], b[2], leftLon, rightLon) ||
+                spansOverlap(b[0] + 360.0, b[2] + 360.0, leftLon, rightLon) ||
+                spansOverlap(b[0] - 360.0, b[2] - 360.0, leftLon, rightLon)
+            if (b[1] > topLat || b[3] < bottomLat || !lonVisible) continue
             val worked = region.code in workedCodes
             val selected = region.code == selectedCode
 
@@ -476,6 +482,10 @@ class AwardBoundaryOverlay : Overlay() {
         val p = projection.toPixels(geo, null)
         return (p.x + delta / 360.0 * worldWidthPx).toFloat()
     }
+
+    /** True when the [aMin,aMax] span overlaps [bMin,bMax]; both are plain, unwrapped ranges. */
+    private fun spansOverlap(aMin: Double, aMax: Double, bMin: Double, bMax: Double): Boolean =
+        aMax >= bMin && aMin <= bMax
 
     /** Y pixel for a latitude. Mercator blows up at the poles (lat ±90 → ±∞),
      *  so clamp to the Web-Mercator maximum (~±85.05113°) — the rendered map

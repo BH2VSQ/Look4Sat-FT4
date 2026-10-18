@@ -139,7 +139,7 @@ data class LogbookEditor(
     }
 }
 
-enum class LogbookFilter { ALL, CONFIRMED, UNCONFIRMED, DRAFTS }
+typealias LogbookFilter = com.rtbishop.look4sat.core.domain.logbook.LogbookFilter
 
 internal const val SATELLITE_MODE_FILTER = "__SATELLITE__"
 
@@ -217,21 +217,12 @@ data class LogbookState(
     val stationCallsign: String = "",
     val showClearAllConfirmation: Boolean = false
 ) {
-    val filteredRecords: List<QsoRecord> get() = records.filter { record ->
-        (query.isBlank() || listOf(record.theirCallsign, record.myCallsign, record.satelliteName, record.theirGrid, record.myGrid, record.comment)
-            .any { it.contains(query.trim(), true) }) &&
-            when (modeFilter) {
-                "" -> true
-                SATELLITE_MODE_FILTER -> record.isSatellite
-                else -> record.displayMode == modeFilter
-            } &&
-            when (confirmationFilter) {
-                LogbookFilter.ALL -> true
-                LogbookFilter.CONFIRMED -> record.lotwConfirmed
-                LogbookFilter.UNCONFIRMED -> record.status == QsoStatus.COMPLETE && !record.lotwConfirmed
-                LogbookFilter.DRAFTS -> record.status != QsoStatus.COMPLETE
-            }
-    }
+    val filteredRecords: List<QsoRecord> get() = com.rtbishop.look4sat.core.domain.logbook.filterRecords(
+        records = if (modeFilter == SATELLITE_MODE_FILTER) records.filter { it.isSatellite } else records,
+        query = query,
+        modeFilter = modeFilter.takeUnless { it == SATELLITE_MODE_FILTER }.orEmpty(),
+        confirmation = confirmationFilter
+    )
 }
 
 sealed interface LogbookAction {

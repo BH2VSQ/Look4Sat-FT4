@@ -25,9 +25,14 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import androidx.collection.LruCache
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -35,7 +40,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,13 +51,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -63,11 +74,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -95,6 +109,7 @@ import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
+import com.rtbishop.look4sat.core.domain.utility.clipLon
 import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.R
@@ -121,6 +136,8 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 import org.osmdroid.views.overlay.TilesOverlay
 import java.net.URLEncoder
+import kotlin.math.abs
+import kotlin.math.exp
 
 // Overlay indices
 private const val OVERLAY_TDT_LABELS = 0
@@ -302,6 +319,13 @@ private fun MapScreen(
     val usesTianditu = tiandituLayers(uiState.mapSource) != null && uiState.tiandituKey.isNotBlank()
     val copyrightResId = if (usesTianditu) R.string.map_copyright_tianditu else R.string.map_copyright_osm
 
+    // Slider span = the window the ground track is drawn for (2.4 orbital periods from the
+    // selection instant), so a scrubbed marker always lands on that drawn track.
+    val scrubSpanMs = remember(uiState.mapData?.period) {
+        val periodMin = uiState.mapData?.period ?: 0.0
+        (periodMin * 2.4 * 60_000.0).toLong().coerceAtLeast(60_000L)
+    }
+
     // Tapped worked grid -> centered QSO dialog. Local UI state: the map is the
     // only consumer and it resets when leaving the page.
     var selectedGrid by remember { mutableStateOf<String?>(null) }
@@ -422,14 +446,28 @@ private fun MapScreen(
             selectedRegion?.second?.code
         mapView.invalidate()
     }
-    LaunchedEffect(uiState.track) {
-        // In grid mode the map is centered on the local grid square; following
-        // the satellite subpoint here would override that centering on every
-        // track update, so skip the tracking animation entirely.
-        if (uiState.isGridMode) return@LaunchedEffect
-        val firstPos = uiState.track?.firstOrNull()?.firstOrNull() ?: return@LaunchedEffect
-        mapView.controller.animateTo(GeoPoint(firstPos.latitude, firstPos.longitude))
+    // Camera: go to the selected satellite once per entry and once per selection change.
+    // Keyed on the satellite, NOT on the track: keying it on the track meant (a) on a re-entry the
+    // track instance was unchanged, so the effect never ran and the camera stayed on the opening
+    // world view instead of the satellite, and (b) once the track started being kept up to date,
+    // every refresh re-issued the pan and fought the user's own panning. Keying it on the catnum
+    // fixes both: a fresh composition always runs it (entry), a satellite change runs it, a track
+    // refresh does not. Issued from post{} because a camera call before the first layout is
+    // discarded (same trap as the restored viewport below).
+    val followedCatNum = uiState.mapData?.catNum ?: 0
+    LaunchedEffect(followedCatNum) {
+        if (uiState.isGridMode || followedCatNum == 0) return@LaunchedEffect
+        mapView.post {
+            uiState.mapData?.osmPos?.let { point ->
+                mapView.controller.animateTo(GeoPoint(point.latitude, point.longitude))
+            }
+        }
     }
+    // Time scrub: keep the scrubbed satellite in view. Only its own entry is patched into
+    // `positions`, so without this the camera would stay where the live map left it and the
+    // marker would walk off-screen mid-drag. The camera is moved inside the map update pass
+    // below, not here: a separate effect ran after the markers were applied, so the two
+    // alternated on screen and the marker and its footprint looked like they were shaking.
     LaunchedEffect(uiState.mapSource, uiState.tiandituKey, uiState.isLightUi) {
         configureTileSources(mapView, uiState.mapSource, uiState.tiandituKey, uiState.isLightUi)
     }
@@ -522,14 +560,40 @@ private fun MapScreen(
                         setTerminator(uiState.sunLatDeg, uiState.sunLonDeg, view)
                         setSubSolarPoint(uiState.sunLatDeg, uiState.sunLonDeg, view, uiState.isLightUi)
                         setMoonPosition(uiState.moonLatDeg, uiState.moonLonDeg, view, uiState.isLightUi)
+                        // Time scrub: keep the scrubbed satellite centred, in the same pass that
+                        // moves its marker so the two can never disagree. The pan is applied
+                        // directly instead of as an osmdroid animation: the eased clock advances
+                        // every frame now, and re-issuing an 80 ms animation that often made the
+                        // camera trail the satellite (a moving target restarts it before it gets
+                        // anywhere) instead of following it.
+                        // Also fires for a new scrub SERIAL, not just while isScrubbing: a tap on
+                        // the slider starts and finishes within one frame, so the flag is never
+                        // seen true and the satellite used to end up off-screen.
+                        if (uiState.isScrubbing || uiState.scrubSerial != lastFollowedScrubSerial) {
+                            uiState.mapData?.osmPos?.let { point ->
+                                view.controller.setCenter(GeoPoint(point.latitude, point.longitude))
+                            }
+                            lastFollowedScrubSerial = uiState.scrubSerial
+                        }
                     }
+                    scrubInProgress = uiState.isScrubbing
                     view.invalidate()
                 }
-                uiState.mapData?.let { mapData ->
-                    if (!uiState.isGridMode) {
-                        if (isVertical) MapDataCard(mapData, copyrightResId)
-                        else MapDataCards(mapData, copyrightResId)
-                    }
+                // Satellite mode: the time slider replaces the old info cards. Grid mode keeps
+                // its own overlay set untouched.
+                if (!uiState.isGridMode) {
+                    TimeScrubBar(
+                        offsetMs = uiState.timeOffsetMs,
+                        spanMs = scrubSpanMs,
+                        mapTimeMs = uiState.mapTimeMs,
+                        isUtc = uiState.isUtc,
+                        copyrightResId = copyrightResId,
+                        onScrub = { onAction(MapAction.SetTimeOffset(it)) },
+                        onScrubStart = { onAction(MapAction.SetScrubbing(true)) },
+                        onScrubEnd = { onAction(MapAction.SetScrubbing(false)) },
+                        onReset = { onAction(MapAction.ResetTimeOffset) },
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
                 }
                 // Top-left: 台址 selector for VUCC counting (grid mode only).
                 // Shown whenever per-grid QSO data exists; "All" (null) is available.
@@ -1037,86 +1101,248 @@ private fun formatTime(epochMs: Long, isUtc: Boolean): String {
 }
 // endregion
 
-// region Map data composables
-@Composable
-private fun MapDataCard(data: MapData, copyrightResId: Int) {
-    val textColor = MaterialTheme.colorScheme.primary
-    val cardColors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = stringResource(copyrightResId), fontSize = 14.sp)
-        Card(colors = cardColors) {
-            Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                MapDataRow(
-                    stringResource(R.string.map_azimuth, data.azimuth) to textColor,
-                    stringResource(R.string.map_elevation, data.elevation) to textColor
-                )
-                MapDataRow(
-                    stringResource(R.string.map_altitude, data.altitude) to null,
-                    stringResource(R.string.map_distance, data.range) to null
-                )
-                MapDataRow(
-                    stringResource(R.string.map_latitude, data.osmPos.latitude) to textColor,
-                    stringResource(R.string.map_longitude, data.osmPos.longitude) to textColor
-                )
-                MapDataRow(
-                    stringResource(R.string.map_qth, data.qthLoc) to null,
-                    stringResource(R.string.map_phase, data.phase) to null
-                )
-            }
-        }
-    }
-}
+// region Time scrub bar
 
+/**
+ * Time constant of the eased scrub clock, in milliseconds. The readout and the map chase the
+ * finger over roughly this long (settling in about three times it): the steps between two finger
+ * positions, each worth tens of seconds of orbit, become continuous motion instead of jumps.
+ */
+private const val SCRUB_EASE_MS = 100.0
+
+/** Fraction of the span at which the eased clock counts as caught up (~0.05 % of the track). */
+private const val SCRUB_EASE_EPSILON = 0.0005f
+
+/** Width reserved for the drag bubble, used to keep it inside the slider's track. */
+private val scrubBubbleWidth = 64.dp
+
+/**
+ * Bottom bar of satellite mode: one slider that scrubs the map's clock forward from "now" over
+ * the window the ground track is drawn for, so the scrubbed marker always sits on the drawn
+ * track. While the finger is down the satellite marker, its footprint and the terminator follow
+ * the thumb; a bubble above it shows that instant in the same UTC/local format as the rest of
+ * the app. Releasing keeps the offset — the map keeps running at that offset, so the pass can be
+ * watched — until "Now" is tapped. This replaces the old info cards; their readings live on the
+ * radar page.
+ */
 @Composable
-private fun MapDataRow(
-    left: Pair<String, androidx.compose.ui.graphics.Color?>,
-    right: Pair<String, androidx.compose.ui.graphics.Color?>
+private fun TimeScrubBar(
+    offsetMs: Long,
+    spanMs: Long,
+    mapTimeMs: Long,
+    isUtc: Boolean,
+    copyrightResId: Int,
+    onScrub: (Long) -> Unit,
+    onScrubStart: () -> Unit,
+    onScrubEnd: () -> Unit,
+    onReset: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-        if (left.second != null) Text(text = left.first, color = left.second!!)
-        else Text(text = left.first)
-        if (right.second != null) Text(text = right.first, color = right.second!!)
-        else Text(text = right.first)
+    // Finger position: the thumb follows it 1:1 and it is the value the clock eases towards.
+    var fingerFraction by remember { mutableStateOf(0f) }
+    // Reported position: the readout and the map ease onto the finger's value over a few frames.
+    // One slider pixel is ~48 s of orbit, so pushing the raw finger value stepped the satellite
+    // and its footprint by hundreds of kilometres on every update — during a quick drag that reads
+    // as teleporting. Easing turns those steps into continuous motion and settles exactly.
+    var shownFraction by remember { mutableStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    // True from the first touch until the eased clock has caught up with the finger's last value,
+    // i.e. it outlives the release by a few frames. That tail is what keeps the satellite centred
+    // after a fast flick: reporting the finger's raw value the moment it is lifted would jump the
+    // clock by the whole easing lag (minutes of orbit on a quick swipe) while the camera had
+    // already stopped following, so the marker would land far off-screen.
+    var easing by remember { mutableStateOf(false) }
+    // "Now" captured when the gesture starts: the readout must not jitter with the wall clock
+    // while the finger is already deciding the instant.
+    var anchorMs by remember { mutableStateOf(0L) }
+    // The instant the finger is pointing at. It is frozen for as long as the gesture lasts, which is
+    // what the readout shows and what the map must therefore render.
+    fun pickedInstantMs(fraction: Float): Long = anchorMs + (fraction * spanMs).toLong()
+    // What goes to the map: the picked instant expressed as an offset from the moment the map reads
+    // it. Reporting `fraction * span` as-is (i.e. "offset from now") made the map time creep forward
+    // with the wall clock during a hold — the satellite drifted while the readout stood still — and
+    // jump forward by the whole hold on release, so a two-minute hold landed two minutes past the
+    // instant the finger had chosen.
+    fun offsetFor(fraction: Float): Long =
+        (pickedInstantMs(fraction) - System.currentTimeMillis()).coerceAtLeast(0L)
+    // Re-sync when the offset changes from outside (the reset button).
+    LaunchedEffect(offsetMs, spanMs) {
+        if (!easing) {
+            fingerFraction = (offsetMs.toFloat() / spanMs.toFloat()).coerceIn(0f, 1f)
+            shownFraction = fingerFraction
+        }
     }
-}
-
-@Composable
-private fun MapDataCards(data: MapData, copyrightResId: Int) {
-    val cardColors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)
-    val paddingMod = Modifier
-        .padding(horizontal = 8.dp, vertical = 4.dp)
-        .width(160.dp)
-    val textColor = MaterialTheme.colorScheme.primary
-    Box(modifier = Modifier.fillMaxSize()) {
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.TopStart)) {
-            Column(horizontalAlignment = Alignment.Start, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_azimuth, data.azimuth), color = textColor)
-                Text(text = stringResource(R.string.map_elevation, data.elevation))
+    // Easing loop: chase the finger frame by frame and report the eased instant. Frame-rate
+    // independent exponential approach; the map only ever moves by small increments, so even a
+    // flick glides. It keeps running for a moment after the finger is lifted (see `easing`) and
+    // stops reporting once it has caught up.
+    LaunchedEffect(easing, spanMs) {
+        if (!easing) return@LaunchedEffect
+        try {
+            var lastFrameMs = 0.0
+            var lastPickedMs = Long.MIN_VALUE
+            while (true) {
+                var changed = false
+                var settled = false
+                withFrameNanos { frameNs ->
+                    val frameMs = frameNs / 1_000_000.0
+                    val deltaMs = if (lastFrameMs == 0.0) 16.0 else (frameMs - lastFrameMs)
+                    lastFrameMs = frameMs
+                    val factor = (1.0 - exp(-deltaMs / SCRUB_EASE_MS)).coerceIn(0.0, 1.0)
+                    shownFraction += ((fingerFraction - shownFraction) * factor).toFloat()
+                    if (abs(fingerFraction - shownFraction) < SCRUB_EASE_EPSILON) {
+                        shownFraction = fingerFraction
+                        settled = true
+                    }
+                    val pickedMs = pickedInstantMs(shownFraction)
+                    if (pickedMs != lastPickedMs) {
+                        lastPickedMs = pickedMs
+                        changed = true
+                    }
+                }
+                if (changed) onScrub(offsetFor(shownFraction))
+                // Finger up and clock caught up: settle on the exact instant, then hand the map back
+                // to the tick loop (which is what makes the camera stop following).
+                if (settled && !dragging) {
+                    onScrub(offsetFor(shownFraction))
+                    onScrubEnd()
+                    easing = false
+                    break
+                }
+            }
+        } finally {
+            // Also runs when this effect is cancelled instead of finishing — which happens whenever
+            // `spanMs` changes (i.e. the selection moved to a satellite with another period) or the
+            // bar leaves the composition. Without this the scrub flag stayed set: the tick loop
+            // stands down while it is set, so the map and its ground track froze on the last
+            // scrubbed instant until the user dragged again.
+            if (easing) {
+                easing = false
+                dragging = false
+                onScrubEnd()
             }
         }
-        // Top-end card is offset down to make room for the grid-mode toggle pill.
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.TopEnd).padding(top = 60.dp)) {
-            Column(horizontalAlignment = Alignment.End, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_altitude, data.altitude), color = textColor)
-                Text(text = stringResource(R.string.map_distance, data.range))
+    }
+    // The bar has no backing panel: it sits straight on the map. Contrast for its labels comes
+    // from a soft halo (plus the clock's own capsule) instead of a black box behind them.
+    val labelShadow = Shadow(color = ComposeColor.Black.copy(alpha = 0.85f), blurRadius = 4f)
+    Box(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Fixed-height slot so the readout never moves the slider under the finger. The clock
+            // stays visible: while the finger is down it shows the eased instant (the same one the
+            // map is rendering), otherwise the instant the tick loop last rendered.
+            Box(modifier = Modifier.fillMaxWidth().height(22.dp)) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = formatTime(
+                            if (dragging) pickedInstantMs(shownFraction) else mapTimeMs,
+                            isUtc
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .offset(x = ((maxWidth - scrubBubbleWidth) * fingerFraction).coerceAtLeast(0.dp))
+                            .background(ComposeColor.Black.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
             }
-        }
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.BottomStart)) {
-            Column(horizontalAlignment = Alignment.Start, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_phase, data.phase), color = textColor)
-                Text(text = stringResource(R.string.map_qth, data.qthLoc))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // The Material slider only reports a value once the finger *moves* (a press on its
+                // own is delivered on release, as a tap), so pressing a new spot used to leave the
+                // map on the old instant until the drag started. This observes the same press
+                // without consuming it, maps the finger's x onto the track's travel and seeks right
+                // away; the slider's own drag/tap reports take over from there and correct the few
+                // pixels this mapping assumes for the thumb inset.
+                val pressSeek = Modifier.pointerInput(spanMs) {
+                    // M3's thumb is a 4 dp bar, so the travel is inset by half of it at each end.
+                    val thumbInset = 2.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val travel = size.width - thumbInset * 2f
+                        if (travel > 0f) {
+                            val fraction =
+                                ((down.position.x - thumbInset) / travel).coerceIn(0f, 1f)
+                            if (!dragging) {
+                                dragging = true
+                                easing = true
+                                anchorMs = System.currentTimeMillis()
+                                shownFraction = fraction
+                                onScrubStart()
+                            }
+                            fingerFraction = fraction
+                            onScrub(offsetFor(fraction))
+                            // The slider reports the end of its own gesture; this is the safety net
+                            // for a press it never reports at all, which would otherwise leave the
+                            // bar parked in scrub mode with the prediction loop standing down.
+                            waitForUpOrCancellation()
+                            dragging = false
+                        }
+                    }
+                }
+                Slider(
+                    value = fingerFraction,
+                    onValueChange = { value ->
+                        if (!dragging) {
+                            dragging = true
+                            easing = true
+                            anchorMs = System.currentTimeMillis()
+                            // Start the eased clock where the finger grabbed the track, so the
+                            // readout does not glide in from wherever it was before.
+                            shownFraction = value
+                            onScrubStart()
+                        }
+                        fingerFraction = value
+                    },
+                    onValueChangeFinished = {
+                        // The clock keeps easing (and the camera keeps following) until it has
+                        // caught up with fingerFraction; the loop ends the gesture itself.
+                        dragging = false
+                    },
+                    valueRange = 0f..1f,
+                    // Stated explicitly: with no panel behind it, the theme's inactive track (a
+                    // surface tint) can vanish against the map tiles.
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = ComposeColor.Black.copy(alpha = 0.35f)
+                    ),
+                    modifier = Modifier.weight(1f).then(pressSeek)
+                )
+                // Always rendered: the button is part of the bar from the first frame, so the row
+                // never re-layouts when a scrub starts. It greys out while the map is live (there
+                // is nothing to reset). The grey is stated explicitly: the theme's disabled colour
+                // comes from onSurface and would be dark-on-dark over this bar's translucent black.
+                TextButton(
+                    onClick = onReset,
+                    enabled = offsetMs > 0L,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary,
+                        disabledContentColor = ComposeColor.White.copy(alpha = 0.45f)
+                    )
+                ) {
+                    Text(
+                        text = stringResource(R.string.map_time_reset),
+                        fontSize = 12.sp,
+                        style = LocalTextStyle.current.copy(shadow = labelShadow)
+                    )
+                }
             }
-        }
-        Text(
-            text = stringResource(copyrightResId),
-            fontSize = 14.sp,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
-        Card(colors = cardColors, modifier = Modifier.align(Alignment.BottomEnd)) {
-            Column(horizontalAlignment = Alignment.End, modifier = paddingMod) {
-                Text(text = stringResource(R.string.map_latitude, data.osmPos.latitude), color = textColor)
-                Text(text = stringResource(R.string.map_longitude, data.osmPos.longitude))
-            }
+            Text(
+                text = stringResource(copyrightResId),
+                color = ComposeColor.White.copy(alpha = 0.9f),
+                fontSize = 9.sp,
+                style = LocalTextStyle.current.copy(shadow = labelShadow)
+            )
         }
     }
 }
@@ -1619,6 +1845,18 @@ private val visibleSats = ArrayList<Pair<OrbitalObject, GeoPos>>()
 private var lastPositions: Map<OrbitalObject, GeoPos>? = null
 private var lastAction: ((OrbitalObject) -> Unit)? = null
 
+/**
+ * True while the time slider is under the finger. The marker refresh that the map listener runs
+ * after a scroll ([MAP_LISTENER_DELAY] ms after the camera moved) re-applies the last known
+ * positions; during a drag that is up to one slider step stale, which used to pull the satellite
+ * and its footprint back a step between two scrub updates and read as shaking.
+ */
+@Volatile
+private var scrubInProgress = false
+
+/** Last [MapState.scrubSerial] the camera was centred for (see the map update pass). */
+private var lastFollowedScrubSerial = 0L
+
 /** Pool of reusable Marker objects keyed by satellite name, to avoid re-creation every frame */
 private val markerPool = HashMap<String, Marker>()
 private var lastMapView: MapView? = null
@@ -1629,6 +1867,31 @@ private fun setPositions(
     action: (OrbitalObject) -> Unit
 ) {
     try {
+        // While the slider is under the finger only the scrubbed satellite moves and the tick
+        // loop is paused, so the rest of the layer is already correct: patch the markers that
+        // actually changed instead of clearing and re-adding the whole folder. `items` is a
+        // CopyOnWriteArrayList, so every re-add copies the backing array — that per-step churn
+        // (thousands of element copies at 25 steps a second) was the stutter.
+        if (scrubInProgress) {
+            val previous = lastPositions
+            val moved = posMap.filter { (item, pos) -> previous?.get(item) != pos }
+            // Only safe while every moved satellite already has a live marker; otherwise fall
+            // through and let the full path build the layer.
+            if (moved.keys.all { markerPool[it.data.name] != null }) {
+                moved.forEach { (item, pos) ->
+                    val current = markerPool.getValue(item.data.name).position
+                    if (current != null) {
+                        current.latitude = pos.latitude
+                        current.longitude = pos.longitude
+                    } else {
+                        markerPool.getValue(item.data.name).position = GeoPoint(pos.latitude, pos.longitude)
+                    }
+                }
+                lastPositions = posMap
+                lastAction = action
+                return
+            }
+        }
         lastPositions = posMap
         lastAction = action
         // Clear caches when the MapView instance changes (e.g. config change)
@@ -1637,8 +1900,9 @@ private fun setPositions(
             markerPool.clear()
             iconCache.evictAll()
             dotIcon = null
-            footprintPolyline = null
-            footprintPoints = null
+            footprintOverlay = null
+            footprintArcs.clear()
+            footprintLines.clear()
             mapView.addMapListener(DelayedMapListener(object : MapListener {
                 override fun onScroll(event: ScrollEvent?) = refreshPositions(mapView)
                 override fun onZoom(event: ZoomEvent?) = refreshPositions(mapView)
@@ -1715,6 +1979,9 @@ private fun setPositions(
 private fun refreshPositions(mapView: MapView): Boolean {
     // Grid mode disables the satellite layer — don't re-populate markers off-screen
     if (mapView.overlays.getOrNull(OVERLAY_POSITIONS)?.isEnabled == false) return true
+    // A drag re-applies the selected satellite every slider step; a listener refresh in between
+    // would put the last (stale) map back and make the marker jump.
+    if (scrubInProgress) return true
     val posMap = lastPositions ?: return false
     val action = lastAction ?: return false
     setPositions(posMap, mapView, action)
@@ -1746,46 +2013,124 @@ private fun getCachedTextIcon(name: String, mapView: MapView): Drawable {
     return drawable
 }
 
+private var lastTrack: List<List<GeoPos>>? = null
+private var lastTrackView: MapView? = null
+
+/** Ground-track overlay, reused across updates: replacing the folder every time would detach the
+ *  polylines osmdroid is drawing (same reason the marker layer reuses its folder). */
+private var trackOverlay: FolderOverlay? = null
+private val trackLines = ArrayList<Polyline>(4)
+
 private fun setSatelliteTrack(satTrack: List<List<GeoPos>>, mapView: MapView) {
-    val trackOverlay = FolderOverlay()
+    if (satTrack === lastTrack && lastTrackView === mapView) return
+    lastTrack = satTrack
+    lastTrackView = mapView
     try {
+        val overlay = trackOverlay?.takeIf { mapView.overlays.getOrNull(OVERLAY_TRACK) === it }
+            ?: FolderOverlay().also {
+                trackOverlay = it
+                mapView.overlays[OVERLAY_TRACK] = it
+            }
+        overlay.items.clear()
+        var lineIndex = 0
         satTrack.forEach { track ->
-            Polyline().apply {
-                setPoints(track.map { GeoPoint(it.latitude, it.longitude) })
-                outlinePaint.set(trackPaint)
-                trackOverlay.add(this)
+            // osmdroid keeps longitudes as given but draws overlays in ONE world copy, so a lap
+            // that runs up to ±180 loses everything on the far side of the meridian (the line stops
+            // at it and nothing appears on the other side). Award boundaries solve the same thing
+            // with a whole-turn offset towards the view centre; here the offsets are baked in
+            // instead, so the track stays correct while panning without needing the view centre.
+            for (turn in trackTurnsFor(track)) {
+                val offset = turn * 360.0
+                val line = trackLines.getOrNull(lineIndex) ?: Polyline().apply {
+                    outlinePaint.set(trackPaint)
+                    trackLines.add(this)
+                }
+                lineIndex++
+                line.setPoints(
+                    if (offset == 0.0) track.map { GeoPoint(it.latitude, it.longitude) }
+                    else track.map { GeoPoint(it.latitude, it.longitude + offset) }
+                )
+                overlay.add(line)
             }
         }
-        mapView.overlays[OVERLAY_TRACK] = trackOverlay
     } catch (e: Exception) {
         println(e)
     }
 }
 
-/** Reusable footprint Polyline — created once, points updated in-place each frame */
-private var footprintPolyline: Polyline? = null
-private var footprintPoints: ArrayList<GeoPoint>? = null
+/**
+ * Whole 360° turns to draw [track] at: just the real position, or one copy either side when it runs
+ * close to the antimeridian. Only near ±180 does the far half need a copy in the neighbouring world
+ * — everywhere else one copy is exactly where it belongs, and the extra points would be dead weight.
+ */
+private fun trackTurnsFor(track: List<GeoPos>): IntArray {
+    val nearDateLine = track.any { abs(it.longitude) > TRACK_DATELINE_MARGIN }
+    return if (nearDateLine) intArrayOf(-1, 0, 1) else intArrayOf(0)
+}
+
+/** [trackTurnsFor] for osmdroid points (the footprint arcs). */
+private fun turnsForPoints(points: List<GeoPoint>): IntArray {
+    val nearDateLine = points.any { abs(it.longitude) > TRACK_DATELINE_MARGIN }
+    return if (nearDateLine) intArrayOf(-1, 0, 1) else intArrayOf(0)
+}
+
+/** Within this many degrees of ±180 a line needs its neighbouring world copies drawn too. */
+private const val TRACK_DATELINE_MARGIN = 176.0
+
+/** Footprint circle, split into arcs that each stay on one side of the date line */
+private var footprintOverlay: FolderOverlay? = null
+private val footprintArcs = ArrayList<MutableList<GeoPoint>>(4)
+private val footprintLines = ArrayList<Polyline>(4)
 
 private fun setFootprint(orbitalPos: OrbitalPos, mapView: MapView) {
     try {
         val rangeCircle = orbitalPos.getRangeCircle()
-        var pts = footprintPoints
-        if (pts == null || pts.size != rangeCircle.size) {
-            pts = ArrayList(rangeCircle.size)
-            for (gp in rangeCircle) pts.add(GeoPoint(gp.latitude, gp.longitude))
-            footprintPoints = pts
-        } else {
-            for (i in rangeCircle.indices) {
-                pts[i].latitude = rangeCircle[i].latitude
-                pts[i].longitude = rangeCircle[i].longitude
+        // One polyline per arc, but the overlay itself is reused: replacing it detaches objects
+        // osmdroid is still drawing (same reason as the marker folder).
+        val overlay = footprintOverlay?.takeIf { mapView.overlays.getOrNull(OVERLAY_FOOTPRINT) === it }
+            ?: FolderOverlay().also {
+                footprintOverlay = it
+                mapView.overlays[OVERLAY_FOOTPRINT] = it
+            }
+        overlay.items.clear()
+        // The circle's longitudes are unwrapped around the subpoint, so they run past ±180 and a
+        // single polyline would step across the date line — osmdroid draws that step as a line
+        // straight over to the other side of the map (the circle looks broken and wrapped). Clip
+        // each point and start a new arc wherever the clipped value jumps the meridian.
+        var arcCount = 0
+        var arc: MutableList<GeoPoint>? = null
+        var previousLon = 0.0
+        var hasPrevious = false
+        for (point in rangeCircle) {
+            val lon = clipLon(point.longitude)
+            if (arc == null || (hasPrevious && abs(lon - previousLon) > 180.0)) {
+                arc = footprintArcs.getOrNull(arcCount)
+                    ?: ArrayList<GeoPoint>(rangeCircle.size).also { footprintArcs.add(it) }
+                arc.clear()
+                arcCount++
+            }
+            arc.add(GeoPoint(point.latitude, lon))
+            previousLon = lon
+            hasPrevious = true
+        }
+        var lineIndex = 0
+        for (index in 0 until arcCount) {
+            val arc = footprintArcs[index]
+            // Same world-copy reasoning as the track: near the meridian the arc that continues on
+            // the other side is drawn outside the visible copy unless it also exists one world over.
+            for (turn in turnsForPoints(arc)) {
+                while (footprintLines.size <= lineIndex) {
+                    footprintLines.add(Polyline().apply { outlinePaint.set(footprintPaint) })
+                }
+                val line = footprintLines[lineIndex]
+                lineIndex++
+                line.setPoints(
+                    if (turn == 0) arc
+                    else arc.map { GeoPoint(it.latitude, it.longitude + turn * 360.0) }
+                )
+                overlay.add(line)
             }
         }
-        val polyline = footprintPolyline ?: Polyline().apply {
-            outlinePaint.set(footprintPaint)
-            footprintPolyline = this
-        }
-        polyline.setPoints(pts)
-        mapView.overlays[OVERLAY_FOOTPRINT] = polyline
     } catch (e: Exception) {
         println(e)
     }
@@ -1946,6 +2291,14 @@ private fun clearMapCaches() {
     lastPositions = null
     lastAction = null
     lastMapView = null
+    lastFollowedScrubSerial = 0L
+    lastTrack = null
+    lastTrackView = null
+    trackOverlay = null
+    trackLines.clear()
+    footprintOverlay = null
+    footprintArcs.clear()
+    footprintLines.clear()
     configuredTileMapView = null
     configuredTileSource = null
 }
