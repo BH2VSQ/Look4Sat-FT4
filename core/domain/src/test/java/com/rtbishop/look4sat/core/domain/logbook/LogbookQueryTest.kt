@@ -64,6 +64,23 @@ class LogbookQueryTest {
     }
 
     @Test
+    fun queryMatchesAdditionalCounterpartGridsInLegacyRecords() {
+        val legacy = record(grid = "NM84", mode = "CW", confirmed = true)
+            .copy(theirVuccGrids = listOf("NM94"))
+        assertEquals(listOf(legacy), filterRecords(listOf(legacy, satFm), " nm94 ", "CW", LogbookFilter.CONFIRMED))
+        assertEquals(emptyList<QsoRecord>(), filterRecords(listOf(legacy), "NM94", "FM", LogbookFilter.ALL))
+        assertEquals(emptyList<QsoRecord>(), filterRecords(listOf(legacy), "NM94", "", LogbookFilter.UNCONFIRMED))
+    }
+
+    @Test
+    fun queryMatchesMultiGridOnlyRecordsWithoutChangingThem() {
+        val legacy = record(grid = "").copy(theirVuccGrids = listOf("NM84", "NM94"))
+        assertEquals(listOf(legacy), filterRecords(listOf(legacy), "nm94", "", LogbookFilter.ALL))
+        assertEquals("", legacy.theirGrid)
+        assertEquals(listOf("NM84", "NM94"), legacy.theirVuccGrids)
+    }
+
+    @Test
     fun exactModeFilterMatchesTheDisplayMode() {
         assertEquals(listOf(satCw), filterRecords(all, "", "CW", LogbookFilter.ALL))
         assertEquals(emptyList<QsoRecord>(), filterRecords(all, "", "FT4", LogbookFilter.ALL))

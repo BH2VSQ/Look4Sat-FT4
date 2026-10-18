@@ -89,13 +89,17 @@ object AdifCodec {
         val end = values["QSO_DATE_OFF"]?.let { endDate ->
             values["TIME_OFF"]?.let { endTime -> parse(endDate, endTime) }
         }
+        val theirVuccGrids = decodeGridSet(values["GRIDSQUARE"], values["VUCC_GRIDS"])
+        // Boundary QSOs may carry only VUCC_GRIDS; keep a primary for legacy consumers.
+        val theirGrid = values["GRIDSQUARE"].orEmpty().uppercase(Locale.US)
+            .ifBlank { theirVuccGrids.firstOrNull().orEmpty() }
         QsoRecord(
             startUtcMillis = start,
             endUtcMillis = end,
             theirCallsign = call,
             myCallsign = values["STATION_CALLSIGN"].orEmpty().uppercase(Locale.US),
-            theirGrid = values["GRIDSQUARE"].orEmpty().uppercase(Locale.US),
-            theirVuccGrids = decodeGridSet(values["GRIDSQUARE"], values["VUCC_GRIDS"]),
+            theirGrid = theirGrid,
+            theirVuccGrids = theirVuccGrids,
             myGrid = values["MY_GRIDSQUARE"].orEmpty().uppercase(Locale.US),
             vuccGrids = decodeGridSet(values["MY_GRIDSQUARE"], values["MY_VUCC_GRIDS"]),
             sentReport = values["RST_SENT"].orEmpty(),

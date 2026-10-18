@@ -97,6 +97,41 @@ class AdifCodecTest {
     }
 
     @Test
+    fun decodeLoTWMultiGridOnlyRecordKeepsPrimaryGridAndDisplaysFullSet() {
+        val adi = """
+            <EOH>
+            <CALL:8>BA8AFK/9
+            <QSO_DATE:8>20261014
+            <TIME_ON:6>093051
+            <PROP_MODE:3>SAT
+            <SAT_NAME:5>RS-44
+            <VUCC_GRIDS:13>NM84XO,NM94AO
+            <LOTW_QSL_RCVD:1>Y
+            <EOR>
+        """.trimIndent()
+
+        val record = AdifCodec.decode(adi).single()
+        assertEquals("NM84", record.theirGrid)
+        assertEquals(listOf("NM84", "NM94"), record.theirVuccGrids)
+        assertEquals("NM84, NM94", record.displayTheirGrid)
+    }
+
+    @Test
+    fun displayTheirGridCombinesLegacyPrimaryWithAdditionalVuccGrids() {
+        val record = QsoRecord(
+            startUtcMillis = 1_760_000_000_000L,
+            theirCallsign = "BA8AFK/9",
+            myCallsign = "BH2VSQ",
+            theirGrid = "NM84",
+            theirVuccGrids = listOf("NM94")
+        )
+
+        assertEquals("NM84, NM94", record.displayTheirGrid)
+        assertEquals("NM84, NM94", record.copy(theirGrid = "", theirVuccGrids = listOf("NM84", "NM94")).displayTheirGrid)
+        assertEquals("NM84XO", record.copy(theirGrid = "NM84XO", theirVuccGrids = emptyList()).displayTheirGrid)
+    }
+
+    @Test
     fun decodeNormalizesPrimaryAndMultiGridFieldsIntoCompleteVuccSets() {
         val adi = """
             <EOH>
