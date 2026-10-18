@@ -107,6 +107,7 @@ import com.rtbishop.look4sat.core.domain.model.AwardType
 import com.rtbishop.look4sat.core.domain.model.firstCallsByGrid
 import com.rtbishop.look4sat.core.domain.model.MapSource
 import com.rtbishop.look4sat.core.domain.model.myStationGrids
+import com.rtbishop.look4sat.core.domain.model.scopedToStation
 import com.rtbishop.look4sat.core.domain.model.scopedToStations
 import com.rtbishop.look4sat.core.domain.model.stationGridSetKey
 import com.rtbishop.look4sat.core.domain.predict.GeoPos

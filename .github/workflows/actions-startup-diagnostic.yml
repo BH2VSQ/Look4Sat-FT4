@@ -1,6 +1,9 @@
 name: VUCC PR12 APK build - no external actions
 
 on:
+  push:
+    branches:
+      - feature/vucc-multiselect-persistent-pr10
   workflow_dispatch:
 
 permissions:
