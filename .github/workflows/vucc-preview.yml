@@ -1,9 +1,6 @@
 name: VUCC preview APK
 
 on:
-  push:
-    branches:
-      - feature/vucc-multiselect-persistent-pr10
   workflow_dispatch:
   pull_request:
     branches:
@@ -22,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - name: Check out branch
+      - name: Check out selected branch
         uses: actions/checkout@v4
 
       - name: Set up Java 21
@@ -40,18 +37,18 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Domain tests and debug APK
+      - name: Run domain tests and assemble debug APK
         run: ./gradlew :core:domain:test :app:assembleDebug --stacktrace
 
-      - name: Upload debug APK
+      - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: look4sat-vucc-pr12-debug-apk
+          name: look4sat-vucc-preview-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
           if-no-files-found: error
 
-      - name: Prepare release signing if available
+      - name: Prepare original release keystore if configured
         id: signing
         env:
           KEY_STORE_B64: ${{ secrets.KEY_STORE }}
@@ -66,7 +63,7 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build same-signature release preview
+      - name: Build compatible signed release APK
         if: steps.signing.outputs.available == 'true'
         env:
           RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
@@ -74,15 +71,15 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      - name: Upload signed preview APK
+      - name: Upload signed release APK
         if: steps.signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: look4sat-vucc-pr12-signed-release-apk
+          name: look4sat-vucc-preview-signed-release-apk
           path: app/build/outputs/apk/release/*.apk
           retention-days: 14
           if-no-files-found: error
 
-      - name: Remove preview keystore
+      - name: Clean signing material
         if: always()
         run: rm -f "$HOME/my-release-key.jks"
