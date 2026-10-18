@@ -91,6 +91,7 @@ fun MutualScreen(
     val state by viewModel.uiState.collectAsState()
 
     ScreenColumn(
+        removeLightThemePanelBackground = true,
         topBar = { isVertical ->
             TopBar(
                 isVerticalLayout = isVertical,

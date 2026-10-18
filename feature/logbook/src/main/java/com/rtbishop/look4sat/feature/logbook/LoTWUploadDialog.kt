@@ -1,7 +1,9 @@
 package com.rtbishop.look4sat.feature.logbook
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +20,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -44,6 +48,9 @@ import com.rtbishop.look4sat.core.domain.repository.LoTWPhase
 import com.rtbishop.look4sat.core.domain.repository.LoTWStation
 import com.rtbishop.look4sat.core.domain.repository.LoTWSyncMode
 import com.rtbishop.look4sat.core.domain.repository.LoTWUploadResult
+import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
+import com.rtbishop.look4sat.core.domain.repository.WavelogSyncMode
+import com.rtbishop.look4sat.core.domain.repository.WavelogStationInfo
 import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.R as CoreR
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +66,9 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
     var password by remember { mutableStateOf("") }
     var accountCallsign by rememberSaveable { mutableStateOf(state.lotwSettings.callsign) }
     var accountPassword by rememberSaveable { mutableStateOf(state.lotwSettings.password) }
+    var wavelogUrl by rememberSaveable { mutableStateOf(state.wavelogSettings.url) }
+    var wavelogApiKey by rememberSaveable { mutableStateOf(state.wavelogSettings.apiKey) }
+    var showWavelogClearConfirm by remember { mutableStateOf(false) }
     var grid by remember { mutableStateOf(state.lotwDefaultGrid) }
     var cq by remember { mutableStateOf("") }
     var itu by remember { mutableStateOf("") }
@@ -79,6 +89,12 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
         if (!state.lotwSyncing) {
             accountCallsign = state.lotwSettings.callsign
             accountPassword = state.lotwSettings.password
+        }
+    }
+    LaunchedEffect(state.wavelogSettings.url, state.wavelogSettings.apiKey) {
+        if (!state.wavelogSyncing && !state.wavelogProbeBusy) {
+            wavelogUrl = state.wavelogSettings.url
+            wavelogApiKey = state.wavelogSettings.apiKey
         }
     }
     DisposableEffect(Unit) { onDispose { certificateBytes?.fill(0) } }
@@ -111,7 +127,7 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
             finally { reading = false }
         }
     }
-    val busy = state.lotwSyncing || reading
+    val busy = state.lotwSyncing || state.lotwAuditing || state.wavelogSyncing || state.wavelogProbeBusy || reading
     val certificate = state.lotwCertificate
     val profileReady = certificate?.passwordSaved == true && state.lotwStation != null
     val editedStation = LoTWStation(grid, cq, itu, region, county, iota)
@@ -121,13 +137,53 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
     val pendingCount = audit?.pending ?: 0
     val unavailable = stringResource(R.string.logbook_value_unavailable)
     SharedDialog(
-        title = stringResource(R.string.lotw_upload),
+        title = stringResource(R.string.logbook_sync),
+        // Never let Back bubble to the navigation host while this drawer is open.
+        // Our BackHandler below closes it explicitly only when no operation is active.
         onDismissRequest = { if (!busy) onAction(LogbookAction.DismissLoTW) },
-        onCancel = {
-            if (state.lotwSyncing) onAction(LogbookAction.CancelLoTW)
-            else if (!reading) onAction(LogbookAction.DismissLoTW)
-        }
+        dismissOnClickOutside = !busy,
+        // Back is handled manually below. If the sheet is allowed to own it, some
+        // Compose/Navigation combinations deliver the event to the underlying page.
+        dismissOnBackPress = false
     ) { padding ->
+            BackHandler(enabled = true) {
+                if (!busy) onAction(LogbookAction.DismissLoTW)
+                // While a request is active, consume Back without dismissing or cancelling it.
+            }
+            val scheme = MaterialTheme.colorScheme
+            val lock = state.logbookSourceLock
+            val lotwBlocked = lock != null && lock != LogbookSyncProvider.LOTW
+            val wavelogBlocked = lock != null && lock != LogbookSyncProvider.WAVELOG
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = padding),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = state.syncProvider == LogbookSyncProvider.LOTW,
+                    onClick = { onAction(LogbookAction.SelectSyncProvider(LogbookSyncProvider.LOTW)) },
+                    enabled = !busy,
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = if (lotwBlocked) scheme.surfaceVariant else scheme.surface,
+                        labelColor = if (lotwBlocked) scheme.onSurfaceVariant else scheme.onSurface,
+                        selectedContainerColor = if (lotwBlocked) scheme.surfaceVariant else scheme.secondaryContainer,
+                        selectedLabelColor = if (lotwBlocked) scheme.onSurfaceVariant else scheme.onSecondaryContainer
+                    ),
+                    label = { Text("LoTW") }
+                )
+                FilterChip(
+                    selected = state.syncProvider == LogbookSyncProvider.WAVELOG,
+                    onClick = { onAction(LogbookAction.SelectSyncProvider(LogbookSyncProvider.WAVELOG)) },
+                    enabled = !busy,
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = if (wavelogBlocked) scheme.surfaceVariant else scheme.surface,
+                        labelColor = if (wavelogBlocked) scheme.onSurfaceVariant else scheme.onSurface,
+                        selectedContainerColor = if (wavelogBlocked) scheme.surfaceVariant else scheme.secondaryContainer,
+                        selectedLabelColor = if (wavelogBlocked) scheme.onSurfaceVariant else scheme.onSecondaryContainer
+                    ),
+                    label = { Text("Wavelog") }
+                )
+            }
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
@@ -136,6 +192,7 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = padding, vertical = 8.dp)
             ) {
+                if (state.syncProvider == LogbookSyncProvider.LOTW) {
                 LoTWDownloadCard(
                     state = state,
                     callsign = accountCallsign,
@@ -292,9 +349,64 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
                         LoTWUploadResult.ExpiredPreview -> stringResource(R.string.lotw_preview_expired)
                     })
                 }
+                } else {
+                    WavelogSyncSettingsContent(
+                        state = state,
+                        url = wavelogUrl,
+                        apiKey = wavelogApiKey,
+                        onUrlChange = { wavelogUrl = it },
+                        onApiKeyChange = { wavelogApiKey = it },
+                        onFetchStations = { onAction(LogbookAction.FetchWavelogStations(wavelogUrl, wavelogApiKey)) },
+                        onSelectStation = { onAction(LogbookAction.SelectWavelogStation(it)) },
+                        onFullSync = {
+                            onAction(LogbookAction.SaveWavelogSettings(state.wavelogSettings.copy(url = wavelogUrl.trim(), apiKey = wavelogApiKey.trim())))
+                            onAction(LogbookAction.SyncWavelog(WavelogSyncMode.Full))
+                        },
+                        onIncrementalSync = {
+                            onAction(LogbookAction.SaveWavelogSettings(state.wavelogSettings.copy(url = wavelogUrl.trim(), apiKey = wavelogApiKey.trim())))
+                            onAction(LogbookAction.SyncWavelog(WavelogSyncMode.Incremental))
+                        },
+                        onClear = { showWavelogClearConfirm = true },
+                        busy = busy
+                    )
+                }
             }
     }
-    state.lotwPreview?.let { preview ->
+    state.providerSwitchConflict?.let { requestedProvider ->
+        AlertDialog(
+            onDismissRequest = { onAction(LogbookAction.DismissProviderSwitchConflict) },
+            title = { Text(stringResource(R.string.logbook_sync_source_conflict_title)) },
+            text = {
+                Text(stringResource(
+                    if (requestedProvider == LogbookSyncProvider.WAVELOG) {
+                        R.string.logbook_sync_source_conflict_wavelog
+                    } else {
+                        R.string.logbook_sync_source_conflict_lotw
+                    }
+                ))
+            },
+            confirmButton = {
+                TextButton(onClick = { onAction(LogbookAction.DismissProviderSwitchConflict) }) {
+                    Text(stringResource(CoreR.string.btn_accept))
+                }
+            }
+        )
+    }
+    if (showWavelogClearConfirm) AlertDialog(
+        onDismissRequest = { showWavelogClearConfirm = false },
+        title = { Text(stringResource(CoreR.string.prefs_wavelog_clear_title)) },
+        text = { Text(stringResource(CoreR.string.prefs_wavelog_clear_message)) },
+        confirmButton = {
+            TextButton(onClick = {
+                showWavelogClearConfirm = false
+                onAction(LogbookAction.ClearWavelogConfig)
+                wavelogUrl = ""
+                wavelogApiKey = ""
+            }) { Text(stringResource(CoreR.string.btn_accept)) }
+        },
+        dismissButton = { TextButton(onClick = { showWavelogClearConfirm = false }) { Text(stringResource(R.string.logbook_cancel)) } }
+    )
+    if (state.syncProvider == LogbookSyncProvider.LOTW) state.lotwPreview?.let { preview ->
         AlertDialog(
             onDismissRequest = { onAction(LogbookAction.DismissLoTWPreview) },
             title = { Text(stringResource(R.string.lotw_preview_title)) },
@@ -324,6 +436,107 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
         confirmButton = { TextButton(onClick = { onAction(LogbookAction.RemoveLoTWCertificate); removeConfirmation = false }) { Text(stringResource(R.string.logbook_delete)) } },
         dismissButton = { TextButton(onClick = { removeConfirmation = false }) { Text(stringResource(R.string.logbook_cancel)) } }
     )
+}
+
+@Composable
+private fun WavelogSyncSettingsContent(
+    state: LogbookState,
+    url: String,
+    apiKey: String,
+    onUrlChange: (String) -> Unit,
+    onApiKeyChange: (String) -> Unit,
+    onFetchStations: () -> Unit,
+    onSelectStation: (WavelogStationInfo) -> Unit,
+    onFullSync: () -> Unit,
+    onIncrementalSync: () -> Unit,
+    onClear: () -> Unit,
+    busy: Boolean
+) {
+    val settings = state.wavelogSettings
+    OutlinedTextField(
+        value = url,
+        onValueChange = onUrlChange,
+        label = { Text(stringResource(CoreR.string.prefs_wavelog_url)) },
+        placeholder = { Text("http://100.x.x.x/wavelog") },
+        singleLine = true,
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth()
+    )
+    OutlinedTextField(
+        value = apiKey,
+        onValueChange = onApiKeyChange,
+        label = { Text(stringResource(CoreR.string.prefs_wavelog_upload_apikey)) },
+        placeholder = { Text("wl…") },
+        singleLine = true,
+        enabled = !busy,
+        visualTransformation = PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth()
+    )
+    TextButton(onClick = onFetchStations, enabled = !busy && url.isNotBlank() && apiKey.isNotBlank()) {
+        Text(if (state.wavelogProbeBusy) stringResource(CoreR.string.prefs_wavelog_upload_probing) else stringResource(CoreR.string.prefs_wavelog_upload_fetch))
+    }
+    if (state.wavelogRights.isNotBlank()) {
+        Text(
+            text = when (state.wavelogRights) {
+                "rw" -> stringResource(CoreR.string.prefs_wavelog_upload_rights_rw)
+                else -> stringResource(CoreR.string.prefs_wavelog_upload_rights_r)
+            },
+            color = if (state.wavelogRights == "rw") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    if (state.wavelogStations.isEmpty() && settings.stationId.isBlank()) {
+        Text(stringResource(CoreR.string.prefs_wavelog_upload_station_none), style = MaterialTheme.typography.bodySmall)
+    } else {
+        Column(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState())
+        ) {
+            state.wavelogStations.forEach { station ->
+                val selected = station.id == settings.stationId
+                Text(
+                    text = (if (selected) "● " else "○ ") + listOf(station.name, station.callsign, station.grid)
+                        .filter { it.isNotBlank() }.joinToString(" · "),
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) { onSelectStation(station) }.padding(vertical = 4.dp)
+                )
+            }
+        }
+    }
+    if (settings.stationId.isNotBlank()) {
+        Text(
+            stringResource(
+                CoreR.string.prefs_wavelog_upload_configured,
+                listOf(settings.stationName, settings.stationCallsign, settings.stationGrid).filter { it.isNotBlank() }.joinToString(" · ")
+            ),
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+    if (state.wavelogLastSyncEpochMs != 0L) {
+        val timePattern = stringResource(CoreR.string.prefs_updated_time)
+        val lastSyncText = remember(state.wavelogLastSyncEpochMs, timePattern) {
+            java.text.SimpleDateFormat(timePattern, java.util.Locale.getDefault()).format(java.util.Date(state.wavelogLastSyncEpochMs))
+        }
+        Text(stringResource(CoreR.string.prefs_updated_title, lastSyncText), style = MaterialTheme.typography.bodySmall)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = onFullSync, enabled = !busy && settings.isConfigured && state.wavelogStations.isNotEmpty(), modifier = Modifier.weight(1f)) {
+            Text(stringResource(CoreR.string.prefs_wavelog_sync_full))
+        }
+        Button(onClick = onIncrementalSync, enabled = !busy && settings.isConfigured && state.wavelogStations.isNotEmpty(), modifier = Modifier.weight(1f)) {
+            Text(stringResource(CoreR.string.prefs_wavelog_sync_incremental))
+        }
+    }
+    if (state.wavelogSyncing) {
+        LinearProgressIndicator(Modifier.fillMaxWidth())
+        Text(stringResource(CoreR.string.prefs_wavelog_syncing), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    state.wavelogMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    Text(stringResource(CoreR.string.prefs_wavelog_upload_hint), style = MaterialTheme.typography.bodySmall)
+    TextButton(onClick = onClear, enabled = !busy) {
+        Text(stringResource(CoreR.string.prefs_wavelog_clear), color = MaterialTheme.colorScheme.error)
+    }
 }
 
 @Composable

@@ -101,6 +101,20 @@ internal fun LogbookStationDialog(state: LogbookState, onAction: (LogbookAction)
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (state.records.isNotEmpty()) {
+                    TextButton(
+                        onClick = {
+                            onAction(LogbookAction.DismissStation)
+                            onAction(LogbookAction.RequestClearAll)
+                        },
+                        enabled = !state.isBusy
+                    ) {
+                        Text(
+                            stringResource(R.string.logbook_clear_all_title),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
                 state.error?.let { error ->
                     Text(logbookErrorText(error), color = MaterialTheme.colorScheme.error)
                 }

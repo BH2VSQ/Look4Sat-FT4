@@ -61,6 +61,12 @@ class FakeSatelliteRepo(
         aosStartMinute: Int, aosEndMinute: Int,
         invertAosTimeWindow: Boolean, modes: List<String>
     ) = TODO()
+    override suspend fun getSchedulePasses(
+        catNums: Set<Int>,
+        startTime: Long,
+        hoursAhead: Int,
+        minElevation: Double
+    ): List<OrbitalPass> = emptyList()
     override suspend fun getPosition(sat: OrbitalObject, pos: GeoPos, time: Long): OrbitalPos = TODO()
     override suspend fun getTrack(sat: OrbitalObject, pos: GeoPos, start: Long, end: Long): List<OrbitalPos> = TODO()
     override suspend fun getRadios(sat: OrbitalObject, pos: GeoPos, radios: List<SatRadio>, time: Long): List<SatRadio> = TODO()

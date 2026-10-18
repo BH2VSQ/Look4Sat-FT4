@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -141,8 +141,7 @@ fun LogbookScreenDestination(navigateUp: () -> Unit, navigateToMap: () -> Unit =
     if (showExportOptions) {
         SharedDialog(
             title = stringResource(R.string.logbook_export),
-            onDismissRequest = { showExportOptions = false },
-            onCancel = { showExportOptions = false }
+            onDismissRequest = { showExportOptions = false }
         ) { padding ->
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -194,6 +193,25 @@ private fun LogbookScreen(
     state.editor?.let { LogbookEditorDialog(it, onAction, state.isBusy, state.error, nominalFrequencies) }
     if (state.showLoTW) LoTWDialog(state, onAction)
     if (state.showStation) LogbookStationDialog(state, onAction)
+    if (state.showClearAllConfirmation) {
+        AlertDialog(
+            onDismissRequest = { if (!state.isBusy) onAction(LogbookAction.DismissClearAll) },
+            title = { Text(stringResource(R.string.logbook_clear_all_title)) },
+            text = { Text(stringResource(R.string.logbook_confirm_clear_all, state.records.size)) },
+            confirmButton = {
+                TextButton(
+                    onClick = { onAction(LogbookAction.ConfirmClearAll) },
+                    enabled = !state.isBusy
+                ) { Text(stringResource(R.string.logbook_clear_all_confirm)) }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { onAction(LogbookAction.DismissClearAll) },
+                    enabled = !state.isBusy
+                ) { Text(stringResource(R.string.logbook_cancel)) }
+            }
+        )
+    }
     state.deleteCandidate?.let { record ->
         AlertDialog(
             onDismissRequest = { onAction(LogbookAction.DismissDelete) },
@@ -211,16 +229,30 @@ private fun LogbookScreen(
             }
         )
     }
-    ScreenColumn {
+    ScreenColumn(removeLightThemePanelBackground = true) {
         Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             TopBar {
                 IconCard(action = navigateUp, resId = CoreR.drawable.ic_back)
-                ElevatedCard(modifier = Modifier.weight(1f)) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text(stringResource(R.string.logbook_title), fontWeight = FontWeight.Bold)
+                ElevatedCard(modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
                         Text(
-                            stringResource(R.string.logbook_counts, state.records.size, state.records.count { it.lotwConfirmed }),
-                            style = MaterialTheme.typography.labelSmall
+                            text = stringResource(R.string.logbook_title),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                            lineHeight = 20.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = stringResource(R.string.logbook_counts, state.records.size, state.records.count { it.lotwConfirmed }),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -524,6 +556,7 @@ internal fun logbookErrorText(error: LogbookError): String = stringResource(
         LogbookError.EXPORT_PREPARE -> R.string.logbook_error_export_prepare
         LogbookError.SAVE -> R.string.logbook_error_save
         LogbookError.DELETE -> R.string.logbook_error_delete
+        LogbookError.CLEAR_ALL -> R.string.logbook_error_clear_all
         LogbookError.IMPORT -> R.string.logbook_error_import
     }
 )

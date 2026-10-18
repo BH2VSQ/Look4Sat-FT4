@@ -17,11 +17,13 @@
  */
 package com.rtbishop.look4sat
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -30,6 +32,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,14 +42,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
@@ -78,6 +88,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
+import com.rtbishop.look4sat.core.domain.model.BottomBarTool
 import com.rtbishop.look4sat.core.domain.repository.MutualPassData
 import com.rtbishop.look4sat.core.presentation.DeeplinkResolver
 import com.rtbishop.look4sat.core.presentation.ElevationThresholds
@@ -103,6 +114,7 @@ import com.rtbishop.look4sat.feature.satellites.SatellitesDestination
 import com.rtbishop.look4sat.feature.settings.SettingsDestination
 import com.rtbishop.look4sat.feature.settings.LoTWUploadDestination
 import com.rtbishop.look4sat.feature.status.SatStatusDestination
+import kotlinx.coroutines.delay
 
 @Composable
 fun NavRoot(deeplink: String? = null) {
@@ -233,25 +245,30 @@ fun MainScreen(
         }
     }
     val fadeTransition = fadeIn(animationSpec = tween(350)) togetherWith fadeOut(animationSpec = tween(350))
-    val navItems = listOf(
-        Screen.Satellites,
-        Screen.Passes,
-        Screen.Logbook,
-        Screen.Ft4,
-        Screen.More,
-        Screen.Settings
-    )
-    val moreItems = listOf(
-        Screen.GridFinder,
-        Screen.Map,
-        Screen.Mutual,
-        Screen.AMSAT
-    )
-
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
+    val primaryTool = bottomBarScreen(otherSettings.bottomBarTool)
+    val navItems = listOf(
+        Screen.Satellites,
+        Screen.Passes,
+        Screen.Logbook,
+        primaryTool,
+        Screen.More,
+        Screen.Settings
+    )
+    // Keep every original More destination available, even when one is also
+    // assigned to the configurable bottom shortcut. When FT4 is replaced in
+    // the bottom bar, expose FT4 in More so it never becomes inaccessible.
+    val moreItems = buildList {
+        add(Screen.GridFinder)
+        add(Screen.Map)
+        add(Screen.Mutual)
+        add(Screen.AMSAT)
+        add(Screen.PassSchedule)
+        if (primaryTool != Screen.Ft4) add(Screen.Ft4)
+    }
     // Activity-scoped so the mutual query results survive navigation to Radar and back
     val mutualViewModel: MutualViewModel = viewModel(
         viewModelStoreOwner = context as ViewModelStoreOwner,
@@ -296,28 +313,32 @@ fun MainScreen(
             MoreDestinationsSheet(
                 destinations = moreItems,
                 currentScreen = currentKey as? Screen,
+                currentTool = otherSettings.bottomBarTool,
                 onDismiss = { showMoreSheet = false },
+                onSaveBottomTool = { tool ->
+                    container.settingsRepo.updateOtherSettings {
+                        it.copy(bottomBarTool = BottomBarTool.normalize(tool))
+                    }
+                },
                 onDestinationSelected = { screen ->
                     showMoreSheet = false
-                    if (currentKey != screen) navigateToScreen(screen)
+                    if (screen is Screen.Ft4) {
+                        navigateToFt4()
+                    } else if (currentKey != screen) {
+                        navigateToScreen(screen)
+                    }
                 }
             )
         }
         NavigationSuiteScaffold(
             navigationSuiteItems = {
                 navItems.forEach { screen ->
-                    val isSelected = when (currentKey) {
-                        is Screen.Satellites -> screen is Screen.Satellites
-                        is Screen.Passes -> screen is Screen.Passes
-                        is Screen.Ft4 -> screen is Screen.Ft4
-                        is Screen.Logbook -> screen is Screen.Logbook
-                        is Screen.Settings -> screen is Screen.Settings
-                        is Screen.Map,
-                        is Screen.GridFinder,
-                        is Screen.AMSAT,
-                        is Screen.Mutual -> screen is Screen.More
+                    val isSelected = when {
+                        currentKey == screen -> true
+                        screen is Screen.More && currentKey is Screen && currentKey in moreItems -> true
+                        screen is Screen.More && showMoreSheet -> true
                         else -> false
-                    } || (screen is Screen.More && showMoreSheet)
+                    }
                     item(
                         icon = { Icon(painterResource(screen.iconResId), stringResource(screen.titleResId)) },
                         label = { Text(stringResource(screen.titleResId)) },
@@ -408,6 +429,9 @@ fun MainScreen(
                             )
                         }
                         entry<Screen.AMSAT> { SatStatusDestination() }
+                        entry<Screen.PassSchedule> {
+                            PassScheduleDestination(navigateUp = navigateBack)
+                        }
                         entry<Screen.Logbook> {
                             LogbookScreenDestination(navigateUp = navigateBack, navigateToMap = navigateToMap)
                         }
@@ -472,44 +496,203 @@ fun MainScreen(
     }
 }
 
+
+private fun bottomBarScreen(value: String): Screen = when (BottomBarTool.normalize(value)) {
+    BottomBarTool.MAP -> Screen.Map
+    BottomBarTool.GRID_FINDER -> Screen.GridFinder
+    BottomBarTool.MUTUAL -> Screen.Mutual
+    BottomBarTool.AMSAT -> Screen.AMSAT
+    BottomBarTool.PASS_SCHEDULE -> Screen.PassSchedule
+    else -> Screen.Ft4
+}
+
+private fun bottomBarToolTitleRes(value: String): Int = when (BottomBarTool.normalize(value)) {
+    BottomBarTool.MAP -> R.string.nav_map
+    BottomBarTool.GRID_FINDER -> R.string.gridfinder_title
+    BottomBarTool.MUTUAL -> R.string.nav_mutual
+    BottomBarTool.AMSAT -> R.string.nav_amsat
+    BottomBarTool.PASS_SCHEDULE -> R.string.pass_schedule_title
+    else -> R.string.nav_ft4
+}
+
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
 private fun MoreDestinationsSheet(
     destinations: List<Screen>,
     currentScreen: Screen?,
+    currentTool: String,
     onDismiss: () -> Unit,
+    onSaveBottomTool: (String) -> Unit,
     onDestinationSelected: (Screen) -> Unit
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Text(
-            text = stringResource(R.string.nav_more),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-        )
-        destinations.forEach { screen ->
-            val selected = currentScreen == screen
-            ListItem(
-                headlineContent = { Text(stringResource(screen.titleResId)) },
-                leadingContent = {
-                    Icon(
-                        painter = painterResource(screen.iconResId),
-                        contentDescription = null
-                    )
-                },
-                trailingContent = {
-                    if (selected) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_done),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+    var showToolSettings by rememberSaveable { mutableStateOf(false) }
+    var selectedTool by rememberSaveable(currentTool) {
+        mutableStateOf(BottomBarTool.normalize(currentTool))
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    var hasVisitedToolSettings by remember { mutableStateOf(false) }
+    LaunchedEffect(showToolSettings) {
+        if (showToolSettings) {
+            hasVisitedToolSettings = true
+            sheetState.expand()
+        } else if (hasVisitedToolSettings) {
+            // Let the More menu slide back into place before shrinking the sheet;
+            // otherwise the old compact height can clip the destination list during
+            // the 220 ms page transition and make the other destinations appear gone.
+            delay(260)
+            sheetState.partialExpand()
+            hasVisitedToolSettings = false
+        }
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        // Register from inside the sheet content so this handler takes precedence
+        // over the sheet's own Back handler while the nested page is visible.
+        BackHandler(enabled = showToolSettings) { showToolSettings = false }
+        AnimatedContent(
+            targetState = showToolSettings,
+            transitionSpec = {
+                if (targetState) {
+                    (slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(220)) +
+                        fadeIn(animationSpec = tween(160))) togetherWith
+                        (slideOutHorizontally(targetOffsetX = { -it / 3 }, animationSpec = tween(220)) +
+                            fadeOut(animationSpec = tween(140)))
+                } else {
+                    (slideInHorizontally(initialOffsetX = { -it / 3 }, animationSpec = tween(220)) +
+                        fadeIn(animationSpec = tween(160))) togetherWith
+                        (slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(220)) +
+                            fadeOut(animationSpec = tween(140)))
+                }
+            },
+            label = "moreMenuPageTransition"
+        ) { showSettingsPage ->
+        if (showSettingsPage) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TextButton(onClick = { showToolSettings = false }) {
+                    Text("‹ ${stringResource(R.string.nav_more)}")
+                }
+                Text(
+                    text = stringResource(R.string.prefs_bottom_tool_title),
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text(
+                    text = stringResource(R.string.prefs_bottom_tool_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val options = listOf(
+                    BottomBarTool.FT4 to R.string.nav_ft4,
+                    BottomBarTool.MAP to R.string.nav_map,
+                    BottomBarTool.GRID_FINDER to R.string.gridfinder_title,
+                    BottomBarTool.MUTUAL to R.string.nav_mutual,
+                    BottomBarTool.AMSAT to R.string.nav_amsat,
+                    BottomBarTool.PASS_SCHEDULE to R.string.pass_schedule_title
+                )
+                options.forEach { (tool, labelRes) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { selectedTool = tool }.padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedTool == tool,
+                            onClick = { selectedTool = tool }
+                        )
+                        Text(
+                            text = stringResource(labelRes),
+                            modifier = Modifier.padding(start = 6.dp),
+                            color = if (selectedTool == tool) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface
                         )
                     }
-                },
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showToolSettings = false }) {
+                        Text(stringResource(R.string.btn_cancel))
+                    }
+                    Button(
+                        onClick = {
+                            onSaveBottomTool(selectedTool)
+                            showToolSettings = false
+                        },
+                        enabled = selectedTool != BottomBarTool.normalize(currentTool)
+                    ) { Text(stringResource(R.string.btn_accept)) }
+                }
+            }
+            Spacer(modifier = Modifier.size(16.dp))
+        } else {
+            // Keep the complete More menu scrollable within the sheet's current
+            // height. This is especially important when returning from the full-height
+            // shortcut sub-page to the compact More menu.
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onDestinationSelected(screen) }
-            )
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = stringResource(R.string.nav_more),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+                )
+                destinations.forEach { screen ->
+                    val selected = currentScreen == screen
+                    ListItem(
+                        headlineContent = { Text(stringResource(screen.titleResId)) },
+                        leadingContent = {
+                            Icon(
+                                painter = painterResource(screen.iconResId),
+                                contentDescription = null
+                            )
+                        },
+                        trailingContent = {
+                            if (selected) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_done),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onDestinationSelected(screen) }
+                    )
+                }
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.prefs_bottom_tool_title)) },
+                    supportingContent = {
+                        Text(
+                            stringResource(
+                                R.string.prefs_bottom_tool_current,
+                                stringResource(bottomBarToolTitleRes(currentTool))
+                            )
+                        )
+                    },
+                    leadingContent = {
+                        Icon(painter = painterResource(R.drawable.ic_settings), contentDescription = null)
+                    },
+                    trailingContent = {
+                        Icon(painter = painterResource(R.drawable.ic_arrow), contentDescription = null)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            selectedTool = BottomBarTool.normalize(currentTool)
+                            showToolSettings = true
+                        }
+                )
+                Spacer(modifier = Modifier.size(16.dp))
+            }
         }
-        Spacer(modifier = Modifier.size(16.dp))
+        }
     }
 }

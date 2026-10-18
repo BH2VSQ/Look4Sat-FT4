@@ -22,6 +22,7 @@ import android.app.Application
 import android.app.Application.ActivityLifecycleCallbacks
 import android.os.Bundle
 import com.rtbishop.look4sat.core.data.injection.MainContainer
+import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
 import com.rtbishop.look4sat.core.domain.repository.LoTWSyncMode
@@ -104,9 +105,22 @@ class MainApplication : Application(), IContainerProvider {
      */
     private suspend fun checkLoTWAutoSync(timeNow: Long = System.currentTimeMillis()) {
         val settingsRepo = container.settingsRepo
-        // One-of-two rule: while Wavelog is configured the app uploads/syncs through
-        // Wavelog only — the automatic LoTW sync stays off.
-        if (settingsRepo.wavelogUploadSettings.value.isReady) return
+        // Exactly one provider is active. A configured Wavelog account must not
+        // silently override the user's explicit provider choice.
+        if (settingsRepo.logbookSyncProvider.value != LogbookSyncProvider.LOTW) return
+        val sourceLock = settingsRepo.getLogbookSourceLock() ?: run {
+            val lotwWasSynced = settingsRepo.getLastLotwSyncDate().isNotBlank() ||
+                settingsRepo.getLastLotwSyncCallsign().isNotBlank()
+            val wavelogWasSynced = settingsRepo.getLastWavelogSyncEpochMs() > 0L ||
+                settingsRepo.getWavelogSyncCursors().isNotEmpty()
+            when {
+                lotwWasSynced && !wavelogWasSynced -> LogbookSyncProvider.LOTW
+                wavelogWasSynced && !lotwWasSynced -> LogbookSyncProvider.WAVELOG
+                lotwWasSynced && wavelogWasSynced -> settingsRepo.logbookSyncProvider.value
+                else -> null
+            }
+        }
+        if (sourceLock != null && sourceLock != LogbookSyncProvider.LOTW) return
         val lotwSettings = settingsRepo.lotwSettings.value
         if (!shouldAutoSyncLoTW(
                 isConfigured = lotwSettings.isConfigured,
@@ -123,6 +137,7 @@ class MainApplication : Application(), IContainerProvider {
         if (result is LoTWResult.Success) {
             val logbook = container.qsoRepository.mergeLoTW(result.records)
             val count = applyLoTWGridResult(settingsRepo, result, mode, callsign, timeNow)
+            settingsRepo.updateLogbookSourceLock(LogbookSyncProvider.LOTW)
             println(
                 "Periodic LoTW sync finished: $count worked grids, " +
                     "${logbook.imported} logs added, ${logbook.updated} updated"

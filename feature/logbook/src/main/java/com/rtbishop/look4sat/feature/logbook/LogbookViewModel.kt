@@ -21,6 +21,8 @@ import com.rtbishop.look4sat.core.domain.logbook.displayMode
 import com.rtbishop.look4sat.core.domain.logbook.frequencyBand
 import com.rtbishop.look4sat.core.domain.logbook.isSatellite
 import com.rtbishop.look4sat.core.domain.model.LoTWSettings
+import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
+import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
 import com.rtbishop.look4sat.core.domain.repository.ILoTWRepository
 import com.rtbishop.look4sat.core.domain.repository.ILoTWUploadRepository
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
@@ -32,6 +34,13 @@ import com.rtbishop.look4sat.core.domain.repository.LoTWProgress
 import com.rtbishop.look4sat.core.domain.repository.LoTWResult
 import com.rtbishop.look4sat.core.domain.repository.LoTWStation
 import com.rtbishop.look4sat.core.domain.repository.LoTWSyncMode
+import com.rtbishop.look4sat.core.domain.repository.WavelogSyncMode
+import com.rtbishop.look4sat.core.domain.repository.WavelogStationInfo
+import com.rtbishop.look4sat.core.domain.repository.IWavelogSyncRepository
+import com.rtbishop.look4sat.core.domain.repository.IWavelogUploadRepository
+import com.rtbishop.look4sat.core.domain.repository.applyWavelogSyncResult
+import com.rtbishop.look4sat.core.domain.repository.resolveWavelogSyncMode
+import com.rtbishop.look4sat.core.domain.repository.shouldPromoteWavelogFullSync
 import com.rtbishop.look4sat.core.domain.repository.LoTWUploadAudit
 import com.rtbishop.look4sat.core.domain.repository.LoTWUploadPreview
 import com.rtbishop.look4sat.core.domain.repository.LoTWUploadResult
@@ -145,6 +154,7 @@ enum class LogbookError {
     EXPORT_PREPARE,
     SAVE,
     DELETE,
+    CLEAR_ALL,
     IMPORT
 }
 
@@ -179,6 +189,16 @@ data class LogbookState(
     val showLoTW: Boolean = false,
     val lotwSyncing: Boolean = false,
     val lotwSettings: LoTWSettings = LoTWSettings(),
+    val syncProvider: LogbookSyncProvider = LogbookSyncProvider.LOTW,
+    val logbookSourceLock: LogbookSyncProvider? = null,
+    val providerSwitchConflict: LogbookSyncProvider? = null,
+    val wavelogSettings: WavelogUploadSettings = WavelogUploadSettings(),
+    val wavelogStations: List<WavelogStationInfo> = emptyList(),
+    val wavelogRights: String = "",
+    val wavelogProbeBusy: Boolean = false,
+    val wavelogSyncing: Boolean = false,
+    val wavelogLastSyncEpochMs: Long = 0L,
+    val wavelogMessage: String? = null,
     val lotwSyncMode: LoTWSyncMode? = null,
     val lotwProgress: LoTWProgress? = null,
     val lotwDownloadError: LoTWDownloadError? = null,
@@ -194,7 +214,8 @@ data class LogbookState(
     val lotwAuditing: Boolean = false,
     val lotwProfileSaved: Boolean = false,
     val showStation: Boolean = false,
-    val stationCallsign: String = ""
+    val stationCallsign: String = "",
+    val showClearAllConfirmation: Boolean = false
 ) {
     val filteredRecords: List<QsoRecord> get() = records.filter { record ->
         (query.isBlank() || listOf(record.theirCallsign, record.myCallsign, record.satelliteName, record.theirGrid, record.myGrid, record.comment)
@@ -222,6 +243,9 @@ sealed interface LogbookAction {
     data class RequestDelete(val record: QsoRecord) : LogbookAction
     data object ConfirmDelete : LogbookAction
     data object DismissDelete : LogbookAction
+    data object RequestClearAll : LogbookAction
+    data object ConfirmClearAll : LogbookAction
+    data object DismissClearAll : LogbookAction
     data class Import(val content: String) : LogbookAction
     data object ClearNotice : LogbookAction
     data class Search(val value: String) : LogbookAction
@@ -230,6 +254,13 @@ sealed interface LogbookAction {
     data object ToggleGrouping : LogbookAction
     data object ShowLoTW : LogbookAction
     data object DismissLoTW : LogbookAction
+    data class SelectSyncProvider(val provider: LogbookSyncProvider) : LogbookAction
+    data object DismissProviderSwitchConflict : LogbookAction
+    data class SaveWavelogSettings(val settings: WavelogUploadSettings) : LogbookAction
+    data class FetchWavelogStations(val url: String, val apiKey: String) : LogbookAction
+    data class SelectWavelogStation(val station: WavelogStationInfo) : LogbookAction
+    data class SyncWavelog(val mode: WavelogSyncMode) : LogbookAction
+    data object ClearWavelogConfig : LogbookAction
     data class SyncLoTW(val settings: LoTWSettings, val mode: LoTWSyncMode) : LogbookAction
     data class SaveLoTWProfile(
         val certificate: ByteArray?,
@@ -249,6 +280,20 @@ sealed interface LogbookAction {
     data object SaveStation : LogbookAction
 }
 
+private fun getExistingLogbookSourceLock(settingsRepo: ISettingsRepo): LogbookSyncProvider? {
+    settingsRepo.getLogbookSourceLock()?.let { return it }
+    val lotwWasSynced = settingsRepo.getLastLotwSyncDate().isNotBlank() ||
+        settingsRepo.getLastLotwSyncCallsign().isNotBlank()
+    val wavelogWasSynced = settingsRepo.getLastWavelogSyncEpochMs() > 0L ||
+        settingsRepo.getWavelogSyncCursors().isNotEmpty()
+    return when {
+        lotwWasSynced && !wavelogWasSynced -> LogbookSyncProvider.LOTW
+        wavelogWasSynced && !lotwWasSynced -> LogbookSyncProvider.WAVELOG
+        lotwWasSynced && wavelogWasSynced -> settingsRepo.logbookSyncProvider.value
+        else -> null
+    }
+}
+
 class LogbookViewModel(
     private val repository: IQsoRepository,
     private val nowMillis: () -> Long,
@@ -257,11 +302,18 @@ class LogbookViewModel(
     private val settingsRepo: ISettingsRepo,
     private val lotwRepository: ILoTWRepository,
     private val lotwUploadRepository: ILoTWUploadRepository,
+    private val wavelogSyncRepository: IWavelogSyncRepository,
+    private val wavelogUploadRepository: IWavelogUploadRepository,
     private val updateDefaultCallsign: (String) -> Unit
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
         LogbookState(
             lotwSettings = settingsRepo.lotwSettings.value,
+            syncProvider = getExistingLogbookSourceLock(settingsRepo) ?: settingsRepo.logbookSyncProvider.value,
+            logbookSourceLock = getExistingLogbookSourceLock(settingsRepo),
+            wavelogSettings = settingsRepo.wavelogUploadSettings.value,
+            wavelogStations = settingsRepo.getWavelogStations(),
+            wavelogLastSyncEpochMs = settingsRepo.getLastWavelogSyncEpochMs(),
             workedGridsCount = settingsRepo.getWorkedGrids().size
         )
     )
@@ -271,15 +323,44 @@ class LogbookViewModel(
     private var auditGeneration = 0
 
     init {
+        mutableState.value.logbookSourceLock?.let { lock ->
+            if (settingsRepo.getLogbookSourceLock() == null) {
+                settingsRepo.updateLogbookSourceLock(lock)
+            }
+            if (settingsRepo.logbookSyncProvider.value != lock) {
+                settingsRepo.updateLogbookSyncProvider(lock)
+            }
+        }
+        viewModelScope.launch {
+            settingsRepo.logbookSourceLock.collect { lock ->
+                val resolved = lock ?: getExistingLogbookSourceLock(settingsRepo)
+                if (lock == null && resolved != null && settingsRepo.getLogbookSourceLock() == null) {
+                    settingsRepo.updateLogbookSourceLock(resolved)
+                }
+                mutableState.update { it.copy(logbookSourceLock = resolved) }
+            }
+        }
         viewModelScope.launch {
             repository.records.collect { records ->
                 mutableState.update { it.copy(records = records) }
-                if (mutableState.value.showLoTW) refreshLoTWAudit()
+                if (mutableState.value.showLoTW && settingsRepo.logbookSyncProvider.value == LogbookSyncProvider.LOTW) {
+                    refreshLoTWAudit()
+                }
             }
         }
         viewModelScope.launch {
             settingsRepo.lotwSettings.collect { settings ->
                 mutableState.update { it.copy(lotwSettings = settings) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepo.logbookSyncProvider.collect { provider ->
+                mutableState.update { it.copy(syncProvider = provider) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepo.wavelogUploadSettings.collect { settings ->
+                mutableState.update { it.copy(wavelogSettings = settings) }
             }
         }
     }
@@ -305,6 +386,11 @@ class LogbookViewModel(
             is LogbookAction.RequestDelete -> mutableState.update { it.copy(deleteCandidate = action.record) }
             LogbookAction.ConfirmDelete -> deleteCandidate()
             LogbookAction.DismissDelete -> mutableState.update { it.copy(deleteCandidate = null) }
+            LogbookAction.RequestClearAll -> if (mutableState.value.records.isNotEmpty() && !mutableState.value.isBusy) {
+                mutableState.update { it.copy(showClearAllConfirmation = true) }
+            }
+            LogbookAction.ConfirmClearAll -> clearAllRecords()
+            LogbookAction.DismissClearAll -> mutableState.update { it.copy(showClearAllConfirmation = false) }
             is LogbookAction.Import -> importAdi(action.content)
             LogbookAction.ClearNotice -> mutableState.update {
                 it.copy(importResult = null, error = null)
@@ -317,6 +403,8 @@ class LogbookViewModel(
                 mutableState.update {
                     it.copy(
                         showLoTW = true,
+                        wavelogStations = settingsRepo.getWavelogStations(),
+                        wavelogLastSyncEpochMs = settingsRepo.getLastWavelogSyncEpochMs(),
                         lotwProblem = null,
                         lotwDownloadError = null,
                         workedGridsCount = settingsRepo.getWorkedGrids().size,
@@ -324,21 +412,72 @@ class LogbookViewModel(
                         lotwProfileSaved = false
                     )
                 }
-                viewModelScope.launch {
-                    try {
-                        val certificate = lotwUploadRepository.certificate()
-                        val station = lotwUploadRepository.station()
-                        mutableState.update { it.copy(lotwCertificate = certificate, lotwStation = station) }
-                        refreshLoTWAudit()
+                if (settingsRepo.logbookSyncProvider.value == LogbookSyncProvider.LOTW) {
+                    viewModelScope.launch {
+                        try {
+                            val certificate = lotwUploadRepository.certificate()
+                            val station = lotwUploadRepository.station()
+                            mutableState.update { it.copy(lotwCertificate = certificate, lotwStation = station) }
+                            refreshLoTWAudit()
+                        }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { mutableState.update { it.copy(lotwProblem = LoTWOperationException(LoTWProblem.STORAGE)) } }
                     }
-                    catch (cancelled: CancellationException) { throw cancelled }
-                    catch (_: Exception) { mutableState.update { it.copy(lotwProblem = LoTWOperationException(LoTWProblem.STORAGE)) } }
                 }
             }
-            LogbookAction.DismissLoTW -> if (!mutableState.value.lotwSyncing) {
+            LogbookAction.DismissLoTW -> if (
+                !mutableState.value.lotwSyncing && !mutableState.value.lotwAuditing &&
+                !mutableState.value.wavelogSyncing && !mutableState.value.wavelogProbeBusy
+            ) {
                 lotwUploadRepository.discardPreview()
                 auditJob?.cancel()
                 mutableState.update { it.copy(showLoTW = false, lotwAudit = null, lotwAuditing = false) }
+            }
+            is LogbookAction.SelectSyncProvider -> {
+                val state = mutableState.value
+                if (!state.lotwSyncing && !state.lotwAuditing &&
+                    !state.wavelogSyncing && !state.wavelogProbeBusy
+                ) {
+                    val lock = state.logbookSourceLock ?: settingsRepo.getLogbookSourceLock()
+                    if (lock != null && action.provider != lock) {
+                        mutableState.update { it.copy(providerSwitchConflict = action.provider) }
+                    } else {
+                        settingsRepo.updateLogbookSyncProvider(action.provider)
+                        mutableState.update {
+                            it.copy(
+                                providerSwitchConflict = null,
+                                wavelogMessage = null,
+                                lotwDownloadError = null
+                            )
+                        }
+                    }
+                }
+            }
+            LogbookAction.DismissProviderSwitchConflict -> mutableState.update {
+                it.copy(providerSwitchConflict = null)
+            }
+            is LogbookAction.SaveWavelogSettings -> {
+                settingsRepo.updateWavelogUploadSettings(action.settings.copy(
+                    url = action.settings.url.trim(), apiKey = action.settings.apiKey.trim()
+                ))
+                mutableState.update { it.copy(wavelogMessage = null) }
+            }
+            is LogbookAction.FetchWavelogStations -> fetchWavelogStations(action.url, action.apiKey)
+            is LogbookAction.SelectWavelogStation -> {
+                val current = settingsRepo.wavelogUploadSettings.value
+                settingsRepo.updateWavelogUploadSettings(current.copy(
+                    stationId = action.station.id,
+                    stationName = action.station.name,
+                    stationCallsign = action.station.callsign,
+                    stationGrid = action.station.grid
+                ))
+                mutableState.update { it.copy(wavelogMessage = null) }
+            }
+            is LogbookAction.SyncWavelog -> syncWavelog(action.mode)
+            LogbookAction.ClearWavelogConfig -> {
+                settingsRepo.updateWavelogUploadSettings(WavelogUploadSettings())
+                settingsRepo.setWavelogStations(emptyList())
+                mutableState.update { it.copy(wavelogStations = emptyList(), wavelogRights = "", wavelogMessage = null) }
             }
             is LogbookAction.SyncLoTW -> syncLoTW(action.settings, action.mode)
             is LogbookAction.SaveLoTWProfile -> lotwOperation {
@@ -408,7 +547,131 @@ class LogbookViewModel(
         includeIncomplete = includeIncomplete
     )
 
+    private fun fetchWavelogStations(url: String, apiKey: String) {
+        if (mutableState.value.wavelogProbeBusy || mutableState.value.wavelogSyncing) return
+        val cleanUrl = url.trim()
+        val cleanKey = apiKey.trim()
+        mutableState.update { it.copy(wavelogProbeBusy = true, wavelogMessage = null) }
+        viewModelScope.launch {
+            try {
+                val probe = wavelogUploadRepository.probe(cleanUrl, cleanKey)
+                if (probe == null) {
+                    mutableState.update { it.copy(wavelogProbeBusy = false, wavelogMessage = "Wavelog probe failed — check URL, API key and network") }
+                    return@launch
+                }
+                if (probe.stations.isEmpty()) {
+                    settingsRepo.setWavelogStations(emptyList())
+                    mutableState.update {
+                        it.copy(
+                            wavelogProbeBusy = false,
+                            wavelogStations = emptyList(),
+                            wavelogRights = probe.rights,
+                            wavelogMessage = "No station profiles returned by Wavelog"
+                        )
+                    }
+                    return@launch
+                }
+                settingsRepo.setWavelogStations(probe.stations)
+                val current = settingsRepo.wavelogUploadSettings.value
+                val savedStillPresent = current.stationId.isNotBlank() && probe.stations.any { it.id == current.stationId }
+                val updatedSettings = when {
+                    savedStillPresent -> current.copy(url = cleanUrl, apiKey = cleanKey)
+                    probe.stations.size == 1 -> current.copy(
+                        url = cleanUrl, apiKey = cleanKey,
+                        stationId = probe.stations.single().id,
+                        stationName = probe.stations.single().name,
+                        stationCallsign = probe.stations.single().callsign,
+                        stationGrid = probe.stations.single().grid
+                    )
+                    else -> current.copy(url = cleanUrl, apiKey = cleanKey)
+                }
+                settingsRepo.updateWavelogUploadSettings(updatedSettings)
+                mutableState.update {
+                    it.copy(
+                        wavelogProbeBusy = false,
+                        wavelogStations = probe.stations,
+                        wavelogRights = probe.rights,
+                        wavelogMessage = if (probe.stations.isEmpty()) "No station profiles returned by Wavelog" else null
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                mutableState.update { it.copy(wavelogProbeBusy = false, wavelogMessage = "Wavelog probe failed — check URL, API key and network") }
+            }
+        }
+    }
+
+    private fun syncWavelog(requested: WavelogSyncMode) {
+        if (settingsRepo.logbookSyncProvider.value != LogbookSyncProvider.WAVELOG) return
+        if (settingsRepo.getLogbookSourceLock()?.let { it != LogbookSyncProvider.WAVELOG } == true) return
+        if (mutableState.value.wavelogSyncing || mutableState.value.lotwSyncing) return
+        val settings = settingsRepo.wavelogUploadSettings.value
+        if (!settings.isConfigured) {
+            mutableState.update { it.copy(wavelogMessage = "Configure Wavelog URL and API key first") }
+            return
+        }
+        val stations = settingsRepo.getWavelogStations().ifEmpty { mutableState.value.wavelogStations }
+        if (stations.isEmpty()) {
+            mutableState.update { it.copy(wavelogMessage = "Fetch station profiles before syncing") }
+            return
+        }
+        val mode = resolveWavelogSyncMode(settingsRepo.getWavelogSyncUrl(), settings.url, requested)
+        val promoted = mode == WavelogSyncMode.Incremental && shouldPromoteWavelogFullSync(settingsRepo.getLastWavelogFullSyncEpochMs())
+        val actualMode = if (promoted) WavelogSyncMode.Full else mode
+        mutableState.update { it.copy(wavelogSyncing = true, wavelogMessage = null, lotwDownloadError = null) }
+        viewModelScope.launch {
+            try {
+                val fetch = wavelogSyncRepository.fetchNewRecords(
+                    settings.url, settings.apiKey, stations, settingsRepo.getWavelogSyncCursors(),
+                    full = actualMode == WavelogSyncMode.Full
+                )
+                if (fetch == null) {
+                    mutableState.update { it.copy(wavelogSyncing = false, wavelogMessage = "Wavelog sync failed — check URL, API key and network") }
+                    return@launch
+                }
+                val merge = if (fetch.records.isEmpty()) AdifImportResult(0, 0, 0) else repository.mergeWavelog(fetch.records)
+                val cursors = settingsRepo.getWavelogSyncCursors() + fetch.cursors
+                applyWavelogSyncResult(
+                    settingsRepo = settingsRepo,
+                    records = fetch.records,
+                    cursors = cursors,
+                    url = settings.url,
+                    mode = actualMode,
+                    failedStations = fetch.failedStations.toSet()
+                )
+                lockLogbookSource(LogbookSyncProvider.WAVELOG)
+                val head = when {
+                    promoted -> "Full Wavelog sync (automatic re-scan)"
+                    actualMode == WavelogSyncMode.Full -> "Full Wavelog sync"
+                    else -> "Incremental Wavelog sync"
+                }
+                val base = "$head — ${merge.imported} new, ${merge.skipped} already present"
+                val message = if (fetch.failedStations.isEmpty()) base else "$base · ${fetch.failedStations.size}/${stations.size} station(s) failed"
+                mutableState.update {
+                    it.copy(
+                        wavelogSyncing = false,
+                        wavelogLastSyncEpochMs = settingsRepo.getLastWavelogSyncEpochMs(),
+                        workedGridsCount = settingsRepo.getWorkedGrids().size,
+                        wavelogMessage = message
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                mutableState.update { it.copy(wavelogSyncing = false, wavelogMessage = "Wavelog sync failed — check URL, API key and network") }
+            }
+        }
+    }
+
+    private fun lockLogbookSource(provider: LogbookSyncProvider) {
+        settingsRepo.updateLogbookSourceLock(provider)
+        mutableState.update { it.copy(logbookSourceLock = provider, providerSwitchConflict = null) }
+    }
+
     private fun syncLoTW(settings: LoTWSettings, requestedMode: LoTWSyncMode) {
+        if (settingsRepo.logbookSyncProvider.value != LogbookSyncProvider.LOTW) return
+        if (settingsRepo.getLogbookSourceLock()?.let { it != LogbookSyncProvider.LOTW } == true) return
         if (syncJob?.isActive == true) return
         if (!settings.isConfigured) {
             mutableState.update {
@@ -445,6 +708,7 @@ class LogbookViewModel(
                     is LoTWResult.Success -> {
                         val logbook = repository.mergeLoTW(result.records)
                         val grids = applyLoTWGridResult(settingsRepo, result, mode, callsign)
+                        lockLogbookSource(LogbookSyncProvider.LOTW)
                         mutableState.update {
                             it.copy(
                                 workedGridsCount = grids,
@@ -496,6 +760,11 @@ class LogbookViewModel(
     }
 
     private fun refreshLoTWAudit() {
+        if (settingsRepo.logbookSyncProvider.value != LogbookSyncProvider.LOTW) {
+            auditJob?.cancel()
+            mutableState.update { it.copy(lotwAudit = null, lotwAuditing = false) }
+            return
+        }
         auditJob?.cancel()
         val generation = ++auditGeneration
         val current = mutableState.value
@@ -562,6 +831,55 @@ class LogbookViewModel(
         }
     }
 
+    private fun clearAllRecords() = viewModelScope.launch {
+        if (mutableState.value.isBusy) return@launch
+        mutableState.update { it.copy(isBusy = true) }
+        try {
+            repository.deleteAll()
+
+            // The map's award and VUCC layers are cached separately from the logbook
+            // in settings preferences. Clear every QSO-derived map cache as part of
+            // the same reset so old worked-grid counts/details cannot survive.
+            settingsRepo.setWorkedGrids(emptySet())
+            settingsRepo.setWorkedGridQsos(emptyMap())
+            settingsRepo.setRoamedGrids(emptySet())
+
+            // These cursors describe the data represented by the caches above. Reset
+            // them as well so the next LoTW/Wavelog sync performs a full rebuild rather
+            // than merging only new confirmations into an intentionally empty cache.
+            settingsRepo.setLastLotwSyncDate("")
+            settingsRepo.setLastLotwSyncCallsign("")
+            settingsRepo.setWavelogSyncCursors(emptyMap())
+            settingsRepo.setWavelogSyncUrl("")
+            settingsRepo.setLastWavelogSyncEpochMs(0L)
+            settingsRepo.setLastWavelogFullSyncEpochMs(0L)
+            settingsRepo.updateLogbookSourceLock(null)
+
+            mutableState.update {
+                it.copy(
+                    showClearAllConfirmation = false,
+                    error = null,
+                    importResult = null,
+                    lotwDownloadSummary = null,
+                    lotwDownloadError = null,
+                    logbookSourceLock = null,
+                    providerSwitchConflict = null,
+                    workedGridsCount = 0,
+                    query = "",
+                    modeFilter = SATELLITE_MODE_FILTER,
+                    confirmationFilter = LogbookFilter.ALL,
+                    groupByCallsign = false
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            mutableState.update { it.copy(showClearAllConfirmation = false, error = LogbookError.CLEAR_ALL) }
+        } finally {
+            mutableState.update { it.copy(isBusy = false) }
+        }
+    }
+
     private fun importAdi(content: String) = viewModelScope.launch {
         if (mutableState.value.isBusy) return@launch
         mutableState.update { it.copy(isBusy = true) }
@@ -588,6 +906,8 @@ class LogbookViewModel(
                     settingsRepo = container.settingsRepo,
                     lotwRepository = container.lotwRepo,
                     lotwUploadRepository = container.lotwUploadRepository,
+                    wavelogSyncRepository = container.wavelogSyncRepository,
+                    wavelogUploadRepository = container.wavelogUploadRepository,
                     updateDefaultCallsign = { call -> container.settingsRepo.updateFt4Settings { it.copy(operatorCallsign = call) } }
                 )
             }

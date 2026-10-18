@@ -135,9 +135,10 @@ private fun GridFinderScreen(
     openLoTWStation: () -> Unit,
     requestLocationPermission: () -> Unit
 ) {
-    // Same top-bar → content rhythm as the settings page: ScreenColumn puts a
-    // small gap between the header row and the rounded surfaceContainer panel.
+    // Keep the page background visually continuous in the light theme; the
+    // individual GridCard surfaces remain independently styled.
     ScreenColumn(
+        removeLightThemePanelBackground = true,
         topBar = {
             TopBar {
                 IconCard(action = navigateUp, resId = R.drawable.ic_back)

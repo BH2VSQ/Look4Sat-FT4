@@ -10,6 +10,7 @@
 package com.rtbishop.look4sat.core.domain.logbook
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 
 interface IQsoRepository {
     val records: Flow<List<QsoRecord>>
@@ -17,6 +18,10 @@ interface IQsoRepository {
     suspend fun find(id: Long): QsoRecord?
     suspend fun save(record: QsoRecord): Long
     suspend fun delete(id: Long)
+    /** Delete all locally recorded QSOs without modifying station or award settings. */
+    suspend fun deleteAll() {
+        records.first().forEach { delete(it.id) }
+    }
     /**
      * Marks the batch as uploaded and stamps the station-location grids the batch was
      * signed with (1–4 gridsquares: inside a grid / on a line / on a corner), so the

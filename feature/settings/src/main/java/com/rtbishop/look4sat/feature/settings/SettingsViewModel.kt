@@ -27,7 +27,9 @@ import com.rtbishop.look4sat.core.domain.control.IControlDiagnostics
 import com.rtbishop.look4sat.core.domain.repository.IDatabaseRepo
 import com.rtbishop.look4sat.core.domain.ft4.IFt4AudioTransmitter
 import com.rtbishop.look4sat.core.domain.ft4.IFt4Service
+import com.rtbishop.look4sat.core.domain.model.BottomBarTool
 import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
+import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import com.rtbishop.look4sat.core.domain.repository.IRotatorTrackingService
@@ -122,6 +124,7 @@ class SettingsViewModel(
             controlDiagnosticCount = controlDiagnostics.events.value.size,
             dataSourcesSettings = settingsRepo.dataSourcesSettings.value,
             dataSourcesStatus = settingsRepo.dataSourcesStatus.value,
+            logbookSyncProvider = settingsRepo.logbookSyncProvider.value,
             wavelogUploadSettings = settingsRepo.wavelogUploadSettings.value,
             wavelogUploadStations = settingsRepo.getWavelogStations(),
             wavelogLastSyncEpochMs = settingsRepo.getLastWavelogSyncEpochMs(),
@@ -257,6 +260,11 @@ class SettingsViewModel(
             }
         }
         viewModelScope.launch {
+            settingsRepo.logbookSyncProvider.collect { provider ->
+                _uiState.update { it.copy(logbookSyncProvider = provider) }
+            }
+        }
+        viewModelScope.launch {
             settingsRepo.lotwSettings.collect { settings ->
                 _uiState.update { it.copy(lotwSettings = settings) }
             }
@@ -318,6 +326,9 @@ class SettingsViewModel(
             is SettingsAction.ToggleNightMode -> settingsRepo.updateOtherSettings { it.copy(stateOfNightMode = action.value) }
             is SettingsAction.UpdateMapSettings -> settingsRepo.updateOtherSettings {
                 it.copy(mapSource = action.mapSource, tiandituKey = action.tiandituKey)
+            }
+            is SettingsAction.SetBottomBarTool -> settingsRepo.updateOtherSettings {
+                it.copy(bottomBarTool = BottomBarTool.normalize(action.value))
             }
             is SettingsAction.SetFt4Callsign -> settingsRepo.updateFt4Settings {
                 it.copy(operatorCallsign = action.value)
@@ -389,6 +400,8 @@ class SettingsViewModel(
                 _uiState.update { it.copy(controlDiagnosticsExportText = null) }
             }
             is SettingsAction.UpdateDataSources -> settingsRepo.updateDataSourcesSettings(action.settings)
+            // Provider selection is shared by sync and upload paths.
+            is SettingsAction.SetLogbookSyncProvider -> settingsRepo.updateLogbookSyncProvider(action.provider)
             // Wavelog configuration (single block; LoTW and Wavelog are mutually exclusive)
             is SettingsAction.UpdateWavelogUpload -> applyWavelogUploadSettings(action.settings)
             is SettingsAction.FetchWavelogUploadStations -> fetchWavelogUploadStations(action.url, action.apiKey)
@@ -487,6 +500,7 @@ class SettingsViewModel(
     /** Wipe the configuration — routing falls back to LoTW on the next check. */
     private fun clearWavelogConfig() {
         settingsRepo.updateWavelogUploadSettings(WavelogUploadSettings())
+        settingsRepo.updateLogbookSyncProvider(LogbookSyncProvider.LOTW)
         _uiState.update { it.copy(logbookStationFilter = null, logbookWavelogPreview = null) }
     }
 
@@ -530,6 +544,7 @@ class SettingsViewModel(
      * data the app already has.
      */
     private fun syncWavelog(requested: WavelogSyncMode) {
+        if (settingsRepo.logbookSyncProvider.value != LogbookSyncProvider.WAVELOG) return
         if (_uiState.value.wavelogSyncing) return
         val settings = settingsRepo.wavelogUploadSettings.value
         if (!settings.isConfigured) {
@@ -635,6 +650,7 @@ class SettingsViewModel(
         settings: com.rtbishop.look4sat.core.domain.model.LoTWSettings,
         mode: LoTWSyncMode
     ) {
+        if (settingsRepo.logbookSyncProvider.value != LogbookSyncProvider.LOTW) return
         if (!settings.isConfigured) {
             _uiState.update { it.copy(lotwError = LoTWError.NotConfigured) }
             return
@@ -739,7 +755,11 @@ class SettingsViewModel(
             try {
                 val all = qsoRepository.records.first()
                 val wavelogSettings = settingsRepo.wavelogUploadSettings.value
-                if (wavelogSettings.isReady) {
+                if (settingsRepo.logbookSyncProvider.value == LogbookSyncProvider.WAVELOG) {
+                    if (!wavelogSettings.isReady) {
+                        _uiState.update { it.copy(logbookUploadBusy = false, logbookUploadMessage = "Configure Wavelog in Logbook → Sync first") }
+                        return@launch
+                    }
                     // Wavelog mode: the logbook upload goes to Wavelog only.
                     prepareLogbookWavelogUpload(all, wavelogSettings)
                     return@launch
@@ -908,7 +928,11 @@ class SettingsViewModel(
             try {
                 val all = qsoRepository.records.first()
                 val wavelogSettings = settingsRepo.wavelogUploadSettings.value
-                if (wavelogSettings.isReady) {
+                if (settingsRepo.logbookSyncProvider.value == LogbookSyncProvider.WAVELOG) {
+                    if (!wavelogSettings.isReady) {
+                        _uiState.update { it.copy(logbookUploadBusy = false, logbookUploadMessage = "Configure Wavelog in Logbook → Sync first") }
+                        return@launch
+                    }
                     // Wavelog mode: re-send the checked records through Wavelog (the
                     // server dedupes what is already there).
                     val selected = all.filter {

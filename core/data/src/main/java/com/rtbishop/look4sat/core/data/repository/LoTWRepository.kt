@@ -112,6 +112,15 @@ class LoTWRepository : ILoTWRepository {
         val confirmedSatellite = parsed.records.filter { it.lotwConfirmed && it.isSatellite }
         val gridQsos = linkedMapOf<String, MutableList<GridQso>>()
         confirmedSatellite.forEach { record ->
+            // The unprefixed ADIF fields belong to the opposite station; the
+            // MY_* fields belong to our operating location. Keep the two sets
+            // separate here, at the actual LoTW sync path used by the map.
+            val theirGrids = (listOf(record.theirGrid) + record.theirVuccGrids)
+                .mapNotNull(String::toFourCharGrid)
+                .distinct()
+            val myGrids = (listOf(record.myGrid) + record.vuccGrids)
+                .mapNotNull(String::toFourCharGrid)
+                .toCollection(linkedSetOf())
             val detail = GridQso(
                 call = record.theirCallsign,
                 epochMs = record.startUtcMillis,
@@ -123,14 +132,22 @@ class LoTWRepository : ILoTWRepository {
                 country = record.country.ifBlank { null },
                 cqz = record.cqZone,
                 state = record.region.ifBlank { null },
-                myGrid = record.myGrid.toFourCharGrid()
+                myGrid = myGrids.firstOrNull(),
+                myGrids = myGrids,
+                theirGrids = theirGrids
             )
-            (listOf(record.theirGrid) + record.vuccGrids)
-                .mapNotNull(String::toFourCharGrid)
-                .distinct()
-                .forEach { grid -> gridQsos.getOrPut(grid) { mutableListOf() }.add(detail) }
+            theirGrids.forEach { grid ->
+                gridQsos.getOrPut(grid) { mutableListOf() }.add(detail)
+            }
         }
-        val roamed = confirmedSatellite.mapNotNullTo(linkedSetOf()) { it.myGrid.toFourCharGrid() }
+        // Blue/roamed overlays also need every own-side square, not only
+        // MY_GRIDSQUARE. MY_VUCC_GRIDS supplies the other squares when a
+        // location straddles a VUCC line or corner.
+        val roamed = linkedSetOf<String>()
+        confirmedSatellite.forEach { record ->
+            (listOf(record.myGrid) + record.vuccGrids)
+                .mapNotNullTo(roamed, String::toFourCharGrid)
+        }
         return LoTWResult.Success(
             grids = gridQsos.keys,
             qsos = gridQsos,

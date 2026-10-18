@@ -63,7 +63,7 @@
     <string name="logbook_advanced">More details</string>
     <string name="logbook_station">Station</string>
     <string name="logbook_station_hint">Set your callsign once for quick logging and FT4.</string>
-    <string name="logbook_lotw_button" translatable="false">LoTW</string>
+    <string name="logbook_lotw_button">Sync</string>
     <string name="logbook_lotw_confirmed_short" translatable="false">✓ LoTW</string>
     <string name="logbook_value_unavailable" translatable="false">—</string>
     <string name="logbook_expand_marker" translatable="false">\u0020▾</string>
@@ -83,4 +83,11 @@
     <string name="logbook_error_save">The contact could not be saved.</string>
     <string name="logbook_error_delete">The contact could not be deleted.</string>
     <string name="logbook_error_import">The ADI file could not be imported.</string>
+    <string name="logbook_clear_all_title">Reset logbook</string>
+    <string name="logbook_confirm_clear_all">Permanently delete all %1$d QSO records from this device? This cannot be undone. Export your ADI log first if you need a backup.</string>
+    <string name="logbook_clear_all_confirm">Delete all</string>
+    <string name="logbook_error_clear_all">Unable to reset the logbook.</string>
+    <string name="logbook_sync_source_conflict_title">Cannot switch sync source</string>
+    <string name="logbook_sync_source_conflict_wavelog">LoTW and Wavelog logs cannot coexist. Clear the logbook before downloading from Wavelog.</string>
+    <string name="logbook_sync_source_conflict_lotw">LoTW and Wavelog logs cannot coexist. Clear the logbook before downloading from LoTW.</string>
 </resources>

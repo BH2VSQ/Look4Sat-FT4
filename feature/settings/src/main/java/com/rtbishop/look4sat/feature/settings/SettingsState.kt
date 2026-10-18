@@ -26,6 +26,7 @@ import com.rtbishop.look4sat.core.domain.model.OtherSettings
 import com.rtbishop.look4sat.core.domain.model.RCSettings
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
+import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
 import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.repository.LoTWSyncMode
 import com.rtbishop.look4sat.core.domain.repository.CompassAccuracy
@@ -75,7 +76,9 @@ data class SettingsState(
     val dataSourcesSettings: DataSourcesSettings,
     val dataSourcesStatus: Map<String, Int> = emptyMap(),
     val workedGridsCount: Int = 0,
-    /** Wavelog configuration (one block; LoTW and Wavelog are mutually exclusive). */
+    /** Explicitly selected remote logbook provider; defaults to LoTW. */
+    val logbookSyncProvider: LogbookSyncProvider = LogbookSyncProvider.LOTW,
+    /** Wavelog configuration retained independently of the active provider. */
     val wavelogUploadSettings: WavelogUploadSettings = WavelogUploadSettings(),
     val wavelogUploadStations: List<com.rtbishop.look4sat.core.domain.repository.WavelogStationInfo> = emptyList(),
     val wavelogUploadRights: String = "",
@@ -180,6 +183,7 @@ sealed interface SettingsAction {
     data class ToggleLightTheme(val value: Boolean) : SettingsAction
     data class ToggleNightMode(val value: Boolean) : SettingsAction
     data class UpdateMapSettings(val mapSource: String, val tiandituKey: String) : SettingsAction
+    data class SetBottomBarTool(val value: String) : SettingsAction
     // FT4
     data class SetFt4Callsign(val value: String) : SettingsAction
     data class ToggleFt4Decode(val value: Boolean) : SettingsAction
@@ -205,6 +209,8 @@ sealed interface SettingsAction {
     // Data sources
     data class UpdateDataSources(val settings: DataSourcesSettings) : SettingsAction
 
+    // Logbook provider selection (the actual configuration is managed in the logbook Sync drawer)
+    data class SetLogbookSyncProvider(val provider: LogbookSyncProvider) : SettingsAction
     // Wavelog configuration (single block; LoTW and Wavelog are mutually exclusive)
     data class UpdateWavelogUpload(val settings: WavelogUploadSettings) : SettingsAction
     data class FetchWavelogUploadStations(val url: String, val apiKey: String) : SettingsAction

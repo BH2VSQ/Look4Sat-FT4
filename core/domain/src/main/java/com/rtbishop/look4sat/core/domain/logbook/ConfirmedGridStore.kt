@@ -13,6 +13,14 @@ data class ConfirmedGridStore(
 fun confirmedGridStore(records: List<QsoRecord>): ConfirmedGridStore {
     val byGrid = linkedMapOf<String, MutableList<GridQso>>()
     val all = records.filter { it.lotwConfirmed && it.isSatellite && it.status == QsoStatus.COMPLETE }.map { record ->
+        val theirGrids = (listOf(record.theirGrid) + record.theirVuccGrids)
+            .map { it.trim().uppercase(Locale.US).take(4) }
+            .filter { it.matches(Regex("[A-R]{2}[0-9]{2}")) }
+            .distinct()
+        val myGrids = (listOf(record.myGrid) + record.vuccGrids)
+            .map { it.trim().uppercase(Locale.US).take(4) }
+            .filter { it.matches(Regex("[A-R]{2}[0-9]{2}")) }
+            .toSet()
         val qso = GridQso(
             call = record.theirCallsign,
             epochMs = record.startUtcMillis,
@@ -23,12 +31,12 @@ fun confirmedGridStore(records: List<QsoRecord>): ConfirmedGridStore {
             dxcc = record.dxcc,
             country = record.country.ifBlank { null },
             cqz = record.cqZone,
-            state = record.region.ifBlank { null }
+            state = record.region.ifBlank { null },
+            myGrid = myGrids.firstOrNull(),
+            myGrids = myGrids,
+            theirGrids = theirGrids
         )
-        (record.vuccGrids + record.theirGrid).map { it.trim().uppercase(Locale.US).take(4) }
-            .filter { it.matches(Regex("[A-R]{2}[0-9]{2}")) }.distinct().forEach { grid ->
-                byGrid.getOrPut(grid) { mutableListOf() }.add(qso)
-            }
+        theirGrids.forEach { grid -> byGrid.getOrPut(grid) { mutableListOf() }.add(qso) }
         qso
     }
     // DXCC / zones / regions still count when a confirmed satellite QSO has no locator.
