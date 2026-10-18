@@ -53,6 +53,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -398,9 +399,17 @@ fun SharedDialog(
     titleFontSize: Int = 16,
     titleTextAlign: TextAlign = if (onCancel != null && onAccept != null) TextAlign.Center else TextAlign.Start,
     titleHorizontalPadding: Dp = 0.dp,
+    /** Whether tapping the scrim dismisses this dialog. */
+    dismissOnClickOutside: Boolean = true,
+    /** Whether system back dismisses this dialog. */
+    dismissOnBackPress: Boolean = true,
     content: @Composable (padding: Dp) -> Unit
 ) {
-    DialogShell(onDismissRequest = onDismissRequest) { padding ->
+    DialogShell(
+        onDismissRequest = onDismissRequest,
+        dismissOnClickOutside = dismissOnClickOutside,
+        dismissOnBackPress = dismissOnBackPress
+    ) { padding ->
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -438,6 +447,8 @@ fun SharedDialog(
 @Composable
 private fun DialogShell(
     onDismissRequest: () -> Unit,
+    dismissOnClickOutside: Boolean = true,
+    dismissOnBackPress: Boolean = true,
     content: @Composable (padding: Dp) -> Unit
 ) {
     val padding = LocalSpacing.current.large
@@ -460,7 +471,11 @@ private fun DialogShell(
         sheetState = sheetState,
         dragHandle = null,
         shape = MaterialTheme.shapes.medium,
-        scrimColor = Color.Black.copy(alpha = 0.64f)
+        scrimColor = Color.Black.copy(alpha = 0.64f),
+        properties = ModalBottomSheetProperties(
+            shouldDismissOnBackPress = dismissOnBackPress,
+            shouldDismissOnClickOutside = dismissOnClickOutside
+        )
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

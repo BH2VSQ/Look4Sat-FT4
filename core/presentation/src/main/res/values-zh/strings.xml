@@ -900,6 +900,7 @@
     <string name="pass_schedule_notification_before_text">%1$s 将于 %2$s 开始过境</string>
     <string name="pass_schedule_countdown">距离开始：%1$s</string>
     <string name="pass_schedule_started">已开始</string>
+    <string name="pass_schedule_los_countdown">LOS 倒计时：%1$s</string>
     <string name="prefs_bottom_tool_title">底部快捷菜单</string>
     <string name="prefs_bottom_tool_current">当前快捷功能：%1$s</string>
     <string name="prefs_bottom_tool_choose">选择快捷功能</string>

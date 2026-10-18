@@ -128,6 +128,9 @@ data class DataSourcesSettings(
     fun isTransceiverEnabled(index: Int): Boolean = transceiversEnabled.getOrElse(index) { true }
 }
 
+/** The single remote logbook service used for logbook sync and upload. */
+enum class LogbookSyncProvider { LOTW, WAVELOG }
+
 /** Wavelog configuration — QSO upload both ways; one of LoTW or Wavelog (mutually exclusive). */
 data class WavelogUploadSettings(
     val url: String = "",

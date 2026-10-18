@@ -948,6 +948,7 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="pass_schedule_notification_before_text">%1$s pass starts at %2$s</string>
     <string name="pass_schedule_countdown">Starts in: %1$s</string>
     <string name="pass_schedule_started">Started</string>
+    <string name="pass_schedule_los_countdown">LOS in: %1$s</string>
     <string name="prefs_bottom_tool_title">Bottom navigation shortcut</string>
     <string name="prefs_bottom_tool_current">Current shortcut: %1$s</string>
     <string name="prefs_bottom_tool_choose">Choose shortcut</string>

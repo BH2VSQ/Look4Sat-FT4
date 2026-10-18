@@ -409,10 +409,13 @@ fun LoTWDialog(
     SharedDialog(
         title = stringResource(R.string.prefs_lotw_title),
         titleHorizontalPadding = LocalSpacing.current.medium,
-        // While syncing, cancel/back aborts the download instead of merely
-        // hiding the dialog — a full sync started by mistake must be stoppable.
-        onDismissRequest = { if (isSyncing) onCancelSync() else dismiss() },
+        // During sync, outside taps and system back must not dismiss the sheet
+        // or cancel the running job. The explicit Cancel button remains the
+        // only user action that can stop the sync.
+        onDismissRequest = { if (!isSyncing) dismiss() },
         onCancel = { if (isSyncing) onCancelSync() else dismiss() },
+        dismissOnClickOutside = !isSyncing,
+        dismissOnBackPress = !isSyncing,
         // The two sync buttons below are the primary actions: saving
         // credentials and fetching confirmed grids happen in one step.
         onAccept = null

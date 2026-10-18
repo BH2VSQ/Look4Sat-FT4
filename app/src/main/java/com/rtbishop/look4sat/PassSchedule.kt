@@ -804,17 +804,29 @@ private fun PassScheduleItem(
         val seconds = (pass.losTime - pass.aosTime) / 1000L
         "${seconds / 60}m ${seconds % 60}s"
     }
-    val remainingSeconds = ((pass.aosTime - now) / 1000L).coerceAtLeast(0L)
-    val countdown = if (pass.aosTime <= now) {
-        stringResource(R.string.pass_schedule_started)
+    val isInProgress = pass.aosTime <= now && pass.losTime > now
+    // The schedule's calculated pass list is refreshed on user changes, not every
+    // second. Derive progress from the ticking wall clock so the active pass bar
+    // advances continuously from AOS to LOS instead of remaining at its stale value.
+    val passProgress = when {
+        pass.isDeepSpace -> 1f
+        pass.losTime <= pass.aosTime -> 0f
+        else -> ((now - pass.aosTime).toFloat() / (pass.losTime - pass.aosTime).toFloat())
+            .coerceIn(0f, 1f)
+    }
+    val countdownTarget = if (isInProgress) pass.losTime else pass.aosTime
+    val remainingSeconds = ((countdownTarget - now) / 1000L).coerceAtLeast(0L)
+    val countdown = String.format(
+        Locale.getDefault(),
+        "%02d:%02d:%02d",
+        remainingSeconds / 3600L,
+        (remainingSeconds % 3600L) / 60L,
+        remainingSeconds % 60L
+    )
+    val countdownLabel = if (isInProgress) {
+        stringResource(R.string.pass_schedule_los_countdown, countdown)
     } else {
-        String.format(
-            Locale.getDefault(),
-            "%02d:%02d:%02d",
-            remainingSeconds / 3600L,
-            (remainingSeconds % 3600L) / 60L,
-            remainingSeconds % 60L
-        )
+        stringResource(R.string.pass_schedule_countdown, countdown)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -847,7 +859,7 @@ private fun PassScheduleItem(
                             lineHeight = 22.sp
                         )
                         Text(
-                            text = stringResource(R.string.pass_schedule_countdown, countdown),
+                            text = countdownLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Medium,
@@ -911,7 +923,7 @@ private fun PassScheduleItem(
                             maxLines = 1
                         )
                         LinearProgressIndicator(
-                            progress = { if (pass.isDeepSpace) 1f else pass.progress.coerceIn(0f, 1f) },
+                            progress = { passProgress },
                             drawStopIndicator = {},
                             modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
                         )

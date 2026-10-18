@@ -141,8 +141,7 @@ fun LogbookScreenDestination(navigateUp: () -> Unit, navigateToMap: () -> Unit =
     if (showExportOptions) {
         SharedDialog(
             title = stringResource(R.string.logbook_export),
-            onDismissRequest = { showExportOptions = false },
-            onCancel = { showExportOptions = false }
+            onDismissRequest = { showExportOptions = false }
         ) { padding ->
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -258,13 +257,6 @@ private fun LogbookScreen(
                     }
                 }
                 IconCard(action = { onAction(LogbookAction.ShowStation) }, resId = CoreR.drawable.ic_settings)
-                if (state.records.isNotEmpty()) {
-                    IconCard(
-                        action = { onAction(LogbookAction.RequestClearAll) },
-                        resId = CoreR.drawable.ic_delete,
-                        enabled = !state.isBusy
-                    )
-                }
                 IconCard(action = { onAction(LogbookAction.Add) }, resId = CoreR.drawable.ic_add)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {

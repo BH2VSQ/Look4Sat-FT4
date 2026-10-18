@@ -22,6 +22,13 @@ import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,6 +43,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 
@@ -52,12 +60,14 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
@@ -72,7 +82,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.rtbishop.look4sat.core.domain.model.BottomBarTool
 import com.rtbishop.look4sat.core.domain.model.DataSourcesSettings
 import com.rtbishop.look4sat.core.domain.time.ClockSource
 import com.rtbishop.look4sat.core.domain.model.OtherSettings
@@ -92,6 +101,9 @@ import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.TopBar
 import com.rtbishop.look4sat.core.presentation.infiniteMarquee
 import com.rtbishop.look4sat.core.presentation.isVerticalLayout
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -116,8 +128,13 @@ private fun SettingsScreen(
     val context = LocalContext.current
     var showUpdateChecker by rememberSaveable { mutableStateOf(false) }
     var showMapSettings by rememberSaveable { mutableStateOf(false) }
-    var showBottomToolSettings by rememberSaveable { mutableStateOf(false) }
     var showProjectWiki by rememberSaveable { mutableStateOf(false) }
+    // Only one of the three collapsible settings sections may be open at a time.
+    // 0 = none, 1 = data output, 2 = FT4/time sync, 3 = other settings.
+    var expandedSettingsSection by rememberSaveable { mutableStateOf(0) }
+    val outputSettingsExpanded = expandedSettingsSection == 1
+    val ft4SettingsExpanded = expandedSettingsSection == 2
+    val otherSettingsExpanded = expandedSettingsSection == 3
     if (showProjectWiki) {
         ProjectWikiDialog(onDismiss = { showProjectWiki = false })
     }
@@ -168,14 +185,6 @@ private fun SettingsScreen(
                 onAction(SettingsAction.UpdateMapSettings(mapSource, tiandituKey))
                 showMapSettings = false
             }
-        )
-    }
-
-    if (showBottomToolSettings) {
-        BottomToolDialog(
-            currentTool = uiState.otherSettings.bottomBarTool,
-            onDismiss = { showBottomToolSettings = false },
-            onSave = { tool -> onAction(SettingsAction.SetBottomBarTool(tool)) }
         )
     }
 
@@ -291,24 +300,6 @@ private fun SettingsScreen(
             onSave = { onAction(SettingsAction.SetCompassOffset(it)) }
         )
     }
-    if (dialogs.wavelogUpload) {
-        WavelogUploadDialog(
-            initialSettings = uiState.wavelogUploadSettings,
-            stations = uiState.wavelogUploadStations,
-            rights = uiState.wavelogUploadRights,
-            probeBusy = uiState.wavelogUploadProbeBusy,
-            isSyncing = uiState.wavelogSyncing,
-            lastSyncEpochMs = uiState.wavelogLastSyncEpochMs,
-            message = uiState.wavelogUploadMessage,
-            dismiss = { dialogs.wavelogUpload = false },
-            onSave = { onAction(SettingsAction.UpdateWavelogUpload(it)) },
-            onFetchStations = { url, apiKey -> onAction(SettingsAction.FetchWavelogUploadStations(url, apiKey)) },
-            onSelectStation = { onAction(SettingsAction.SelectWavelogUploadStation(it)) },
-            onSyncIncremental = { onAction(SettingsAction.SyncWavelog(WavelogSyncMode.Incremental)) },
-            onSyncFull = { onAction(SettingsAction.SyncWavelog(WavelogSyncMode.Full)) },
-            onClear = { onAction(SettingsAction.ClearWavelogConfig) }
-        )
-    }
     if (uiState.wavelogSwitchWarning) {
         WavelogSwitchWarningDialog(
             onConfirm = { onAction(SettingsAction.ConfirmWavelogSwitch) },
@@ -385,8 +376,49 @@ private fun SettingsScreen(
         }
     ) { _ ->
         val isVerticalLayout = isVerticalLayout()
-        val wavelogMode = uiState.wavelogUploadSettings.isReady
+        val wavelogMode = uiState.logbookSyncProvider == com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider.WAVELOG
+        val settingsGridState = rememberLazyGridState()
+        val settingsScrollScope = rememberCoroutineScope()
+        // Keep the viewport from before the first section was opened. Switching sections
+        // preserves this origin; closing the active section returns to it.
+        var settingsOriginalScrollPosition by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+        var settingsAutoScrollJob by remember { mutableStateOf<Job?>(null) }
+
+        fun toggleSettingsSection(sectionId: Int, itemIndex: Int) {
+            settingsAutoScrollJob?.cancel()
+            if (expandedSettingsSection == sectionId) {
+                val restorePosition = settingsOriginalScrollPosition
+                expandedSettingsSection = 0
+                settingsAutoScrollJob = settingsScrollScope.launch {
+                    // Let the collapse animation finish and the grid remeasure before restoring.
+                    delay(300)
+                    if (restorePosition != null) {
+                        settingsGridState.animateScrollToItem(
+                            index = restorePosition.first,
+                            scrollOffset = restorePosition.second
+                        )
+                    }
+                    // Keep the original viewport if the user opens another section mid-animation.
+                    if (expandedSettingsSection == 0) settingsOriginalScrollPosition = null
+                }
+            } else {
+                // Save the original position only when opening from the fully-collapsed state.
+                // If another section is already open, retain the same origin while switching.
+                if (expandedSettingsSection == 0 && settingsOriginalScrollPosition == null) {
+                    settingsOriginalScrollPosition =
+                        settingsGridState.firstVisibleItemIndex to settingsGridState.firstVisibleItemScrollOffset
+                }
+                expandedSettingsSection = sectionId
+                settingsAutoScrollJob = settingsScrollScope.launch {
+                    // Let the newly-expanded content enter composition before scrolling to its heading.
+                    delay(32)
+                    settingsGridState.animateScrollToItem(index = itemIndex, scrollOffset = 0)
+                }
+            }
+        }
+
         LazyVerticalGrid(
+            state = settingsGridState,
             columns = GridCells.Fixed(if (isVerticalLayout) 1 else 2),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -411,46 +443,50 @@ private fun SettingsScreen(
                 )
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
-                OutputCard(
-                    onNetworkClick = permissions.launchNetwork,
-                    onBluetoothClick = permissions.launchBluetooth,
-                    onRadioControlClick = { dialogs.radioControl = true },
-                    onRotatorControlClick = { dialogs.rotatorControl = true },
-                    diagnosticCount = uiState.controlDiagnosticCount,
-                    onExportDiagnostics = { onAction(SettingsAction.ExportControlDiagnostics) },
-                    onClearDiagnostics = { onAction(SettingsAction.ClearControlDiagnostics) }
-                )
+                CollapsibleSettingsSection(
+                    titleResId = R.string.prefs_data_output_title,
+                    expanded = outputSettingsExpanded,
+                    onToggle = { toggleSettingsSection(sectionId = 1, itemIndex = 2) }
+                ) {
+                    OutputCard(
+                        onNetworkClick = permissions.launchNetwork,
+                        onBluetoothClick = permissions.launchBluetooth,
+                        onRadioControlClick = { dialogs.radioControl = true },
+                        onRotatorControlClick = { dialogs.rotatorControl = true },
+                        diagnosticCount = uiState.controlDiagnosticCount,
+                        onExportDiagnostics = { onAction(SettingsAction.ExportControlDiagnostics) },
+                        onClearDiagnostics = { onAction(SettingsAction.ClearControlDiagnostics) }
+                    )
+                }
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
-                Ft4SettingsCard(
-                    state = uiState,
-                    editGrid = { dialogs.locator = true },
-                    enableGnss = permissions.launchGnss,
-                    onAction = onAction
-                )
+                CollapsibleSettingsSection(
+                    titleResId = R.string.prefs_ft4_title,
+                    expanded = ft4SettingsExpanded,
+                    onToggle = { toggleSettingsSection(sectionId = 2, itemIndex = 3) }
+                ) {
+                    Ft4SettingsCard(
+                        state = uiState,
+                        editGrid = { dialogs.locator = true },
+                        enableGnss = permissions.launchGnss,
+                        onAction = onAction
+                    )
+                }
             }
-
-            item {
-                WavelogUploadCard(
-                    settings = uiState.wavelogUploadSettings,
-                    lastSyncEpochMs = uiState.wavelogLastSyncEpochMs,
-                    showDialog = { dialogs.wavelogUpload = true }
-                )
-            }
-            item {
-                OtherCard(
-                    settings = uiState.otherSettings,
-                    onCompassCalibration = { dialogs.compassCalibration = true },
-                    loTWEnabled = !wavelogMode,
-                    onAction = onAction
-                )
-            }
-            item { MapSettingsCard(onClick = { showMapSettings = true }) }
-            item {
-                BottomToolSettingsCard(
-                    selectedToolLabel = bottomBarToolLabel(uiState.otherSettings.bottomBarTool),
-                    onClick = { showBottomToolSettings = true }
-                )
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                CollapsibleSettingsSection(
+                    titleResId = R.string.prefs_other_title,
+                    expanded = otherSettingsExpanded,
+                    onToggle = { toggleSettingsSection(sectionId = 3, itemIndex = 4) }
+                ) {
+                    OtherCard(
+                        settings = uiState.otherSettings,
+                        onCompassCalibration = { dialogs.compassCalibration = true },
+                        onMapSettings = { showMapSettings = true },
+                        loTWEnabled = !wavelogMode,
+                        onAction = onAction
+                    )
+                }
             }
             item { ProjectWikiCard(onClick = { showProjectWiki = true }) }
             item { CardCredits() }
@@ -460,6 +496,59 @@ private fun SettingsScreen(
                     text = stringResource(R.string.update_check_button),
                     modifier = Modifier.fillMaxWidth()
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollapsibleSettingsSection(
+    titleResId: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle)
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = stringResource(titleResId),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                val arrowRotation by animateFloatAsState(
+                    targetValue = if (expanded) 90f else 0f,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "settingsSectionArrowRotation"
+                )
+                Icon(
+                    painter = painterResource(R.drawable.ic_arrow),
+                    contentDescription = null,
+                    modifier = Modifier.rotate(arrowRotation)
+                )
+            }
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(
+                    animationSpec = tween(durationMillis = 260),
+                    expandFrom = Alignment.Top
+                ) + fadeIn(animationSpec = tween(durationMillis = 180)),
+                exit = shrinkVertically(
+                    animationSpec = tween(durationMillis = 220),
+                    shrinkTowards = Alignment.Top
+                ) + fadeOut(animationSpec = tween(durationMillis = 140))
+            ) {
+                Column {
+                    HorizontalDivider()
+                    content()
+                }
             }
         }
     }
@@ -482,15 +571,12 @@ private fun Ft4SettingsCard(
         stringResource(R.string.prefs_ft4_time_unsynced, clock.offsetMillis)
     }
 
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.prefs_ft4_title),
-                color = MaterialTheme.colorScheme.primary
-            )
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
             OutlinedTextField(
                 value = settings.operatorCallsign,
                 onValueChange = { onAction(SettingsAction.SetFt4Callsign(it)) },
@@ -594,7 +680,6 @@ private fun Ft4SettingsCard(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(text = timeStatus, style = MaterialTheme.typography.bodySmall)
-        }
     }
 }
 
@@ -730,7 +815,15 @@ private fun DataCard(
 
 @Preview(showBackground = true)
 @Composable
-private fun OutputCardPreview() = MainTheme { OutputCard({}, {}, {}, {}, 0, {}, {}) }
+private fun OutputCardPreview() = MainTheme {
+    CollapsibleSettingsSection(
+        titleResId = R.string.prefs_data_output_title,
+        expanded = true,
+        onToggle = {}
+    ) {
+        OutputCard({}, {}, {}, {}, 0, {}, {})
+    }
+}
 
 @Composable
 private fun OutputCard(
@@ -742,13 +835,12 @@ private fun OutputCard(
     onExportDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-            Text(
-                text = stringResource(id = R.string.prefs_data_output_title),
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+            Spacer(modifier = Modifier.height(2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 CardButton(
                     onClick = onNetworkClick,
@@ -791,7 +883,6 @@ private fun OutputCard(
                     modifier = Modifier.weight(1f)
                 )
             }
-        }
     }
 }
 
@@ -809,77 +900,30 @@ private fun OtherCardPreview() = MainTheme {
         shouldSeeWarning = false,
         shouldSeeWhatsNew = false
     )
-    OtherCard(settings = values, onCompassCalibration = {}, onAction = {})
-}
-
-
-@Composable
-private fun bottomBarToolLabel(tool: String): String = stringResource(
-    when (BottomBarTool.normalize(tool)) {
-        BottomBarTool.MAP -> R.string.nav_map
-        BottomBarTool.GRID_FINDER -> R.string.gridfinder_title
-        BottomBarTool.MUTUAL -> R.string.nav_mutual
-        BottomBarTool.AMSAT -> R.string.nav_amsat
-        BottomBarTool.PASS_SCHEDULE -> R.string.pass_schedule_title
-        else -> R.string.nav_ft4
-    }
-)
-
-@Composable
-private fun BottomToolSettingsCard(selectedToolLabel: String, onClick: () -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-            Text(
-                text = stringResource(R.string.prefs_bottom_tool_title),
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(stringResource(R.string.prefs_bottom_tool_current, selectedToolLabel))
-            Spacer(modifier = Modifier.height(6.dp))
-            CardButton(
-                onClick = onClick,
-                text = stringResource(R.string.prefs_bottom_tool_choose),
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+    CollapsibleSettingsSection(
+        titleResId = R.string.prefs_other_title,
+        expanded = true,
+        onToggle = {}
+    ) {
+        OtherCard(settings = values, onCompassCalibration = {}, onMapSettings = {}, onAction = {})
     }
 }
 
-@Composable
-private fun MapSettingsCard(onClick: () -> Unit) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-            Text(
-                text = stringResource(R.string.prefs_map_title),
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            CardButton(
-                onClick = onClick,
-                text = stringResource(R.string.prefs_map_configure),
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
-    }
-}
 
 @Composable
 private fun OtherCard(
     settings: OtherSettings,
     onCompassCalibration: () -> Unit,
+    onMapSettings: () -> Unit,
     loTWEnabled: Boolean = true,
     onAction: (SettingsAction) -> Unit
 ) {
-    ElevatedCard(
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .height(420.dp) // 370dp + one switch row (light theme)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-            Text(
-                text = stringResource(id = R.string.prefs_other_title),
-                color = MaterialTheme.colorScheme.primary
-            )
             SwitchRow(R.string.prefs_other_switch_utc, settings.stateOfUtc) {
                 onAction(SettingsAction.ToggleUtc(it))
             }
@@ -916,7 +960,18 @@ private fun OtherCard(
             ) {
                 onAction(SettingsAction.ToggleNightMode(it))
             }
-        }
+            Spacer(modifier = Modifier.height(4.dp))
+            HorizontalDivider()
+            Text(
+                text = stringResource(R.string.prefs_map_title),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            CardButton(
+                onClick = onMapSettings,
+                text = stringResource(R.string.prefs_map_configure),
+                modifier = Modifier.fillMaxWidth()
+            )
     }
 }
 

@@ -34,6 +34,7 @@ import com.rtbishop.look4sat.core.domain.model.RCSettings
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 import com.rtbishop.look4sat.core.domain.model.supportedRadioBaudRates
 import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
+import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
 import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import com.rtbishop.look4sat.core.domain.rotator.RotatorAzimuthRange
@@ -410,6 +411,36 @@ class SettingsRepo(
 
     override fun setLastLotwSyncCallsign(callsign: String) =
         preferences.edit { putString(keyLastLotwSyncCallsign, callsign.trim().uppercase()) }
+    //endregion
+
+    //region # Logbook sync provider
+    private val keyLogbookSyncProvider = "logbookSyncProvider"
+    private fun getLogbookSyncProvider(): LogbookSyncProvider = runCatching {
+        LogbookSyncProvider.valueOf(preferences.getString(keyLogbookSyncProvider, null).orEmpty())
+    }.getOrDefault(LogbookSyncProvider.LOTW)
+    private val _logbookSyncProvider = MutableStateFlow(getLogbookSyncProvider())
+    override val logbookSyncProvider: StateFlow<LogbookSyncProvider> = _logbookSyncProvider
+
+    override fun updateLogbookSyncProvider(provider: LogbookSyncProvider) {
+        preferences.edit { putString(keyLogbookSyncProvider, provider.name) }
+        _logbookSyncProvider.value = provider
+    }
+
+    private val keyLogbookSourceLock = "logbookSourceLock"
+    private val _logbookSourceLock = MutableStateFlow(getLogbookSourceLock())
+    override val logbookSourceLock: StateFlow<LogbookSyncProvider?> = _logbookSourceLock
+
+    override fun getLogbookSourceLock(): LogbookSyncProvider? = runCatching {
+        preferences.getString(keyLogbookSourceLock, null)?.let(LogbookSyncProvider::valueOf)
+    }.getOrNull()
+
+    override fun updateLogbookSourceLock(provider: LogbookSyncProvider?) {
+        preferences.edit {
+            if (provider == null) remove(keyLogbookSourceLock)
+            else putString(keyLogbookSourceLock, provider.name)
+        }
+        _logbookSourceLock.value = provider
+    }
     //endregion
 
     //region # Wavelog upload settings

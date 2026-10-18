@@ -26,9 +26,11 @@ import com.rtbishop.look4sat.core.domain.model.RCSettings
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 
 import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
+import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
 import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.rotator.RotatorSettings
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 
 interface ISettingsRepo {
 
@@ -142,6 +144,17 @@ interface ISettingsRepo {
      *  whole grid clears automatically once it becomes worked. */
     fun getMarkedGridStations(): Map<String, List<com.rtbishop.look4sat.core.domain.model.MarkedStation>>
     fun setMarkedGridStations(stations: Map<String, List<com.rtbishop.look4sat.core.domain.model.MarkedStation>>)
+    //endregion
+
+    //region # Logbook sync provider (LoTW or Wavelog; LoTW is the default)
+    val logbookSyncProvider: StateFlow<LogbookSyncProvider>
+        get() = MutableStateFlow(LogbookSyncProvider.LOTW)
+    fun updateLogbookSyncProvider(provider: LogbookSyncProvider) = Unit
+    /** Source that has already been used to populate this logbook. Null means the logbook is unlocked. */
+    val logbookSourceLock: StateFlow<LogbookSyncProvider?>
+        get() = MutableStateFlow(getLogbookSourceLock())
+    fun getLogbookSourceLock(): LogbookSyncProvider? = null
+    fun updateLogbookSourceLock(provider: LogbookSyncProvider?) = Unit
     //endregion
 
     //region # Wavelog upload settings

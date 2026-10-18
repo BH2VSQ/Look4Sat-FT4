@@ -269,7 +269,6 @@ class SatelliteRepo(
                     if (!satellite.willBeSeen(stationPos)) return@async emptyList()
                     satellite.getPasses(stationPos, normalizedTime, hoursAhead).filter { pass ->
                         !pass.isDeepSpace &&
-                            pass.aosTime >= startTime &&
                             pass.aosTime < endTime &&
                             pass.losTime > startTime &&
                             pass.maxElevation >= minElevation

@@ -63,6 +63,7 @@
     <string name="logbook_advanced">更多信息</string>
     <string name="logbook_station">本站</string>
     <string name="logbook_station_hint">设置本站呼号，用于快捷记录和 FT4。</string>
+    <string name="logbook_lotw_button">同步</string>
     <string name="logbook_group_header">%1$s · %2$d 条</string>
     <string name="logbook_reports_grid">%1$s / %2$s · %3$s</string>
     <string name="logbook_utc_value">%1$s UTC</string>
@@ -81,4 +82,7 @@
     <string name="logbook_confirm_clear_all">确定永久删除本机日志本中的全部 %1$d 条通联记录吗？此操作无法撤销。若需要备份，请先导出 ADI 文件。</string>
     <string name="logbook_clear_all_confirm">全部删除</string>
     <string name="logbook_error_clear_all">重置日志本失败。</string>
+    <string name="logbook_sync_source_conflict_title">无法切换同步来源</string>
+    <string name="logbook_sync_source_conflict_wavelog">Lotw日志与Wavelog日志不可共存，请先清空日志本再拉取Wavelog</string>
+    <string name="logbook_sync_source_conflict_lotw">Lotw日志与Wavelog日志不可共存，请先清空日志本再拉取Lotw</string>
 </resources>
