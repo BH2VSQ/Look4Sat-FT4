@@ -1,0 +1,53 @@
+name: VUCC PR12 APK build - no external actions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Verify runner startup
+        run: echo "Runner started - building PR 12 without third-party actions"
+
+      - name: Clone PR 12 source
+        run: |
+          git clone --depth 1 --single-branch --branch feature/vucc-multiselect-persistent-pr10 https://github.com/atsunatsu/Look4Sat.git source
+          git -C source log -1 --format="%h %s"
+
+      - name: Check Java and install Android SDK 37
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
+          "$JAVA_HOME_21_X64/bin/java" -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          command -v sdkmanager
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-37" "build-tools;37.0.0"
+
+      - name: Compile debug APK
+        working-directory: source
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug --stacktrace
+          find app/build/outputs/apk/debug -name '*.apk' -type f -ls
+
+      - name: Publish APK as clearly labelled test prerelease
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -type f -print -quit)"
+          test -n "$APK"
+          REV="$(git rev-parse HEAD)"
+          TAG="vucc-pr12-debug-${REV:0:8}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK#look4sat-vucc-pr12-debug.apk" --clobber
+          else
+            gh release create "$TAG" "$APK#look4sat-vucc-pr12-debug.apk" --target "$REV" --title "TEST ONLY - VUCC PR 12 (${REV:0:8})" --notes "Preview testing package built from PR #12. Debug-signed APK: it will NOT overwrite an existing installation signed with a different key. Not a stable release." --prerelease
+          fi
+          echo "Published: https://github.com/atsunatsu/Look4Sat/releases/tag/$TAG"
