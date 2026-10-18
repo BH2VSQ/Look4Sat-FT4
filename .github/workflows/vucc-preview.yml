@@ -2,12 +2,20 @@ name: VUCC preview APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: read
 
 jobs:
   build-preview:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'feature/vucc-multiselect-persistent-pr10'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
