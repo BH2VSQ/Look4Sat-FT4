@@ -177,6 +177,10 @@ class QsoRepositoryTest {
         override suspend fun delete(id: Long) {
             records.value = records.value.filterNot { it.id == id }
         }
+
+        override suspend fun deleteAll() {
+            records.value = emptyList()
+        }
     }
 }
 
@@ -464,6 +468,8 @@ class QsoRepositoryUpstreamTest {
         assertEquals("BH3HCF", rows[named]!!.myCallsign)
         assertTrue(rows[blank]!!.lotwUploaded)
         assertTrue(rows[named]!!.lotwUploaded)
+        assertEquals(2, rows.size)
+        assertEquals(stableQsoKey(repository.find(blank)!!), rows[blank]!!.dedupeKey)
     }
 
     @Test
@@ -490,6 +496,26 @@ class QsoRepositoryUpstreamTest {
         assertTrue(row.wavelogUploaded)
         assertFalse(row.lotwUploaded)
         assertEquals("3", row.wavelogStation)
+    }
+
+    @Test
+    fun markWavelogUploaded_fillsBlankCallsignsFromTheStationProfile() = runBlocking {
+        val blank = dao.save(loggedInApp("SO-50", lotwUploaded = false).copy(myCallsign = "").toEntity())
+        val named = dao.save(loggedInApp("SO-50", lotwUploaded = false).copy(myCallsign = "BH3HCF").toEntity())
+
+        repository.markWavelogUploaded(listOf(blank, named), "3", "ba7opf")
+
+        val rows = dao.getAll().associateBy { it.id }
+        // A Wavelog-only setup has no certificate, so records logged there carry no own callsign.
+        // The server imported them under the station profile's callsign — the local rows follow,
+        // or a later sync would pull the same contact back as a second row (the dedupe key
+        // contains the own callsign). A row naming another callsign is left alone.
+        assertEquals("BA7OPF", rows[blank]!!.myCallsign)
+        assertEquals("BH3HCF", rows[named]!!.myCallsign)
+        assertTrue(rows[blank]!!.wavelogUploaded)
+        assertEquals("3", rows[blank]!!.wavelogStation)
+        assertEquals(2, rows.size)
+        assertEquals(stableQsoKey(repository.find(blank)!!), rows[blank]!!.dedupeKey)
     }
 
     @Test
@@ -641,6 +667,10 @@ class QsoRepositoryUpstreamTest {
 
         override suspend fun delete(id: Long) {
             rows.remove(id)
+        }
+
+        override suspend fun deleteAll() {
+            rows.clear()
         }
 
         override suspend fun markUploaded(ids: List<Long>) {

@@ -99,7 +99,8 @@ fun LogbookCard(recordCount: Int, showLogbookDialog: () -> Unit) {
 fun LogbookDialog(
     records: List<QsoRecord>,
     satelliteCandidates: List<String>,
-    /** Blank draft the header's Create button opens (own callsign/grid come from the certificate). */
+    /** Blank draft the header's Create button opens (the own callsign/grid come from the
+     *  LoTW certificate and station location, else from the selected Wavelog station profile). */
     newRecord: () -> QsoRecord,
     /** Nominal frequencies handed to the edit dialog, which prefills a blank draft with them. */
     nominalFrequencies: suspend (String) -> NominalFrequencies? = { null },

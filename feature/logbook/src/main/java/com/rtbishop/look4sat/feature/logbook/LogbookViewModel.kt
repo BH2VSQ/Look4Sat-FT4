@@ -20,6 +20,8 @@ import com.rtbishop.look4sat.core.domain.logbook.QsoStatus
 import com.rtbishop.look4sat.core.domain.logbook.displayMode
 import com.rtbishop.look4sat.core.domain.logbook.frequencyBand
 import com.rtbishop.look4sat.core.domain.logbook.isSatellite
+import com.rtbishop.look4sat.core.domain.logbook.operatorCallsign
+import com.rtbishop.look4sat.core.domain.logbook.operatorGrids
 import com.rtbishop.look4sat.core.domain.model.LoTWSettings
 import com.rtbishop.look4sat.core.domain.model.WavelogUploadSettings
 import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
@@ -142,6 +144,19 @@ data class LogbookEditor(
 typealias LogbookFilter = com.rtbishop.look4sat.core.domain.logbook.LogbookFilter
 
 internal const val SATELLITE_MODE_FILTER = "__SATELLITE__"
+
+internal fun newLogbookEditor(
+    startUtcMillis: Long,
+    defaultCallsign: String,
+    defaultGrid: String,
+    certificateCallsign: String,
+    lotwStationGrid: String,
+    wavelogSettings: WavelogUploadSettings
+): LogbookEditor = LogbookEditor(
+    startUtcMillis = startUtcMillis,
+    myCallsign = operatorCallsign(certificateCallsign, wavelogSettings.stationCallsign).ifBlank { defaultCallsign },
+    myGrid = operatorGrids(lotwStationGrid, wavelogSettings.stationGrid).firstOrNull().orEmpty().ifBlank { defaultGrid }
+)
 
 enum class LogbookError {
     CALLSIGN_REQUIRED,
@@ -323,7 +338,7 @@ class LogbookViewModel(
             }
         }
         viewModelScope.launch {
-            settingsRepo.logbookSourceLock.collect { lock ->
+            settingsRepo.logbookSourceLockFlow.collect { lock ->
                 val resolved = lock ?: getExistingLogbookSourceLock(settingsRepo)
                 if (lock == null && resolved != null && settingsRepo.getLogbookSourceLock() == null) {
                     settingsRepo.updateLogbookSourceLock(resolved)
@@ -358,16 +373,7 @@ class LogbookViewModel(
 
     fun onAction(action: LogbookAction) {
         when (action) {
-            LogbookAction.Add -> mutableState.update {
-                it.copy(
-                    editor = LogbookEditor(
-                        startUtcMillis = nowMillis(),
-                        myCallsign = defaultCallsign(),
-                        myGrid = defaultGrid()
-                    ),
-                    error = null
-                )
-            }
+            LogbookAction.Add -> addEditor()
             is LogbookAction.Edit -> mutableState.update { it.copy(editor = action.record.toEditor(), error = null) }
             is LogbookAction.Update -> mutableState.update { it.copy(editor = action.editor) }
             LogbookAction.Save -> saveEditor()
@@ -786,6 +792,24 @@ class LogbookViewModel(
     override fun onCleared() {
         lotwUploadRepository.discardPreview()
         super.onCleared()
+    }
+
+    private fun addEditor() = viewModelScope.launch {
+        try {
+            val editor = newLogbookEditor(
+                startUtcMillis = nowMillis(),
+                defaultCallsign = defaultCallsign(),
+                defaultGrid = defaultGrid(),
+                certificateCallsign = lotwUploadRepository.certificate()?.callsign.orEmpty(),
+                lotwStationGrid = lotwUploadRepository.station()?.grid.orEmpty(),
+                wavelogSettings = settingsRepo.wavelogUploadSettings.value
+            )
+            mutableState.update { it.copy(editor = editor, error = null) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            mutableState.update { it.copy(error = LogbookError.SAVE) }
+        }
     }
 
     private fun saveEditor() = viewModelScope.launch {

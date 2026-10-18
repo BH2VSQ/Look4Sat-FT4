@@ -151,7 +151,7 @@ interface ISettingsRepo {
         get() = MutableStateFlow(LogbookSyncProvider.LOTW)
     fun updateLogbookSyncProvider(provider: LogbookSyncProvider) = Unit
     /** Source that has already been used to populate this logbook. Null means the logbook is unlocked. */
-    val logbookSourceLock: StateFlow<LogbookSyncProvider?>
+    val logbookSourceLockFlow: StateFlow<LogbookSyncProvider?>
         get() = MutableStateFlow(getLogbookSourceLock())
     fun getLogbookSourceLock(): LogbookSyncProvider? = null
     fun updateLogbookSourceLock(provider: LogbookSyncProvider?) = Unit

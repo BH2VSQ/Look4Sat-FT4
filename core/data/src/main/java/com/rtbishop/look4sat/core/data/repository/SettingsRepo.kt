@@ -428,7 +428,7 @@ class SettingsRepo(
 
     private val keyLogbookSourceLock = "logbookSourceLock"
     private val _logbookSourceLock = MutableStateFlow(getLogbookSourceLock())
-    override val logbookSourceLock: StateFlow<LogbookSyncProvider?> = _logbookSourceLock
+    override val logbookSourceLockFlow: StateFlow<LogbookSyncProvider?> = _logbookSourceLock
 
     override fun getLogbookSourceLock(): LogbookSyncProvider? = runCatching {
         preferences.getString(keyLogbookSourceLock, null)?.let(LogbookSyncProvider::valueOf)

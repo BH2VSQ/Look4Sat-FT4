@@ -639,7 +639,7 @@ class SettingsViewModel(
     ): String = try {
         val outcome = wavelogUploadRepository.upload(preview, settings)
         if (outcome is WavelogUploadOutcome.Imported && outcome.markIds.isNotEmpty()) {
-            qsoRepository.markWavelogUploaded(outcome.markIds, settings.stationId)
+            qsoRepository.markWavelogUploaded(outcome.markIds, settings.stationId, settings.stationCallsign)
         }
         wavelogConfirmedSegment(outcome, preview)
     } catch (_: Exception) {

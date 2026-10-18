@@ -120,10 +120,21 @@ class QsoRepository(
         changed
     }
 
-    override suspend fun markWavelogUploaded(ids: List<Long>, stationId: String) = withContext(dispatcher) {
-        if (ids.isEmpty()) return@withContext
-        importMutex.withLock { dao.markWavelogUploaded(ids, stationId) }
-    }
+    override suspend fun markWavelogUploaded(ids: List<Long>, stationId: String, stationCallsign: String) =
+        withContext(dispatcher) {
+            if (ids.isEmpty()) return@withContext
+            importMutex.withLock { dao.markWavelogUploaded(ids, stationId) }
+            // Same backfill as the LoTW side, from the other identity source: a Wavelog-only setup
+            // has no certificate, so records logged there carry no own callsign. The server has
+            // just imported them under the station profile's callsign — write that in, so the
+            // local row is the one a later sync pulls back (the dedupe key contains the own
+            // callsign; a blank one could never match the server's copy). Blanks only, and
+            // through save() so the stored key follows.
+            if (stationCallsign.isNotBlank()) {
+                ids.mapNotNull { id -> dao.find(id)?.toDomain()?.takeIf { it.myCallsign.isBlank() } }
+                    .forEach { save(it.copy(myCallsign = stationCallsign.trim().uppercase(Locale.US))) }
+            }
+        }
 
     override suspend fun exportAdi(ids: Set<Long>?, includeIncomplete: Boolean): String = withContext(dispatcher) {
         val records = dao.getAll()
