@@ -1,0 +1,80 @@
+name: VUCC preview APK
+
+on:
+  push:
+    branches:
+      - feature/vucc-multiselect-persistent-pr10
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install API 37
+        run: sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Domain tests and debug APK
+        run: ./gradlew :core:domain:test :app:assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: look4sat-vucc-pr12-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Prepare release signing if available
+        id: signing
+        env:
+          KEY_STORE_B64: ${{ secrets.KEY_STORE }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEY_STORE_B64" ] && [ -n "$RELEASE_STORE_PASSWORD" ] && [ -n "$RELEASE_KEY_ALIAS" ] && [ -n "$RELEASE_KEY_PASSWORD" ]; then
+            printf '%s' "$KEY_STORE_B64" | base64 -d > "$HOME/my-release-key.jks"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build same-signature release preview
+        if: steps.signing.outputs.available == 'true'
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Upload signed preview APK
+        if: steps.signing.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: look4sat-vucc-pr12-signed-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Remove preview keystore
+        if: always()
+        run: rm -f "$HOME/my-release-key.jks"
