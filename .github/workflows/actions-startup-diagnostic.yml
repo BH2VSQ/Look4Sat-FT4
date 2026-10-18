@@ -21,13 +21,28 @@ jobs:
 
       - name: Check Java and install Android SDK 37
         run: |
+          set -euo pipefail
           echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
           echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
           "$JAVA_HOME_21_X64/bin/java" -version
           echo "ANDROID_HOME=$ANDROID_HOME"
-          command -v sdkmanager
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-37" "build-tools;37.0.0"
+
+          # Hosted images may have command-line tools installed but not on PATH.
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' -print -quit 2>/dev/null || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "Command-line tools not present; installing Google's Linux CLI."
+            curl -fLsS --retry 3 "https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip" -o /tmp/android-cli.zip
+            echo "4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583  /tmp/android-cli.zip" | sha256sum -c -
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            unzip -q /tmp/android-cli.zip -d /tmp/android-cli-unpacked
+            mv /tmp/android-cli-unpacked/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          test -x "$SDKMANAGER"
+          echo "Using SDK manager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-37" "build-tools;37.0.0"
+          test -e "$ANDROID_HOME/platforms/android-37/android.jar"
 
       - name: Compile debug APK
         working-directory: source
