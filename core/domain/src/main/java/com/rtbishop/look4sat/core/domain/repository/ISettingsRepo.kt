@@ -116,6 +116,9 @@ interface ISettingsRepo {
     /** Distinct 4-char gridsquares the account operated from (LoTW <MY_GRIDSQUARE>). */
     fun getRoamedGrids(): Set<String>
     fun setRoamedGrids(grids: Set<String>)
+    /** VUCC map's operated-station selection; empty means All. Grid-set IDs are source-independent. */
+    fun getVuccSelectedStationIds(): Set<String>
+    fun setVuccSelectedStationIds(ids: Set<String>)
     /** Stations the user marked as "want to contact" in unworked gridsquares
      *  (grid -> ordered list of marks; the first is the pinned/top one). The
      *  whole grid clears automatically once it becomes worked. */

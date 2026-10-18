@@ -272,6 +272,30 @@ class SettingsRepo(
         preferences.edit { putString(keyRoamedGrids, array.toString()) }
     }
 
+    // VUCC operated-station selection. Store JSON because a station-set key can
+    // contain commas (e.g. "OL62,OL63"); splitting on commas would corrupt it.
+    // An unset or empty selection represents All on the first visit.
+    private val keyVuccSelectedStationIds = "vuccSelectedStationIds"
+
+    override fun getVuccSelectedStationIds(): Set<String> {
+        val json = preferences.getString(keyVuccSelectedStationIds, null).orEmpty()
+        if (json.isBlank()) return emptySet()
+        return try {
+            val array = org.json.JSONArray(json)
+            (0 until array.length()).mapNotNull { i ->
+                array.optString(i).trim().takeIf { it.isNotEmpty() }
+            }.toSet()
+        } catch (_: Exception) {
+            emptySet()
+        }
+    }
+
+    override fun setVuccSelectedStationIds(ids: Set<String>) {
+        val array = org.json.JSONArray()
+        ids.sorted().forEach { array.put(it) }
+        preferences.edit { putString(keyVuccSelectedStationIds, array.toString()) }
+    }
+
     // Marked stations in unworked gridsquares, persisted as a single JSON
     // object: {"OL62":[{"c":call,"t":epochMs}, ...]}. Each grid holds an
     // ordered list (first = pinned/top). v14.1 stored a single object per
