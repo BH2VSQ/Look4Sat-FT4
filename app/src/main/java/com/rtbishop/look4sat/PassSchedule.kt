@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -443,8 +444,14 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
         }
     }
     val showTrackingSettings = remember { mutableStateOf(false) }
-    val scheduleDays = remember(passes, isUtc, stationPosition) {
-        groupPassScheduleByDate(passes, isUtc, stationPosition)
+    // Completed passes drop off the list the moment LOS passes. The schedule is only
+    // recalculated on user changes, so filter against the ticking clock instead of
+    // recomputing predictions every second.
+    val visiblePasses by remember {
+        derivedStateOf { passes.filter { it.losTime > currentTime } }
+    }
+    val scheduleDays = remember(visiblePasses, isUtc, stationPosition) {
+        groupPassScheduleByDate(visiblePasses, isUtc, stationPosition)
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -651,7 +658,7 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
                         Text(stringResource(R.string.pass_schedule_range), style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            stringResource(R.string.pass_schedule_summary, config.satelliteIds.size, passes.size),
+                            stringResource(R.string.pass_schedule_summary, config.satelliteIds.size, visiblePasses.size),
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.padding(top = 6.dp)
                         )
@@ -671,7 +678,7 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
                             }
                         }
                     }
-                } else if (passes.isEmpty() && !isCalculating) {
+                } else if (visiblePasses.isEmpty() && !isCalculating) {
                     item {
                         Text(stringResource(R.string.pass_schedule_no_passes),
                             modifier = Modifier.fillMaxWidth().padding(24.dp),
