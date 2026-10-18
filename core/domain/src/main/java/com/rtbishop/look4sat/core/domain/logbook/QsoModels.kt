@@ -10,6 +10,7 @@
 package com.rtbishop.look4sat.core.domain.logbook
 
 import kotlinx.serialization.Serializable
+import java.util.Locale
 
 enum class QsoStatus { DRAFT, COMPLETE, ABORTED }
 
@@ -85,5 +86,26 @@ data class QsoRecord(
     val region: String = "",
     val comment: String = ""
 )
+
+/**
+ * Grid label for logbook presentation. LoTW reports multi-grid boundary QSOs
+ * in VUCC_GRIDS without GRIDSQUARE, so the display must use the complete grid
+ * set when it is available instead of relying on [theirGrid] alone.
+ */
+val QsoRecord.displayTheirGrid: String
+    get() {
+        // Some older records store the primary grid only in theirGrid and the
+        // remaining boundary grids in theirVuccGrids. Merge both fields before
+        // deciding whether to show one full locator or the complete 4-char set.
+        val grids = (listOf(theirGrid) + theirVuccGrids)
+            .map { it.trim().uppercase(Locale.US).take(4) }
+            .filter { it.matches(Regex("[A-R]{2}[0-9]{2}")) }
+            .distinct()
+        return when {
+            grids.size > 1 -> grids.joinToString(", ")
+            theirGrid.isNotBlank() -> theirGrid.trim()
+            else -> grids.firstOrNull().orEmpty()
+        }
+    }
 
 data class AdifImportResult(val imported: Int, val skipped: Int, val updated: Int = 0)

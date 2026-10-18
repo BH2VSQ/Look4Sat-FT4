@@ -35,8 +35,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -89,37 +90,44 @@ class PassesViewModel(
                 }
             }
         }
-        // Main tick loop: reacts to new passes, then ticks every second
+        // Rebuild the visible list whenever orbital passes change and on every clock tick.
+        // Combining the source StateFlow with an independent ticker avoids tying the
+        // LOS expiry refresh to the lifetime of a nested collectLatest loop.
         viewModelScope.launch {
-            satelliteRepo.passes.collectLatest { allPasses ->
-                while (isActive) {
-                    val timeNow = System.currentTimeMillis()
-                    val isUtc = _uiState.value.isUtc
-                    val showDeepSpace = _uiState.value.showDeepSpace
-                    // 历史过境窗口: 已结束的过境保留到超过 hoursBefore 小时后消失;
-                    // DeepSpace 保持原行为(始终显示). hoursBefore=0 时过境一结束即消失.
-                    val historyCutoff = timeNow - _uiState.value.hoursBefore * 3600_000L
-                    val filtered = allPasses
-                        .let { if (showDeepSpace) it else it.filter { pass -> !pass.isDeepSpace } }
-                        .filter { pass -> pass.isDeepSpace || pass.losTime >= historyCutoff }
-                    val processed = computePassProgress(filtered, timeNow)
-                    val (nextPass, nextTime, isAos) = resolveNextPass(processed, timeNow)
-                    val sunTimes = computeSunTimes(processed, isUtc)
-                    val grouped = groupPasses(processed, isUtc)
-                    _uiState.update {
-                        it.copy(
-                            itemsList = processed,
-                            groupedPasses = grouped,
-                            sunTimes = sunTimes,
-                            nextPass = nextPass,
-                            nextTime = nextTime,
-                            isNextTimeAos = isAos,
-                            focusedCatNum = it.focusedCatNum?.takeIf { catNum ->
-                                processed.any { pass -> pass.catNum == catNum }
-                            }
-                        )
-                    }
-                    delay(1000)
+            val clockTicks = flow {
+                while (true) {
+                    emit(System.currentTimeMillis())
+                    delay(1_000L)
+                }
+            }
+            combine(satelliteRepo.passes, clockTicks) { allPasses, timeNow ->
+                allPasses to timeNow
+            }.collect { (allPasses, timeNow) ->
+                val current = _uiState.value
+                val isUtc = current.isUtc
+                val showDeepSpace = current.showDeepSpace
+                // Keep past passes only for the configured history window. With
+                // hoursBefore=0, a pass disappears automatically as soon as LOS passes.
+                val historyCutoff = timeNow - current.hoursBefore * 3_600_000L
+                val filtered = allPasses
+                    .let { if (showDeepSpace) it else it.filter { pass -> !pass.isDeepSpace } }
+                    .filter { pass -> pass.isDeepSpace || pass.losTime >= historyCutoff }
+                val processed = computePassProgress(filtered, timeNow)
+                val (nextPass, nextTime, isAos) = resolveNextPass(processed, timeNow)
+                val sunTimes = computeSunTimes(processed, isUtc)
+                val grouped = groupPasses(processed, isUtc)
+                _uiState.update {
+                    it.copy(
+                        itemsList = processed,
+                        groupedPasses = grouped,
+                        sunTimes = sunTimes,
+                        nextPass = nextPass,
+                        nextTime = nextTime,
+                        isNextTimeAos = isAos,
+                        focusedCatNum = it.focusedCatNum?.takeIf { catNum ->
+                            processed.any { pass -> pass.catNum == catNum }
+                        }
+                    )
                 }
             }
         }

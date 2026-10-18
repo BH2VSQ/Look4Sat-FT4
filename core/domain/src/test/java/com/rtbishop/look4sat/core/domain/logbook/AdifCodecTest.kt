@@ -180,6 +180,26 @@ class AdifCodecTest {
     }
 
     @Test
+    fun decodeLoTWMultiGridOnlyRecordKeepsPrimaryGridAndDisplaysFullSet() {
+        val adi = """
+            <EOH>
+            <CALL:8>BA8AFK/9
+            <QSO_DATE:8>20261014
+            <TIME_ON:6>093051
+            <PROP_MODE:3>SAT
+            <SAT_NAME:5>RS-44
+            <VUCC_GRIDS:13>NM84XO,NM94AO
+            <LOTW_QSL_RCVD:1>Y
+            <EOR>
+        """.trimIndent()
+
+        val record = AdifCodec.decode(adi).single()
+        assertEquals("NM84", record.theirGrid)
+        assertEquals(listOf("NM84", "NM94"), record.theirVuccGrids)
+        assertEquals("NM84, NM94", record.displayTheirGrid)
+    }
+
+    @Test
     fun decodeNormalizesPrimaryAndMultiGridFieldsIntoCompleteVuccSets() {
         val adi = """
             <EOH>
@@ -201,6 +221,21 @@ class AdifCodecTest {
     }
 
     @Test
+    fun displayTheirGridCombinesLegacyPrimaryWithAdditionalVuccGrids() {
+        // Older records may have the first grid in theirGrid and only additional
+        // grids in theirVuccGrids. The logbook must still show the complete set.
+        val record = QsoRecord(
+            startUtcMillis = 1_760_000_000_000L,
+            theirCallsign = "BA8AFK/9",
+            myCallsign = "BH2VSQ",
+            theirGrid = "NM84",
+            theirVuccGrids = listOf("NM94")
+        )
+
+        assertEquals("NM84, NM94", record.displayTheirGrid)
+    }
+
+    @Test
     fun decodeWavelogPullStyleRecordKeepsGridDirections() {
         // Wavelog's export: the OPPOSITE station's grids un-prefixed, the station
         // profile's grid under MY_*. A pull must not flip them into each other.
@@ -208,7 +243,9 @@ class AdifCodecTest {
             "<VUCC_GRIDS:9>EN52,EN53<MY_GRIDSQUARE:6>OL62TI<MY_VUCC_GRIDS:9>OL62,OL61" +
             "<MODE:2>FM<PROP_MODE:3>SAT<SAT_NAME:5>SO-50<EOR>"
         val record = AdifCodec.decode(adi).single()
+        assertEquals("EN52", record.theirGrid)
         assertEquals(listOf("EN52", "EN53"), record.theirVuccGrids)
+        assertEquals("EN52, EN53", record.displayTheirGrid)
         assertEquals("OL62TI", record.myGrid)
         assertEquals(listOf("OL62", "OL61"), record.vuccGrids)
     }
