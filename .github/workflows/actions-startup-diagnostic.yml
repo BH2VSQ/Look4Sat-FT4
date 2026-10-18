@@ -1,0 +1,14 @@
+name: Actions startup diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify runner startup
+        run: echo "GitHub Actions runner started successfully"
