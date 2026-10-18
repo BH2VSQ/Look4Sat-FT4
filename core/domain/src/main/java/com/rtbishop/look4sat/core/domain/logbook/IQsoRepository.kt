@@ -35,8 +35,12 @@ interface IQsoRepository {
      * Marks the batch as uploaded to Wavelog (independent of the LoTW upload state) and
      * stamps the station profile (台址) the batch went out through, so the logbook's
      * 台址 selector can group the records. An empty [stationId] leaves the stamp as-is.
+     *
+     * [stationCallsign] is the station profile's own callsign. It fills the own callsign of
+     * records that have none — a Wavelog-only setup has no certificate to take it from — so the
+     * local row matches the copy the server now holds. Non-blank callsigns are never touched.
      */
-    suspend fun markWavelogUploaded(ids: List<Long>, stationId: String = "")
+    suspend fun markWavelogUploaded(ids: List<Long>, stationId: String = "", stationCallsign: String = "")
 
     suspend fun exportAdi(ids: Set<Long>? = null, includeIncomplete: Boolean = false): String
     suspend fun importAdi(content: String): AdifImportResult

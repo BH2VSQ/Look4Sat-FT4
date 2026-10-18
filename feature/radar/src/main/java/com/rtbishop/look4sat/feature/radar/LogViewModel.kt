@@ -20,6 +20,8 @@ import com.rtbishop.look4sat.core.domain.logbook.displayMode
 import com.rtbishop.look4sat.core.domain.logbook.frequencyBand
 import com.rtbishop.look4sat.core.domain.logbook.needsPreviewForConflicts
 import com.rtbishop.look4sat.core.domain.logbook.officialSatelliteName
+import com.rtbishop.look4sat.core.domain.logbook.operatorCallsign
+import com.rtbishop.look4sat.core.domain.logbook.operatorGrids
 import com.rtbishop.look4sat.core.domain.logbook.satelliteIdentity
 import com.rtbishop.look4sat.core.domain.logbook.unavailableUploadSummary
 import com.rtbishop.look4sat.core.domain.logbook.wavelogConfirmedSegment
@@ -72,7 +74,11 @@ data class LogUiState(
     val selectedMode: String = "",
     /** Station callsign from the imported LoTW certificate ("" when none). */
     val certificateCallsign: String = "",
-    /** Primary grid of the LoTW upload station location ("" when none). */
+    /** Callsign of the selected Wavelog station profile ("" when none). The own-callsign
+     *  fallback for a Wavelog-only setup, which has no certificate to take it from. */
+    val wavelogCallsign: String = "",
+    /** Grids a record is logged under: the LoTW station location's, else the selected
+     *  Wavelog station profile's (several gridsquares arrive comma-separated). */
     val stationGrid: String = "",
     /** ARRL satellite names (config.tq6) — the only names a record may be signed with. */
     val satelliteCatalog: List<String> = emptyList(),
@@ -93,7 +99,11 @@ data class LogUiState(
     val wavelogPreview: WavelogUploadPreview? = null,
     /** Out-of-window contact waiting for the operator's confirmation (null when closed). */
     val outOfWindowLog: OutOfWindowLog? = null
-)
+) {
+    /** Own callsign written into a new record: the certificate's, else the Wavelog
+     *  station profile's (a Wavelog-only setup installs no certificate). */
+    val ownCallsign: String get() = operatorCallsign(certificateCallsign, wavelogCallsign)
+}
 
 class LogViewModel(
     private val qsoRepository: IQsoRepository,
@@ -116,21 +126,25 @@ class LogViewModel(
     init {
         viewModelScope.launch {
             val cert = lotwUploadRepository.certificate()
-            val station = lotwUploadRepository.station()
             val catalog = runCatching { lotwUploadRepository.satelliteCatalog() }.getOrDefault(emptyList())
             _uiState.update {
-                it.copy(
-                    certificateCallsign = cert?.callsign.orEmpty(),
-                    stationGrid = station?.grid.orEmpty(),
-                    satelliteCatalog = catalog
-                )
+                it.copy(certificateCallsign = cert?.callsign.orEmpty(), satelliteCatalog = catalog)
             }
+            // Station grids and the roaming hint come from the LoTW station location, with the
+            // selected Wavelog station profile as the fallback (a Wavelog-only setup has no
+            // station location at all).
+            refreshPositionHintNow()
         }
         // Upload routing follows the Wavelog configuration: once it is ready the log
         // page uploads through Wavelog and skips LoTW entirely (the one-of-two rule).
         viewModelScope.launch {
             settingsRepo.wavelogUploadSettings.collect { settings ->
-                _uiState.update { it.copy(wavelogMode = settings.isReady) }
+                _uiState.update {
+                    it.copy(wavelogMode = settings.isReady, wavelogCallsign = settings.stationCallsign)
+                }
+                // A station profile picked (or cleared) while the page is open changes the own
+                // callsign and the grids a record would be logged under.
+                refreshPositionHintNow()
             }
         }
         // The roaming hint tracks the freshest position data: refresh on init and every fix.
@@ -212,7 +226,7 @@ class LogViewModel(
             startUtcMillis = timeMillis,
             endUtcMillis = timeMillis,
             theirCallsign = call,
-            myCallsign = _uiState.value.certificateCallsign,
+            myCallsign = _uiState.value.ownCallsign,
             myGrid = myGrid.take(6).uppercase(Locale.US),
             txFrequencyHz = tx,
             rxFrequencyHz = rx,
@@ -262,7 +276,7 @@ class LogViewModel(
                 .joinToString("\n")
             val currentGrid = settingsRepo.stationPosition.value.qthLocator.take(6)
             val logLine = "📍 Log: ${_uiState.value.stationGrid.take(4)} | Current: $currentGrid"
-            val viaLine = "via Look4Sat-BA7OPF — TNX de ${_uiState.value.certificateCallsign}"
+            val viaLine = "via Look4Sat-BA7OPF — TNX de ${_uiState.value.ownCallsign}"
             val tag = "#HamRadio #SatelliteQSO #" + shortName.filter { it.isLetterOrDigit() }
             val text = listOf(firstLine, elLine, modeLines, "", logLine, viaLine, tag).joinToString("\n")
             _uiState.update { it.copy(postText = text) }
@@ -413,7 +427,7 @@ class LogViewModel(
     ): String = try {
         val outcome = wavelogUploadRepository.upload(preview, settings)
         if (outcome is WavelogUploadOutcome.Imported && outcome.markIds.isNotEmpty()) {
-            qsoRepository.markWavelogUploaded(outcome.markIds, settings.stationId)
+            qsoRepository.markWavelogUploaded(outcome.markIds, settings.stationId, settings.stationCallsign)
         }
         wavelogConfirmedSegment(outcome, preview)
     } catch (_: Exception) {
@@ -435,15 +449,13 @@ class LogViewModel(
 
     private suspend fun refreshPositionHintNow() {
         val station = runCatching { lotwUploadRepository.station() }.getOrNull()
-        if (station == null) {
-            _uiState.update { it.copy(stationMismatch = null) }
-            return
-        }
-        val grids = station.grid.split(',').map(String::trim).filter(String::isNotBlank)
+        // The station location first; a Wavelog-only setup has none, so its records are logged —
+        // and its roaming hint measured — against the selected Wavelog station profile's grids.
+        val grids = operatorGrids(station?.grid.orEmpty(), settingsRepo.wavelogUploadSettings.value.stationGrid)
         _uiState.update {
             it.copy(
                 stationMismatch = positionWarning(settingsRepo.getCurrentGrid(), grids),
-                stationGrid = station.grid
+                stationGrid = grids.joinToString(",")
             )
         }
     }

@@ -338,6 +338,24 @@ class QsoRepositoryTest {
     }
 
     @Test
+    fun markWavelogUploaded_fillsBlankCallsignsFromTheStationProfile() = runBlocking {
+        val blank = dao.save(loggedInApp("SO-50", lotwUploaded = false).copy(myCallsign = "").toEntity())
+        val named = dao.save(loggedInApp("SO-50", lotwUploaded = false).copy(myCallsign = "BH3HCF").toEntity())
+
+        repository.markWavelogUploaded(listOf(blank, named), "3", "ba7opf")
+
+        val rows = dao.getAll().associateBy { it.id }
+        // A Wavelog-only setup has no certificate, so records logged there carry no own callsign.
+        // The server imported them under the station profile's callsign — the local rows follow,
+        // or a later sync would pull the same contact back as a second row (the dedupe key
+        // contains the own callsign). A row naming another callsign is left alone.
+        assertEquals("BA7OPF", rows[blank]!!.myCallsign)
+        assertEquals("BH3HCF", rows[named]!!.myCallsign)
+        assertTrue(rows[blank]!!.wavelogUploaded)
+        assertEquals("3", rows[blank]!!.wavelogStation)
+    }
+
+    @Test
     fun save_editingAWavelogUploadedRecordCreatesANewRecord() = runBlocking {
         val id = dao.save(loggedInApp("SO-50", lotwUploaded = false).copy(wavelogUploaded = true).toEntity())
 

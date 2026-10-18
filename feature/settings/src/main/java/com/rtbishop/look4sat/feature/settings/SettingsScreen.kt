@@ -69,6 +69,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
 import com.rtbishop.look4sat.core.domain.logbook.QsoStatus
+import com.rtbishop.look4sat.core.domain.logbook.operatorCallsign
+import com.rtbishop.look4sat.core.domain.logbook.operatorGrids
 import com.rtbishop.look4sat.core.domain.model.DataSourcesSettings
 import com.rtbishop.look4sat.core.domain.model.NominalFrequencies
 import com.rtbishop.look4sat.core.domain.model.OtherSettings
@@ -298,17 +300,23 @@ private fun SettingsScreen(
             records = uiState.logbookRecords.filter { stationFilter == null || it.wavelogStation == stationFilter },
             satelliteCandidates = uiState.satelliteCatalog,
             newRecord = {
-                // Blank draft: minute-truncated "now" (the radar Log tab's granularity), the
-                // certificate's callsign and the station location's first grid, so the record
-                // is uploadable as it stands.
+                // Blank draft: minute-truncated "now" (the radar Log tab's granularity), the own
+                // callsign and the station's first grid, so the record is uploadable as it stands.
+                // Certificate / LoTW station location first, the selected Wavelog station profile
+                // as the fallback — a Wavelog-only setup has neither of the LoTW pair.
                 val now = System.currentTimeMillis() / 60_000L * 60_000L
                 QsoRecord(
                     startUtcMillis = now,
                     endUtcMillis = now,
                     theirCallsign = "",
-                    myCallsign = uiState.lotwCertificate?.callsign.orEmpty(),
-                    myGrid = uiState.lotwStation?.grid?.substringBefore(',')?.trim()
-                        ?.uppercase(Locale.US).orEmpty(),
+                    myCallsign = operatorCallsign(
+                        uiState.lotwCertificate?.callsign.orEmpty(),
+                        uiState.wavelogUploadSettings.stationCallsign
+                    ),
+                    myGrid = operatorGrids(
+                        uiState.lotwStation?.grid.orEmpty(),
+                        uiState.wavelogUploadSettings.stationGrid
+                    ).firstOrNull().orEmpty(),
                     status = QsoStatus.COMPLETE
                 )
             },
