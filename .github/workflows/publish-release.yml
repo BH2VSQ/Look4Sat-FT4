@@ -1,0 +1,173 @@
+name: Publish Look4Sat release
+
+# Builds the signed release APK for the version gradle/libs.versions.toml declares on the chosen
+# branch, then either
+#   mode=test    -> publishes it as a prerelease (tag test-<version>-<sha8>). Prereleases are
+#                   skipped by /releases/latest, so a test package can never be offered to users
+#                   as an in-app update, or
+#   mode=release -> publishes the official Release: tag v<version>, asset Look4Sat-<version>.apk
+#                   (the name the in-app updater guesses), marked latest.
+#
+# Deliberately hand-triggered and version-agnostic: publishing is never a side effect of a
+# version bump, and the version is read from the catalog, so this file needs no edit per release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test = prerelease test package, release = official Release"
+        type: choice
+        options:
+          - test
+          - release
+        default: test
+      notes:
+        description: "Release notes (mode=release only; empty = generated default)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout the exact commit of the chosen branch
+        run: |
+          git clone --depth 1 --branch "$GITHUB_REF_NAME" --single-branch https://github.com/atsunatsu/Look4Sat.git source
+          test "$(git -C source rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Read the version from the version catalog
+        id: version
+        working-directory: source
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -nE 's/^appVersionName *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
+          CODE="$(sed -nE 's/^appVersionCode *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
+          test -n "$VERSION"
+          test -n "$CODE"
+          {
+            echo "version=$VERSION"
+            echo "code=$CODE"
+            echo "tag=v$VERSION"
+            echo "asset=Look4Sat-$VERSION.apk"
+            echo "short_sha=$(git rev-parse --short=8 HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "version: $VERSION (versionCode $CODE)"
+
+      - name: Configure Java and Android SDK
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
+          "$JAVA_HOME_21_X64/bin/java" -version
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-37.0" "build-tools;37.0.0"
+          test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          # AGP 9.4.1's default NDK. Without it AGP cannot strip the packaged .so files and ships
+          # them with debug symbols (~2.2 MB larger than the same sources built with the NDK).
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "ndk;28.2.13676358"
+          test -d "$ANDROID_HOME/ndk/28.2.13676358"
+
+      - name: Build the signed release APK
+        working-directory: source
+        env:
+          KEY_STORE_B64: ${{ secrets.KEY_STORE }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in "$KEY_STORE_B64" "$RELEASE_STORE_PASSWORD" "$RELEASE_KEY_ALIAS" "$RELEASE_KEY_PASSWORD"; do
+            if [ -z "$value" ]; then
+              echo "::error::Repository release signing secrets are missing; cannot build a compatible release."
+              exit 1
+            fi
+          done
+          printf '%s' "$KEY_STORE_B64" | base64 -d > "$HOME/my-release-key.jks"
+          chmod 600 "$HOME/my-release-key.jks"
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleRelease --stacktrace
+          test -f app/build/outputs/apk/release/app-release.apk
+          rm -f "$HOME/my-release-key.jks"
+
+      - name: Check the APK version and signing certificate
+        working-directory: source
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
+          SIGNER="$BUILD_TOOLS/apksigner"
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -x "$SIGNER"
+          "$SIGNER" verify --verbose "$APK"
+          # The fork's release key: an APK signed with anything else cannot be installed over an
+          # existing installation, so this must fail here rather than ship.
+          EXPECTED_CERT="25c064681f79a8ecbc2138fcef3438e7cb5f7bee7087c5fcbc01dca5a3fb6c3a"
+          # build-tools 37 renamed this label ("Signer #1 ..." -> "V2 Signer: ..."): match the
+          # stable tail of the line, not the prefix.
+          CERT="$("$SIGNER" verify --print-certs "$APK" | grep -i 'certificate SHA-256 digest:' \
+            | head -n 1 | sed -E 's/^.*certificate SHA-256 digest: *//' | tr -d '\r' || true)"
+          echo "apk cert: $CERT"
+          echo "expected: $EXPECTED_CERT"
+          if [ "$CERT" != "$EXPECTED_CERT" ]; then
+            echo "::error::Signing certificate does not match the fork release key."
+            exit 1
+          fi
+          BADGING="$("$BUILD_TOOLS/aapt2" dump badging "$APK")"
+          echo "$BADGING" | grep -E "^package:|^native-code:"
+          echo "$BADGING" | grep -q "versionName='${{ steps.version.outputs.version }}'" \
+            || { echo "::error::APK versionName does not match the version catalog."; exit 1; }
+          echo "apk bytes: $(stat -c%s "$APK")"
+
+      - name: Publish as a prerelease test package
+        if: ${{ inputs.mode != 'release' }}
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET: ${{ steps.version.outputs.asset }}
+          SHORT_SHA: ${{ steps.version.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          TAG="test-${VERSION}-${SHORT_SHA}"
+          cp app/build/outputs/apk/release/app-release.apk "$ASSET"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+          else
+            gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --prerelease \
+              --title "TEST ONLY - Look4Sat $VERSION ($SHORT_SHA)" \
+              --notes "Test package built from $VERSION. Prerelease on purpose: the in-app update check ignores prereleases, so it can never be offered to users as an update. Signed with the fork release key."
+          fi
+          echo "Published prerelease $TAG"
+
+      - name: Publish the official Release
+        if: ${{ inputs.mode == 'release' }}
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CODE: ${{ steps.version.outputs.code }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ASSET: ${{ steps.version.outputs.asset }}
+          NOTES_IN: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists; refusing to replace a published APK."
+            exit 1
+          fi
+          # The asset must carry the versioned name: the in-app updater guesses
+          # Look4Sat-<tag without v>.apk, and gh's `file#label` only sets a display label,
+          # never the asset name.
+          cp app/build/outputs/apk/release/app-release.apk "$ASSET"
+          NOTES="$NOTES_IN"
+          if [ -z "$NOTES" ]; then
+            NOTES="Look4Sat $VERSION (versionCode $CODE). Signed with the fork release key; installs over the previous release."
+          fi
+          gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "Look4Sat $TAG" \
+            --latest --notes "$NOTES"
+          echo "Published release $TAG"
