@@ -38,6 +38,11 @@ jobs:
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-37.0" "build-tools;37.0.0"
           test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
+          # AGP 9.4.1's default NDK. Without it AGP cannot strip the packaged .so files and
+          # ships them with debug symbols, making the release APK ~2.2 MB larger than the
+          # same sources built on a machine that has the NDK.
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "ndk;28.2.13676358"
+          test -d "$ANDROID_HOME/ndk/28.2.13676358"
 
       - name: Build signed release APK with repository signing key
         working-directory: source
@@ -104,7 +109,13 @@ jobs:
             echo "::error::Release $TAG already exists; refusing to replace an existing published APK."
             exit 1
           fi
-          gh release create "$TAG" "app/build/outputs/apk/release/app-release.apk#Look4Sat-4.4.8-ba7opf.13.1.apk" \
+          APK="app/build/outputs/apk/release/app-release.apk"
+          OUT="Look4Sat-4.4.8-ba7opf.13.1.apk"
+          # gh's `file#label` only sets the asset's display label - the asset keeps the file's
+          # own name. The in-app updater guesses Look4Sat-<tag without v>.apk, so the file must
+          # be renamed before it is uploaded.
+          cp "$APK" "$OUT"
+          gh release create "$TAG" "$OUT" \
             --target "$GITHUB_SHA" \
             --title "Look4Sat v4.4.8-ba7opf.13.1" \
             --latest \
