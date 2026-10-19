@@ -264,6 +264,9 @@ class LoTWGridSyncTest {
         override fun setWorkedGridQsos(qsos: Map<String, List<GridQso>>) { workedGridQsos = qsos }
         override fun getRoamedGrids(): Set<String> = roamedGrids
         override fun setRoamedGrids(grids: Set<String>) { roamedGrids = grids }
+        private var vuccSelectedStationIds: Set<String> = emptySet()
+        override fun getVuccSelectedStationIds(): Set<String> = vuccSelectedStationIds
+        override fun setVuccSelectedStationIds(ids: Set<String>) { vuccSelectedStationIds = ids }
         private var markedGridStations: Map<String, List<MarkedStation>> = emptyMap()
         override fun getMarkedGridStations(): Map<String, List<MarkedStation>> = markedGridStations
         override fun setMarkedGridStations(stations: Map<String, List<MarkedStation>>) { markedGridStations = stations }

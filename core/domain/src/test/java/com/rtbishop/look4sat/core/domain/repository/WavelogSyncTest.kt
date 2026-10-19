@@ -338,6 +338,8 @@ class WavelogSyncTest {
         override fun setWorkedGridQsos(qsos: Map<String, List<GridQso>>) { workedGridQsos = qsos }
         override fun getRoamedGrids(): Set<String> = roamedGrids
         override fun setRoamedGrids(grids: Set<String>) { roamedGrids = grids }
+        override fun getVuccSelectedStationIds(): Set<String> = emptySet()
+        override fun setVuccSelectedStationIds(ids: Set<String>) = Unit
         override fun getWavelogSyncCursors(): Map<String, Long> = cursors
         override fun setWavelogSyncCursors(cursors: Map<String, Long>) { this.cursors = cursors }
         override fun getWavelogSyncUrl(): String = syncUrl
