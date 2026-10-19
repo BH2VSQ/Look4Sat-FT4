@@ -71,10 +71,22 @@ jobs:
           "$SIGNER" verify --verbose "$APK"
           OLD_APK="/tmp/previous-look4sat-v13.apk"
           curl -fL --retry 3 --retry-delay 2 "https://github.com/atsunatsu/Look4Sat/releases/download/v4.4.8-ba7opf.13/Look4Sat-4.4.8-ba7opf.13.apk" -o "$OLD_APK"
-          NEW_CERT="$("$SIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
-          OLD_CERT="$("$SIGNER" verify --print-certs "$OLD_APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
-          test -n "$NEW_CERT"
-          test -n "$OLD_CERT"
+          # build-tools 37 renamed the printed label ("Signer #1 certificate …" -> "V2 Signer:
+          # certificate …"), which silently emptied the old extraction below and failed this step
+          # with a bare exit 1. Match the stable tail of the line instead, and log both digests.
+          apk_cert() {
+            "$SIGNER" verify --print-certs "$1" \
+              | grep -i 'certificate SHA-256 digest:' | head -n 1 \
+              | sed -E 's/^.*certificate SHA-256 digest: *//' | tr -d '\r' || true
+          }
+          NEW_CERT="$(apk_cert "$APK")"
+          OLD_CERT="$(apk_cert "$OLD_APK")"
+          echo "new cert: $NEW_CERT"
+          echo "old cert: $OLD_CERT"
+          if [ -z "$NEW_CERT" ] || [ -z "$OLD_CERT" ]; then
+            echo "::error::Could not read a signing certificate digest - apksigner output changed again?"
+            exit 1
+          fi
           if [ "$NEW_CERT" != "$OLD_CERT" ]; then
             echo "::error::Release signing certificate differs from v13. Aborting to protect upgrades."
             exit 1
