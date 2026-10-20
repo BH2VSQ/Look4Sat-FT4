@@ -1,26 +1,27 @@
 name: Publish Look4Sat release
 
-# Builds the signed release APK for the version gradle/libs.versions.toml declares on the chosen
-# branch, then either
-#   mode=test    -> publishes it as a prerelease (tag test-<version>-<sha8>). Prereleases are
-#                   skipped by /releases/latest, so a test package can never be offered to users
-#                   as an in-app update, or
-#   mode=release -> publishes the official Release: tag v<version>, asset Look4Sat-<version>.apk
-#                   (the name the in-app updater guesses), marked latest.
+# Manually build a signed release-variant APK from the selected commit:
+#   mode=artifact -> upload an Actions artifact only (no tag, prerelease, or Release).
+#   mode=test     -> publish a test prerelease, hidden from /releases/latest.
+#   mode=release  -> publish the official GitHub Release (v<version>).
 #
-# Deliberately hand-triggered and version-agnostic: publishing is never a side effect of a
-# version bump, and the version is read from the catalog, so this file needs no edit per release.
+# Every new workflow run uses versionCode=1000+github.run_number, so test builds and
+# official releases can be installed in sequence. Test APKs add ".test.<run_number>"
+# to versionName; official release tags and versionName still use the version catalog.
+# Changes to the version catalog happen only in the runner's checkout, NOT in Git.
+# Local Gradle builds keep using the catalog unchanged. Runs are manual only.
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "test = prerelease test package, release = official Release"
+        description: "artifact = Actions download only, test = prerelease, release = official Release"
         type: choice
         options:
+          - artifact
           - test
           - release
-        default: test
+        default: artifact
       notes:
         description: "Release notes (mode=release only; empty = generated default)"
         type: string
@@ -40,23 +41,42 @@ jobs:
           git clone --depth 1 --branch "$GITHUB_REF_NAME" --single-branch https://github.com/atsunatsu/Look4Sat.git source
           test "$(git -C source rev-parse HEAD)" = "$GITHUB_SHA"
 
-      - name: Read the version from the version catalog
+      - name: Stamp the CI APK version (runner only, no Git changes)
         id: version
         working-directory: source
+        env:
+          BUILD_RUN_NUMBER: ${{ github.run_number }}
+          BUILD_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           VERSION="$(sed -nE 's/^appVersionName *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
-          CODE="$(sed -nE 's/^appVersionCode *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
+          SOURCE_CODE="$(sed -nE 's/^appVersionCode *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
           test -n "$VERSION"
-          test -n "$CODE"
+          [[ "$SOURCE_CODE" =~ ^[0-9]+$ ]]
+          [[ "$BUILD_RUN_NUMBER" =~ ^[0-9]+$ ]]
+          CODE=$((1000 + BUILD_RUN_NUMBER))
+          if (( CODE <= SOURCE_CODE || CODE > 2100000000 )); then
+            echo "::error::Generated versionCode $CODE must exceed catalog code $SOURCE_CODE and fit Android's limit."
+            exit 1
+          fi
+          APK_VERSION="$VERSION"
+          if [ "$BUILD_MODE" != "release" ]; then
+            APK_VERSION="${VERSION}.test.${BUILD_RUN_NUMBER}"
+          fi
+          # Replace only in this ephemeral CI checkout. Local Gradle keeps the catalog values.
+          sed -i -E "s/^appVersionCode *= *\"[^\"]*\"/appVersionCode = \"${CODE}\"/" gradle/libs.versions.toml
+          sed -i -E "s/^appVersionName *= *\"[^\"]*\"/appVersionName = \"${APK_VERSION}\"/" gradle/libs.versions.toml
+          test "$(sed -nE 's/^appVersionCode *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)" = "$CODE"
+          test "$(sed -nE 's/^appVersionName *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)" = "$APK_VERSION"
           {
             echo "version=$VERSION"
+            echo "apk_version=$APK_VERSION"
             echo "code=$CODE"
             echo "tag=v$VERSION"
             echo "asset=Look4Sat-$VERSION.apk"
             echo "short_sha=$(git rev-parse --short=8 HEAD)"
           } >> "$GITHUB_OUTPUT"
-          echo "version: $VERSION (versionCode $CODE)"
+          echo "APK version: $APK_VERSION (versionCode $CODE; catalog versionCode $SOURCE_CODE)"
 
       - name: Configure Java and Android SDK
         run: |
@@ -72,6 +92,9 @@ jobs:
           # them with debug symbols (~2.2 MB larger than the same sources built with the NDK).
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "ndk;28.2.13676358"
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
+
+      - name: Enable Gradle dependency caching
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests before official Release
         if: ${{ inputs.mode == 'release' }}
@@ -127,12 +150,23 @@ jobs:
           fi
           BADGING="$("$BUILD_TOOLS/aapt2" dump badging "$APK")"
           echo "$BADGING" | grep -E "^package:|^native-code:"
-          echo "$BADGING" | grep -q "versionName='${{ steps.version.outputs.version }}'" \
-            || { echo "::error::APK versionName does not match the version catalog."; exit 1; }
+          echo "$BADGING" | grep -Fq "versionName='${{ steps.version.outputs.apk_version }}'" \
+            || { echo "::error::APK versionName does not match the CI-stamped version."; exit 1; }
+          echo "$BADGING" | grep -Fq "versionCode='${{ steps.version.outputs.code }}'" \
+            || { echo "::error::APK versionCode does not match the CI-stamped version."; exit 1; }
           echo "apk bytes: $(stat -c%s "$APK")"
 
+      - name: Upload test APK without publishing any Release
+        if: ${{ inputs.mode == 'artifact' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Look4Sat-test-${{ steps.version.outputs.code }}-${{ steps.version.outputs.short_sha }}
+          path: source/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Publish as a prerelease test package
-        if: ${{ inputs.mode != 'release' }}
+        if: ${{ inputs.mode == 'test' }}
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
