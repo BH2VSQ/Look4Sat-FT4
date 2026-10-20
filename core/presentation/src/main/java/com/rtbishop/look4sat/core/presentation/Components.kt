@@ -378,8 +378,6 @@ fun SharedDialog(
     acceptEnabled: Boolean = true,
     /** Label of the leading button; [R.string.btn_cancel] when null. */
     cancelText: String? = null,
-    /** Disable the cancel button during an operation without altering existing dialogs. */
-    cancelEnabled: Boolean = true,
     /** Optional second leading button, drawn next to the leading one (logbook's Query). */
     extraText: String? = null,
     onExtra: (() -> Unit)? = null,
@@ -399,7 +397,7 @@ fun SharedDialog(
                 .padding(start = padding, top = padding, end = padding)
         ) {
             if (onCancel != null) {
-                CardButton(onClick = onCancel, text = cancelText ?: stringResource(R.string.btn_cancel), isEnabled = cancelEnabled)
+                CardButton(onClick = onCancel, text = cancelText ?: stringResource(R.string.btn_cancel))
             }
             if (onExtra != null) {
                 Spacer(modifier = Modifier.width(4.dp))
