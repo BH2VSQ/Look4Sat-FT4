@@ -47,11 +47,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
@@ -417,48 +415,18 @@ private fun RadarScreen(
         }
     }
     if (showMatchDialog) {
-        AlertDialog(
+        // Use the app's shared bottom-sheet layout and header actions.
+        SharedDialog(
+            title = stringResource(R.string.radar_match_title),
             onDismissRequest = { if (!matchLoading) showMatchDialog = false },
-            title = { Text(stringResource(R.string.radar_match_title)) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = matchGrid,
-                        onValueChange = {
-                            matchGrid = it.uppercase()
-                            matchError = null
-                        },
-                        label = { Text(stringResource(R.string.radar_match_grid_label)) },
-                        placeholder = { Text(stringResource(R.string.radar_match_grid_hint)) },
-                        singleLine = true,
-                        isError = matchError != null,
-                        supportingText = {
-                            if (matchError != null) {
-                                Text(matchError!!, color = MaterialTheme.colorScheme.error)
-                            }
-                        },
-                        enabled = !matchLoading
-                    )
-                    if (matchLoading) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Text(stringResource(R.string.radar_match_searching))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !matchLoading,
-                    onClick = {
-                        val normalized = matchGrid.trim().uppercase()
-                        if (qthToPosition(normalized) == null) {
-                            matchError = context.getString(R.string.radar_match_grid_invalid)
-                            return@TextButton
-                        }
+            onCancel = { if (!matchLoading) showMatchDialog = false },
+            cancelEnabled = !matchLoading,
+            onAccept = {
+                if (!matchLoading) {
+                    val normalized = matchGrid.trim().uppercase()
+                    if (qthToPosition(normalized) == null) {
+                        matchError = context.getString(R.string.radar_match_grid_invalid)
+                    } else {
                         matchLoading = true
                         matchError = null
                         onStartMatch(normalized) { success ->
@@ -470,15 +438,45 @@ private fun RadarScreen(
                             }
                         }
                     }
-                ) { Text(stringResource(R.string.btn_accept)) }
+                }
             },
-            dismissButton = {
-                TextButton(
-                    enabled = !matchLoading,
-                    onClick = { showMatchDialog = false }
-                ) { Text(stringResource(R.string.btn_cancel)) }
+            acceptEnabled = !matchLoading
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = padding, end = padding, bottom = padding),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = matchGrid,
+                    onValueChange = {
+                        matchGrid = it.uppercase()
+                        matchError = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.radar_match_grid_label)) },
+                    placeholder = { Text(stringResource(R.string.radar_match_grid_hint)) },
+                    singleLine = true,
+                    isError = matchError != null,
+                    supportingText = {
+                        matchError?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                    enabled = !matchLoading
+                )
+                if (matchLoading) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(stringResource(R.string.radar_match_searching))
+                    }
+                }
             }
-        )
+        }
     }
 }
 
