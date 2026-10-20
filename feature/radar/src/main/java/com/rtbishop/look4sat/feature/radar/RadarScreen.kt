@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -56,6 +57,7 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -89,12 +91,15 @@ import com.rtbishop.look4sat.core.presentation.EmptyListCard
 import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.R
+import com.rtbishop.look4sat.core.presentation.SheetDialogTitle
 import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.TimerRow
 import com.rtbishop.look4sat.core.presentation.TopBar
 import com.rtbishop.look4sat.core.presentation.formatFrequency
 import com.rtbishop.look4sat.core.presentation.getDefaultPass
 import com.rtbishop.look4sat.core.presentation.layoutPadding
+import com.rtbishop.look4sat.core.presentation.sheetDialogContainerColor
+import com.rtbishop.look4sat.core.presentation.sheetDialogShape
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -415,68 +420,76 @@ private fun RadarScreen(
         }
     }
     if (showMatchDialog) {
-        // Use the app's shared bottom-sheet layout and header actions.
-        SharedDialog(
-            title = stringResource(R.string.radar_match_title),
+        // Match the existing QSO upload-preview dialogs: a centered AlertDialog,
+        // with the same themed shape, container, title, and action buttons.
+        AlertDialog(
             onDismissRequest = { if (!matchLoading) showMatchDialog = false },
-            onCancel = { if (!matchLoading) showMatchDialog = false },
-            cancelEnabled = !matchLoading,
-            onAccept = {
-                if (!matchLoading) {
-                    val normalized = matchGrid.trim().uppercase()
-                    if (qthToPosition(normalized) == null) {
-                        matchError = context.getString(R.string.radar_match_grid_invalid)
-                    } else {
-                        matchLoading = true
-                        matchError = null
-                        onStartMatch(normalized) { success ->
-                            matchLoading = false
-                            if (success) {
-                                showMatchDialog = false
-                            } else {
-                                matchError = context.getString(R.string.radar_match_no_pass)
+            shape = sheetDialogShape(),
+            containerColor = sheetDialogContainerColor(),
+            title = { SheetDialogTitle(stringResource(R.string.radar_match_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = matchGrid,
+                        onValueChange = {
+                            matchGrid = it.uppercase()
+                            matchError = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.radar_match_grid_label)) },
+                        placeholder = { Text(stringResource(R.string.radar_match_grid_hint)) },
+                        singleLine = true,
+                        isError = matchError != null,
+                        supportingText = {
+                            matchError?.let {
+                                Text(it, color = MaterialTheme.colorScheme.error)
                             }
+                        },
+                        enabled = !matchLoading
+                    )
+                    if (matchLoading) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text(stringResource(R.string.radar_match_searching))
                         }
                     }
                 }
             },
-            acceptEnabled = !matchLoading
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = padding, end = padding, bottom = padding),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = matchGrid,
-                    onValueChange = {
-                        matchGrid = it.uppercase()
-                        matchError = null
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(stringResource(R.string.radar_match_grid_label)) },
-                    placeholder = { Text(stringResource(R.string.radar_match_grid_hint)) },
-                    singleLine = true,
-                    isError = matchError != null,
-                    supportingText = {
-                        matchError?.let {
-                            Text(it, color = MaterialTheme.colorScheme.error)
+            confirmButton = {
+                TextButton(
+                    enabled = !matchLoading,
+                    onClick = {
+                        val normalized = matchGrid.trim().uppercase()
+                        if (qthToPosition(normalized) == null) {
+                            matchError = context.getString(R.string.radar_match_grid_invalid)
+                        } else {
+                            matchLoading = true
+                            matchError = null
+                            onStartMatch(normalized) { success ->
+                                matchLoading = false
+                                if (success) {
+                                    showMatchDialog = false
+                                } else {
+                                    matchError = context.getString(R.string.radar_match_no_pass)
+                                }
+                            }
                         }
-                    },
-                    enabled = !matchLoading
-                )
-                if (matchLoading) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text(stringResource(R.string.radar_match_searching))
                     }
-                }
+                ) { Text(stringResource(R.string.btn_accept)) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !matchLoading,
+                    onClick = { showMatchDialog = false }
+                ) { Text(stringResource(R.string.btn_cancel)) }
             }
-        }
+        )
     }
 }
 
