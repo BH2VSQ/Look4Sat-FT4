@@ -654,27 +654,9 @@ class MapViewModel(
 
     /** Splits the samples into date-line-safe laps and publishes them to the map. */
     private fun publishTrack(samples: List<Pair<Long, GeoPos>>, anchorMs: Long) {
-        val satTracks = mutableListOf<List<GeoPos>>()
-        val currentTrack = mutableListOf<GeoPos>()
-        // Longitude of the previous sample, NaN before the first one. Starting this at 0.0 (as it
-        // used to) hid every crossing between the first two samples, and the ±170 test it used
-        // missed the crossings that land just inside the range — either way the two points either
-        // side of the date line ended up in one polyline, which osmdroid draws as a straight line
-        // all the way across the map at a constant latitude (the "broken track wrapped to the
-        // other side"). Any step wider than a half turn is a date-line crossing.
-        var oldLongitude = Double.NaN
-        samples.forEach { (_, position) ->
-            val jumped = !oldLongitude.isNaN() && abs(position.longitude - oldLongitude) > 180.0
-            if (jumped) {
-                val meridian = if (oldLongitude > 0.0) 180.0 else -180.0
-                currentTrack.add(GeoPos(position.latitude, meridian))
-                satTracks.add(ArrayList(currentTrack))
-                currentTrack.clear()
-            }
-            oldLongitude = position.longitude
-            currentTrack.add(position)
-        }
-        satTracks.add(currentTrack)
+        // Close both sides of each ±180° crossing at the same interpolated latitude.
+        // A split on just one side leaves a visible gap before the next 15-second sample.
+        val satTracks = splitGroundTrackAtDateLine(samples.map { it.second })
         trackTimeMs = anchorMs
         _uiState.update { it.copy(track = satTracks) }
     }
