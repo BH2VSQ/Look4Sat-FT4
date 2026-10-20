@@ -208,14 +208,18 @@ fun RadarDestination(
         val observer=androidx.lifecycle.LifecycleEventObserver {_,event ->
             if(event==androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.onAction(RadarAction.StopRemoteTx)
             if(event==androidx.lifecycle.Lifecycle.Event.ON_START || event==androidx.lifecycle.Lifecycle.Event.ON_STOP) {
-                container.appScope.launch {container.radioTrackingService.setAudioForeground(event==androidx.lifecycle.Lifecycle.Event.ON_START)}
+                container.appScope.launch(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                    container.radioTrackingService.setAudioForeground(event==androidx.lifecycle.Lifecycle.Event.ON_START)
+                }
             }
         }
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)
             viewModel.onAction(RadarAction.StopRemoteTx)
-            container.appScope.launch {container.radioTrackingService.setAudioForeground(false)}
+            container.appScope.launch(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                container.radioTrackingService.setAudioForeground(false)
+            }
         }
     }
     val mutualData by container.mutualPassData.collectAsStateWithLifecycle()
@@ -253,7 +257,6 @@ fun RadarDestination(
         viewModel.onAction(RadarAction.SstvPermissionResult(granted))
         viewModel.onAction(RadarAction.CwPermissionResult(granted))
     }
-    // Grid-check "fix it" jump from the log page: hand the affected records' grids to the
     val radioPermissionLauncher=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {granted ->
         if(granted)viewModel.onAction(RadarAction.ConnectRadios)
     }
@@ -264,7 +267,7 @@ fun RadarDestination(
             radioPermissionLauncher.launch(permission)
         } else viewModel.onAction(action)
     }
-    // station-location page as its prefill (mirrors the Grid Finder's hand-off).
+    // Grid-check "fix it" jump: prefill the station page with the affected grids.
     val openLoTWStationForGridFix: (List<String>) -> Unit = { grids ->
         if (grids.isNotEmpty()) container.setPendingLoTWStationGrid(grids.joinToString(","))
         onOpenLoTWStation()
