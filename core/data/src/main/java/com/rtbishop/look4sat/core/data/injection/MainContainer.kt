@@ -101,6 +101,10 @@ class MainContainer(private val context: Context) : IMainContainer {
     private val mainHandler = CoroutineExceptionHandler { _, error -> println("MainHandler: $error") }
     override val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + mainHandler)
     override val settingsRepo = provideSettingsRepo()
+    override val controlDiagnostics = com.rtbishop.look4sat.core.domain.control.ControlDiagnosticsBuffer()
+    override val audioHub: com.rtbishop.look4sat.core.domain.audio.IAudioHub by lazy {
+        com.rtbishop.look4sat.core.data.usecase.SharedAudioHub(context, appScope)
+    }
     override val selectionRepo = provideSelectionRepo()
     override val satelliteRepo = provideSatelliteRepo()
     override val databaseRepo = provideDatabaseRepo()
@@ -119,8 +123,20 @@ class MainContainer(private val context: Context) : IMainContainer {
     }
     override val lotwUploadRepository: ILoTWUploadRepository by lazy { LoTWUploadRepository(context) }
     override val radioTrackingService: IRadioTrackingService by lazy {
-        val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        RadioTrackingService(appScope, manager, satelliteRepo, settingsRepo)
+        val manager = context.getSystemService(BluetoothManager::class.java)
+        val transportFactory = com.rtbishop.look4sat.core.data.framework.AndroidRadioTransportFactory(context, manager, controlDiagnostics)
+        RadioTrackingService(appScope, manager, satelliteRepo, settingsRepo,
+            transportFactory = transportFactory::create, diagnostics = controlDiagnostics,
+            n76AudioFactory = { address -> com.rtbishop.look4sat.core.data.framework.N76AudioSession(
+                com.rtbishop.look4sat.core.data.framework.BluetoothSppRadioTransport(manager,address,controlDiagnostics,
+                    java.util.UUID.fromString(com.rtbishop.look4sat.core.data.framework.N76AudioProtocol.SERVICE_UUID)),
+                com.rtbishop.look4sat.core.data.framework.AndroidN76AudioIo(context,audioHub) {settingsRepo.radioControlSettings.value.n76Options},
+                appScope,controlDiagnostics)
+            },
+            n76RecordingFactory = {com.rtbishop.look4sat.core.data.framework.AndroidN76Recording(context,
+                com.rtbishop.look4sat.core.data.framework.AndroidN76AudioIo(context,audioHub) {settingsRepo.radioControlSettings.value.n76Options},
+                appScope,controlDiagnostics) {settingsRepo.radioControlSettings.value.n76Options}}
+        )
     }
     override val locationRepo: ILocationRepo by lazy {
         val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -146,7 +162,7 @@ class MainContainer(private val context: Context) : IMainContainer {
 
     override fun provideShowToast(): IShowToast = ShowToast(context)
 
-    override fun provideAudioCapture(): IAudioCapture = AudioCapture()
+    override fun provideAudioCapture(): IAudioCapture = AudioCapture(audioHub)
 
     override fun provideSaveImage(): ISaveImage = SaveImage(context)
 
