@@ -12,10 +12,6 @@ name: Publish Look4Sat release
 # version bump, and the version is read from the catalog, so this file needs no edit per release.
 
 on:
-  # Temporary 13.2 release trigger; restore manual-only mode after publishing.
-  push:
-    branches: [main]
-    paths: [gradle/libs.versions.toml]
   workflow_dispatch:
     inputs:
       mode:
@@ -128,7 +124,7 @@ jobs:
           echo "apk bytes: $(stat -c%s "$APK")"
 
       - name: Publish as a prerelease test package
-        if: ${{ github.event_name != 'push' && inputs.mode != 'release' }}
+        if: ${{ inputs.mode != 'release' }}
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -149,7 +145,7 @@ jobs:
           echo "Published prerelease $TAG"
 
       - name: Publish the official Release
-        if: ${{ github.event_name == 'push' || inputs.mode == 'release' }}
+        if: ${{ inputs.mode == 'release' }}
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -170,11 +166,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk "$ASSET"
           NOTES="$NOTES_IN"
           if [ -z "$NOTES" ]; then
-            if [ "$VERSION" = "4.4.8-ba7opf.13.2" ]; then
-              NOTES=$'## v4.4.8-ba7opf.13.2 (English)\n- Fix live satellite ground tracks becoming angular over time by preserving future predicted samples.\n- Version code 605; uses the existing compatible release signing certificate.\n- Verification: Release APK built by GitHub Actions, certificate and package version checked; unit tests not run; ABI not independently checked.\n\n## v4.4.8-ba7opf.13.2 (中文)\n- 修复实时轨迹因未来预测采样点被覆盖而逐渐变成折线的问题。\n- 版本代码 605；沿用可兼容覆盖安装的现有发布证书。\n- 验证：GitHub Actions 构建正式版 APK，已检查证书及安装包版本；未运行单元测试；未独立检查 ABI。'
-            else
             NOTES="Look4Sat $VERSION (versionCode $CODE). Signed with the fork release key; installs over the previous release."
-            fi
           fi
           gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "Look4Sat $TAG" \
             --latest --notes "$NOTES"
