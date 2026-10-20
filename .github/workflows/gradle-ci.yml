@@ -61,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew --no-daemon --stacktrace test
+          ./gradlew --no-daemon --continue --stacktrace test
 
       - name: Compile Debug APK
         if: ${{ !cancelled() && steps.android-sdk.outcome == 'success' }}
@@ -84,10 +84,9 @@ jobs:
             if [ -d source ]; then
               python3 - <<'PY'
           import glob
-          import os
-          import xml.etree.ElementTree as ET
+                    import xml.etree.ElementTree as ET
 
-          files = glob.glob("source/**/build/test-results/test/*.xml", recursive=True)
+          files = glob.glob("source/**/build/test-results/**/*.xml", recursive=True)
           totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
           for filename in files:
               try:
