@@ -642,7 +642,13 @@ class MapViewModel(
             }
         }
         val exact = satelliteRepo.getPosition(orbitalObject, pos, timeMs).toMapGeoPos()
-        if (samples.isEmpty()) samples.add(timeMs to exact) else samples[0] = timeMs to exact
+        // Do not replace the next predicted point: doing so each live tick
+        // progressively removes 15-second samples and turns the track into chords.
+        if (samples.firstOrNull()?.first == timeMs) {
+            samples[0] = timeMs to exact
+        } else {
+            samples.add(0, timeMs to exact)
+        }
         publishTrack(samples, timeMs)
     }
 
