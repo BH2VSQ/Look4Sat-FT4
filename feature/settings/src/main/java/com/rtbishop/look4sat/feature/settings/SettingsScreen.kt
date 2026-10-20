@@ -52,12 +52,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlin.math.roundToInt
 import com.rtbishop.look4sat.core.domain.model.DataSourcesSettings
 import com.rtbishop.look4sat.core.domain.time.ClockSource
 import com.rtbishop.look4sat.core.domain.model.OtherSettings
@@ -129,12 +132,16 @@ private fun SettingsScreen(
     var showUpdateChecker by rememberSaveable { mutableStateOf(false) }
     var showMapSettings by rememberSaveable { mutableStateOf(false) }
     var showProjectWiki by rememberSaveable { mutableStateOf(false) }
-    // Only one of the three collapsible settings sections may be open at a time.
-    // 0 = none, 1 = data output, 2 = FT4/time sync, 3 = other settings.
+    // Only one collapsible settings section may be open at a time.
+    // 0 = none, 1 = data output, 2 = FT4/time sync, 3 = display, 4 = other settings.
     var expandedSettingsSection by rememberSaveable { mutableStateOf(0) }
     val outputSettingsExpanded = expandedSettingsSection == 1
     val ft4SettingsExpanded = expandedSettingsSection == 2
-    val otherSettingsExpanded = expandedSettingsSection == 3
+    val displaySettingsExpanded = expandedSettingsSection == 3
+    val otherSettingsExpanded = expandedSettingsSection == 4
+    var passListFontScaleSlider by remember(uiState.otherSettings.passListFontScale) {
+        mutableFloatStateOf(uiState.otherSettings.passListFontScale)
+    }
     if (showProjectWiki) {
         ProjectWikiDialog(onDismiss = { showProjectWiki = false })
     }
@@ -475,9 +482,26 @@ private fun SettingsScreen(
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
                 CollapsibleSettingsSection(
+                    titleResId = R.string.prefs_display_title,
+                    expanded = displaySettingsExpanded,
+                    onToggle = { toggleSettingsSection(sectionId = 3, itemIndex = 4) }
+                ) {
+                    DisplaySettingsCard(
+                        value = passListFontScaleSlider,
+                        onValueChange = { passListFontScaleSlider = it },
+                        onValueChangeFinished = {
+                            onAction(SettingsAction.SetPassListFontScale(passListFontScaleSlider))
+                        },
+                        settings = uiState.otherSettings,
+                        onAction = onAction
+                    )
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                CollapsibleSettingsSection(
                     titleResId = R.string.prefs_other_title,
                     expanded = otherSettingsExpanded,
-                    onToggle = { toggleSettingsSection(sectionId = 3, itemIndex = 4) }
+                    onToggle = { toggleSettingsSection(sectionId = 4, itemIndex = 5) }
                 ) {
                     OtherCard(
                         settings = uiState.otherSettings,
@@ -577,109 +601,171 @@ private fun Ft4SettingsCard(
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
-            OutlinedTextField(
-                value = settings.operatorCallsign,
-                onValueChange = { onAction(SettingsAction.SetFt4Callsign(it)) },
-                label = { Text(stringResource(R.string.prefs_ft4_callsign)) },
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Characters,
-                    imeAction = ImeAction.Done
+        OutlinedTextField(
+            value = settings.operatorCallsign,
+            onValueChange = { onAction(SettingsAction.SetFt4Callsign(it)) },
+            label = { Text(stringResource(R.string.prefs_ft4_callsign)) },
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
+                imeAction = ImeAction.Done
+            ),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = stringResource(
+                    R.string.prefs_ft4_grid,
+                    state.positionSettings.stationPos.qthLocator
                 ),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.weight(1f)
             )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = stringResource(
-                        R.string.prefs_ft4_grid,
-                        state.positionSettings.stationPos.qthLocator
-                    ),
+            CardButton(
+                onClick = editGrid,
+                text = stringResource(R.string.prefs_ft4_edit_grid)
+            )
+        }
+        SwitchRow(
+            labelResId = R.string.prefs_ft4_decode,
+            checked = settings.decodeEnabled,
+            enabled = capability.receiveAvailable
+        ) { onAction(SettingsAction.ToggleFt4Decode(it)) }
+
+        // Keep input and decoder depth configurable even when decoding is currently disabled.
+        Text(
+            text = stringResource(R.string.prefs_ft4_audio_input),
+            style = MaterialTheme.typography.bodySmall
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            FilterChip(
+                selected = settings.audioInputDeviceKey.isBlank(),
+                onClick = { onAction(SettingsAction.SetAudioInputDevice(null)) },
+                label = { Text(stringResource(R.string.prefs_ft4_audio_default)) }
+            )
+            state.audioInputDevices.forEach { device ->
+                FilterChip(
+                    selected = settings.audioInputDeviceKey == device.key,
+                    onClick = { onAction(SettingsAction.SetAudioInputDevice(device.key)) },
+                    label = {
+                        Text(
+                            text = if (device.external) {
+                                stringResource(R.string.prefs_ft4_audio_external, device.name)
+                            } else {
+                                device.name
+                            },
+                            maxLines = 1
+                        )
+                    }
+                )
+            }
+        }
+        Text(
+            text = stringResource(R.string.prefs_ft4_decode_depth),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(
+                1 to R.string.prefs_ft4_decode_fast,
+                2 to R.string.prefs_ft4_decode_balanced,
+                3 to R.string.prefs_ft4_decode_deep
+            ).forEach { (depth, label) ->
+                FilterChip(
+                    selected = settings.decodeDepth == depth,
+                    onClick = { onAction(SettingsAction.SetFt4DecodeDepth(depth)) },
+                    label = { Text(stringResource(label)) },
                     modifier = Modifier.weight(1f)
                 )
-                CardButton(
-                    onClick = editGrid,
-                    text = stringResource(R.string.prefs_ft4_edit_grid)
-                )
             }
-            SwitchRow(
-                labelResId = R.string.prefs_ft4_decode,
-                checked = settings.decodeEnabled,
-                enabled = capability.receiveAvailable
-            ) { onAction(SettingsAction.ToggleFt4Decode(it)) }
-            if (settings.decodeEnabled) {
+        }
+
+        SwitchRow(R.string.prefs_ft4_ntp, settings.ntpSynchronizationEnabled) {
+            onAction(SettingsAction.ToggleNtpSynchronization(it))
+        }
+        SwitchRow(R.string.prefs_ft4_gnss, settings.gnssSynchronizationEnabled) { enabled ->
+            if (enabled) enableGnss() else onAction(SettingsAction.ToggleGnssSynchronization(false))
+        }
+        CardButton(
+            onClick = { onAction(SettingsAction.SynchronizeTimeNow) },
+            text = if (synchronization.synchronizing) {
+                stringResource(R.string.prefs_ft4_synchronizing)
+            } else {
+                stringResource(R.string.prefs_ft4_sync_now)
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(text = timeStatus, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun DisplaySettingsCard(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+    settings: OtherSettings,
+    onAction: (SettingsAction) -> Unit
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Text(stringResource(R.string.prefs_display_font_size_title), style = MaterialTheme.typography.titleSmall)
+        Text(
+            stringResource(R.string.prefs_display_font_size_value, (value * 100f).roundToInt()),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text(stringResource(R.string.prefs_display_font_size_hint), style = MaterialTheme.typography.bodySmall)
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
+            valueRange = 0.6f..1.4f,
+            steps = 0
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            listOf(
+                R.string.prefs_display_font_size_tiny,
+                R.string.prefs_display_font_size_small,
+                R.string.prefs_display_font_size_standard,
+                R.string.prefs_display_font_size_large,
+                R.string.prefs_display_font_size_huge
+            ).forEach { labelRes ->
                 Text(
-                    text = stringResource(R.string.prefs_ft4_audio_input),
-                    style = MaterialTheme.typography.bodySmall
+                    text = stringResource(labelRes),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    maxLines = 1
                 )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    FilterChip(
-                        selected = settings.audioInputDeviceKey.isBlank(),
-                        onClick = { onAction(SettingsAction.SetAudioInputDevice(null)) },
-                        label = { Text(stringResource(R.string.prefs_ft4_audio_default)) }
-                    )
-                    state.audioInputDevices.forEach { device ->
-                        FilterChip(
-                            selected = settings.audioInputDeviceKey == device.key,
-                            onClick = { onAction(SettingsAction.SetAudioInputDevice(device.key)) },
-                            label = {
-                                Text(
-                                    text = if (device.external) {
-                                        stringResource(R.string.prefs_ft4_audio_external, device.name)
-                                    } else {
-                                        device.name
-                                    },
-                                    maxLines = 1
-                                )
-                            }
-                        )
-                    }
-                }
-                Text(
-                    text = stringResource(R.string.prefs_ft4_decode_depth),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf(
-                        1 to R.string.prefs_ft4_decode_fast,
-                        2 to R.string.prefs_ft4_decode_balanced,
-                        3 to R.string.prefs_ft4_decode_deep
-                    ).forEach { (depth, label) ->
-                        FilterChip(
-                            selected = settings.decodeDepth == depth,
-                            onClick = { onAction(SettingsAction.SetFt4DecodeDepth(depth)) },
-                            label = { Text(stringResource(label)) },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
             }
-            SwitchRow(R.string.prefs_ft4_ntp, settings.ntpSynchronizationEnabled) {
-                onAction(SettingsAction.ToggleNtpSynchronization(it))
-            }
-            SwitchRow(R.string.prefs_ft4_gnss, settings.gnssSynchronizationEnabled) { enabled ->
-                if (enabled) enableGnss() else onAction(SettingsAction.ToggleGnssSynchronization(false))
-            }
-            CardButton(
-                onClick = { onAction(SettingsAction.SynchronizeTimeNow) },
-                text = if (synchronization.synchronizing) {
-                    stringResource(R.string.prefs_ft4_synchronizing)
-                } else {
-                    stringResource(R.string.prefs_ft4_sync_now)
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text(text = timeStatus, style = MaterialTheme.typography.bodySmall)
+        }
+        HorizontalDivider()
+        SwitchRow(R.string.prefs_other_switch_light_theme, settings.stateOfLightTheme) {
+            onAction(SettingsAction.ToggleLightTheme(it))
+        }
+        SwitchRow(
+            R.string.prefs_other_switch_night_mode,
+            settings.stateOfNightMode,
+            enabled = !settings.stateOfLightTheme
+        ) {
+            onAction(SettingsAction.ToggleNightMode(it))
+        }
     }
 }
 
@@ -948,18 +1034,6 @@ private fun OtherCard(
                 text = stringResource(R.string.prefs_compass_calibration_button),
                 modifier = Modifier.fillMaxWidth()
             )
-            // Appearance: light theme + the red night filter (mutually exclusive —
-            // the night filter is disabled while the light theme is on).
-            SwitchRow(R.string.prefs_other_switch_light_theme, settings.stateOfLightTheme) {
-                onAction(SettingsAction.ToggleLightTheme(it))
-            }
-            SwitchRow(
-                R.string.prefs_other_switch_night_mode,
-                settings.stateOfNightMode,
-                enabled = !settings.stateOfLightTheme
-            ) {
-                onAction(SettingsAction.ToggleNightMode(it))
-            }
             Spacer(modifier = Modifier.height(4.dp))
             HorizontalDivider()
             Text(

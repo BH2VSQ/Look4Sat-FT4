@@ -78,7 +78,8 @@ data class OtherSettings(
     val mapSource: String = MapSource.OSM,
     val tiandituKey: String = "",
     /** Which tool occupies the fourth slot in the app's bottom navigation. */
-    val bottomBarTool: String = BottomBarTool.FT4
+    val bottomBarTool: String = BottomBarTool.FT4,
+    val passListFontScale: Float = 1f
 )
 
 /** Persisted identifiers for the configurable fourth bottom-navigation slot. */

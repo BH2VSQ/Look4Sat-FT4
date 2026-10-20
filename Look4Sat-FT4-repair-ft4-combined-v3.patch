@@ -1,0 +1,303 @@
+diff --git a/feature/settings/src/main/java/com/rtbishop/look4sat/feature/settings/SettingsScreen.kt b/feature/settings/src/main/java/com/rtbishop/look4sat/feature/settings/SettingsScreen.kt
+--- a/feature/settings/src/main/java/com/rtbishop/look4sat/feature/settings/SettingsScreen.kt
++++ b/feature/settings/src/main/java/com/rtbishop/look4sat/feature/settings/SettingsScreen.kt
+@@ -133,13 +133,12 @@
+     var showMapSettings by rememberSaveable { mutableStateOf(false) }
+     var showProjectWiki by rememberSaveable { mutableStateOf(false) }
+     // Only one collapsible settings section may be open at a time.
+-    // 0 = none, 1 = data output, 2 = FT4, 3 = time sync, 4 = display, 5 = other settings.
++    // 0 = none, 1 = data output, 2 = FT4/time sync, 3 = display, 4 = other settings.
+     var expandedSettingsSection by rememberSaveable { mutableStateOf(0) }
+     val outputSettingsExpanded = expandedSettingsSection == 1
+     val ft4SettingsExpanded = expandedSettingsSection == 2
+-    val timeSyncSettingsExpanded = expandedSettingsSection == 3
+-    val displaySettingsExpanded = expandedSettingsSection == 4
+-    val otherSettingsExpanded = expandedSettingsSection == 5
++    val displaySettingsExpanded = expandedSettingsSection == 3
++    val otherSettingsExpanded = expandedSettingsSection == 4
+     var passListFontScaleSlider by remember(uiState.otherSettings.passListFontScale) {
+         mutableFloatStateOf(uiState.otherSettings.passListFontScale)
+     }
+@@ -476,18 +475,6 @@
+                     Ft4SettingsCard(
+                         state = uiState,
+                         editGrid = { dialogs.locator = true },
+-                        onAction = onAction
+-                    )
+-                }
+-            }
+-            item(span = { GridItemSpan(maxLineSpan) }) {
+-                CollapsibleSettingsSection(
+-                    titleResId = R.string.prefs_time_sync_title,
+-                    expanded = timeSyncSettingsExpanded,
+-                    onToggle = { toggleSettingsSection(sectionId = 3, itemIndex = 4) }
+-                ) {
+-                    TimeSynchronizationCard(
+-                        state = uiState,
+                         enableGnss = permissions.launchGnss,
+                         onAction = onAction
+                     )
+@@ -497,7 +484,7 @@
+                 CollapsibleSettingsSection(
+                     titleResId = R.string.prefs_display_title,
+                     expanded = displaySettingsExpanded,
+-                    onToggle = { toggleSettingsSection(sectionId = 4, itemIndex = 5) }
++                    onToggle = { toggleSettingsSection(sectionId = 3, itemIndex = 4) }
+                 ) {
+                     DisplaySettingsCard(
+                         value = passListFontScaleSlider,
+@@ -514,7 +501,7 @@
+                 CollapsibleSettingsSection(
+                     titleResId = R.string.prefs_other_title,
+                     expanded = otherSettingsExpanded,
+-                    onToggle = { toggleSettingsSection(sectionId = 5, itemIndex = 6) }
++                    onToggle = { toggleSettingsSection(sectionId = 4, itemIndex = 5) }
+                 ) {
+                     OtherCard(
+                         settings = uiState.otherSettings,
+@@ -595,10 +582,18 @@
+ private fun Ft4SettingsCard(
+     state: SettingsState,
+     editGrid: () -> Unit,
++    enableGnss: () -> Unit,
+     onAction: (SettingsAction) -> Unit
+ ) {
+     val settings = state.ft4Settings
+     val capability = state.ft4Capability
++    val clock = state.clockSnapshot
++    val synchronization = state.timeSynchronizationState
++    val timeStatus = if (clock.healthy && clock.source != ClockSource.SYSTEM) {
++        stringResource(R.string.prefs_ft4_time_synced, clock.offsetMillis)
++    } else {
++        stringResource(R.string.prefs_ft4_time_unsynced, clock.offsetMillis)
++    }
+ 
+     Column(
+         verticalArrangement = Arrangement.spacedBy(6.dp),
+@@ -606,117 +601,94 @@
+             .fillMaxWidth()
+             .padding(horizontal = 8.dp, vertical = 6.dp)
+     ) {
+-            OutlinedTextField(
+-                value = settings.operatorCallsign,
+-                onValueChange = { onAction(SettingsAction.SetFt4Callsign(it)) },
+-                label = { Text(stringResource(R.string.prefs_ft4_callsign)) },
+-                keyboardOptions = KeyboardOptions(
+-                    capitalization = KeyboardCapitalization.Characters,
+-                    imeAction = ImeAction.Done
++        OutlinedTextField(
++            value = settings.operatorCallsign,
++            onValueChange = { onAction(SettingsAction.SetFt4Callsign(it)) },
++            label = { Text(stringResource(R.string.prefs_ft4_callsign)) },
++            keyboardOptions = KeyboardOptions(
++                capitalization = KeyboardCapitalization.Characters,
++                imeAction = ImeAction.Done
++            ),
++            singleLine = true,
++            modifier = Modifier.fillMaxWidth()
++        )
++        Row(
++            horizontalArrangement = Arrangement.spacedBy(6.dp),
++            verticalAlignment = Alignment.CenterVertically,
++            modifier = Modifier.fillMaxWidth()
++        ) {
++            Text(
++                text = stringResource(
++                    R.string.prefs_ft4_grid,
++                    state.positionSettings.stationPos.qthLocator
+                 ),
+-                singleLine = true,
+-                modifier = Modifier.fillMaxWidth()
+-            )
+-            Row(
+-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+-                verticalAlignment = Alignment.CenterVertically,
+-                modifier = Modifier.fillMaxWidth()
+-            ) {
+-                Text(
+-                    text = stringResource(
+-                        R.string.prefs_ft4_grid,
+-                        state.positionSettings.stationPos.qthLocator
+-                    ),
+-                    modifier = Modifier.weight(1f)
+-                )
+-                CardButton(
+-                    onClick = editGrid,
+-                    text = stringResource(R.string.prefs_ft4_edit_grid)
+-                )
+-            }
+-            SwitchRow(
+-                labelResId = R.string.prefs_ft4_decode,
+-                checked = settings.decodeEnabled,
+-                enabled = capability.receiveAvailable
+-            ) { onAction(SettingsAction.ToggleFt4Decode(it)) }
+-            if (settings.decodeEnabled) {
+-                Text(
+-                    text = stringResource(R.string.prefs_ft4_audio_input),
+-                    style = MaterialTheme.typography.bodySmall
+-                )
+-                FlowRow(
+-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+-                    modifier = Modifier.fillMaxWidth()
+-                ) {
+-                    FilterChip(
+-                        selected = settings.audioInputDeviceKey.isBlank(),
+-                        onClick = { onAction(SettingsAction.SetAudioInputDevice(null)) },
+-                        label = { Text(stringResource(R.string.prefs_ft4_audio_default)) }
+-                    )
+-                    state.audioInputDevices.forEach { device ->
+-                        FilterChip(
+-                            selected = settings.audioInputDeviceKey == device.key,
+-                            onClick = { onAction(SettingsAction.SetAudioInputDevice(device.key)) },
+-                            label = {
+-                                Text(
+-                                    text = if (device.external) {
+-                                        stringResource(R.string.prefs_ft4_audio_external, device.name)
+-                                    } else {
+-                                        device.name
+-                                    },
+-                                    maxLines = 1
+-                                )
+-                            }
++                modifier = Modifier.weight(1f)
++            )
++            CardButton(
++                onClick = editGrid,
++                text = stringResource(R.string.prefs_ft4_edit_grid)
++            )
++        }
++        SwitchRow(
++            labelResId = R.string.prefs_ft4_decode,
++            checked = settings.decodeEnabled,
++            enabled = capability.receiveAvailable
++        ) { onAction(SettingsAction.ToggleFt4Decode(it)) }
++
++        // Keep input and decoder depth configurable even when decoding is currently disabled.
++        Text(
++            text = stringResource(R.string.prefs_ft4_audio_input),
++            style = MaterialTheme.typography.bodySmall
++        )
++        FlowRow(
++            horizontalArrangement = Arrangement.spacedBy(6.dp),
++            verticalArrangement = Arrangement.spacedBy(6.dp),
++            modifier = Modifier.fillMaxWidth()
++        ) {
++            FilterChip(
++                selected = settings.audioInputDeviceKey.isBlank(),
++                onClick = { onAction(SettingsAction.SetAudioInputDevice(null)) },
++                label = { Text(stringResource(R.string.prefs_ft4_audio_default)) }
++            )
++            state.audioInputDevices.forEach { device ->
++                FilterChip(
++                    selected = settings.audioInputDeviceKey == device.key,
++                    onClick = { onAction(SettingsAction.SetAudioInputDevice(device.key)) },
++                    label = {
++                        Text(
++                            text = if (device.external) {
++                                stringResource(R.string.prefs_ft4_audio_external, device.name)
++                            } else {
++                                device.name
++                            },
++                            maxLines = 1
+                         )
+                     }
+-                }
+-                Text(
+-                    text = stringResource(R.string.prefs_ft4_decode_depth),
+-                    style = MaterialTheme.typography.bodySmall
+-                )
+-                Row(
+-                    modifier = Modifier.fillMaxWidth(),
+-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+-                ) {
+-                    listOf(
+-                        1 to R.string.prefs_ft4_decode_fast,
+-                        2 to R.string.prefs_ft4_decode_balanced,
+-                        3 to R.string.prefs_ft4_decode_deep
+-                    ).forEach { (depth, label) ->
+-                        FilterChip(
+-                            selected = settings.decodeDepth == depth,
+-                            onClick = { onAction(SettingsAction.SetFt4DecodeDepth(depth)) },
+-                            label = { Text(stringResource(label)) },
+-                            modifier = Modifier.weight(1f)
+-                        )
+-                    }
+-                }
+-            }
+-    }
+-}
+-
+-@Composable
+-private fun TimeSynchronizationCard(
+-    state: SettingsState,
+-    enableGnss: () -> Unit,
+-    onAction: (SettingsAction) -> Unit
+-) {
+-    val settings = state.ft4Settings
+-    val clock = state.clockSnapshot
+-    val synchronization = state.timeSynchronizationState
+-    val timeStatus = if (clock.healthy && clock.source != ClockSource.SYSTEM) {
+-        stringResource(R.string.prefs_ft4_time_synced, clock.offsetMillis)
+-    } else {
+-        stringResource(R.string.prefs_ft4_time_unsynced, clock.offsetMillis)
+-    }
+-
+-    Column(
+-        verticalArrangement = Arrangement.spacedBy(6.dp),
+-        modifier = Modifier
+-            .fillMaxWidth()
+-            .padding(horizontal = 8.dp, vertical = 6.dp)
+-    ) {
++                )
++            }
++        }
++        Text(
++            text = stringResource(R.string.prefs_ft4_decode_depth),
++            style = MaterialTheme.typography.bodySmall
++        )
++        Row(
++            modifier = Modifier.fillMaxWidth(),
++            horizontalArrangement = Arrangement.spacedBy(6.dp)
++        ) {
++            listOf(
++                1 to R.string.prefs_ft4_decode_fast,
++                2 to R.string.prefs_ft4_decode_balanced,
++                3 to R.string.prefs_ft4_decode_deep
++            ).forEach { (depth, label) ->
++                FilterChip(
++                    selected = settings.decodeDepth == depth,
++                    onClick = { onAction(SettingsAction.SetFt4DecodeDepth(depth)) },
++                    label = { Text(stringResource(label)) },
++                    modifier = Modifier.weight(1f)
++                )
++            }
++        }
++
+         SwitchRow(R.string.prefs_ft4_ntp, settings.ntpSynchronizationEnabled) {
+             onAction(SettingsAction.ToggleNtpSynchronization(it))
+         }
+diff --git a/core/presentation/src/main/res/values/strings.xml b/core/presentation/src/main/res/values/strings.xml
+--- a/core/presentation/src/main/res/values/strings.xml
++++ b/core/presentation/src/main/res/values/strings.xml
+@@ -482,3 +482,3 @@
+-    <string name="prefs_ft4_title">FT4 settings</string>
++    <string name="prefs_ft4_title">FT4 and time synchronization</string>
+     <string name="prefs_time_sync_title">Time synchronization</string>
+     <string name="prefs_display_title">Display settings</string>
+diff --git a/core/presentation/src/main/res/values-zh/strings.xml b/core/presentation/src/main/res/values-zh/strings.xml
+--- a/core/presentation/src/main/res/values-zh/strings.xml
++++ b/core/presentation/src/main/res/values-zh/strings.xml
+@@ -452,3 +452,3 @@
+-    <string name="prefs_ft4_title">FT4 设置</string>
++    <string name="prefs_ft4_title">FT4 与时间同步</string>
+     <string name="prefs_time_sync_title">时间同步</string>
+     <string name="prefs_display_title">显示设置</string>
+diff --git a/core/presentation/src/main/res/values-b+zh+Hant/strings.xml b/core/presentation/src/main/res/values-b+zh+Hant/strings.xml
+--- a/core/presentation/src/main/res/values-b+zh+Hant/strings.xml
++++ b/core/presentation/src/main/res/values-b+zh+Hant/strings.xml
+@@ -452,3 +452,3 @@
+-    <string name="prefs_ft4_title">FT4 設定</string>
++    <string name="prefs_ft4_title">FT4 与时间同步</string>
+     <string name="prefs_time_sync_title">時間同步</string>
+     <string name="prefs_display_title">顯示設定</string>

@@ -184,6 +184,7 @@ sealed interface SettingsAction {
     data class ToggleNightMode(val value: Boolean) : SettingsAction
     data class UpdateMapSettings(val mapSource: String, val tiandituKey: String) : SettingsAction
     data class SetBottomBarTool(val value: String) : SettingsAction
+    data class SetPassListFontScale(val value: Float) : SettingsAction
     // FT4
     data class SetFt4Callsign(val value: String) : SettingsAction
     data class ToggleFt4Decode(val value: Boolean) : SettingsAction

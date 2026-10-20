@@ -139,6 +139,7 @@ class SettingsRepo(
     private val keyMapSource = "mapSource"
     private val keyTiandituKey = "tiandituKey"
     private val keyBottomBarTool = "bottomBarTool"
+    private val keyPassListFontScale = "passListFontScale"
     private val keyFt4OperatorCallsign = "ft4OperatorCallsign"
     private val keyFt4DecodeEnabled = "ft4DecodeEnabled"
     private val keyFt4DecodeDepth = "ft4DecodeDepth"
@@ -949,7 +950,8 @@ class SettingsRepo(
                 it.copy(
                     mapSource = MapSource.normalize(it.mapSource),
                     tiandituKey = it.tiandituKey.trim(),
-                    bottomBarTool = BottomBarTool.normalize(it.bottomBarTool)
+                    bottomBarTool = BottomBarTool.normalize(it.bottomBarTool),
+                    passListFontScale = it.passListFontScale.coerceIn(0.6f, 1.4f)
                 )
             }
             preferences.edit {
@@ -971,6 +973,7 @@ class SettingsRepo(
                 putString(keyMapSource, new.mapSource)
                 putString(keyTiandituKey, new.tiandituKey)
                 putString(keyBottomBarTool, new.bottomBarTool)
+                putFloat(keyPassListFontScale, new.passListFontScale)
             }
             new
         }
@@ -994,7 +997,8 @@ class SettingsRepo(
         highElevation = Double.fromBits(preferences.getLong(keyHighElevation, 45.0.toRawBits())),
         mapSource = MapSource.normalize(preferences.getString(keyMapSource, null).orEmpty()),
         tiandituKey = preferences.getString(keyTiandituKey, null).orEmpty().trim(),
-        bottomBarTool = BottomBarTool.normalize(preferences.getString(keyBottomBarTool, null).orEmpty())
+        bottomBarTool = BottomBarTool.normalize(preferences.getString(keyBottomBarTool, null).orEmpty()),
+        passListFontScale = preferences.getFloat(keyPassListFontScale, 1f).coerceIn(0.6f, 1.4f)
     )
     //endregion
 
