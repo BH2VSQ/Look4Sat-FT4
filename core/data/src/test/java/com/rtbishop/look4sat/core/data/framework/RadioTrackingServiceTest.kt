@@ -1806,6 +1806,9 @@ private class FakeSettingsRepo(
     override fun setWorkedGridQsos(qsos: Map<String, List<GridQso>>) = Unit
     override fun getRoamedGrids() = emptySet<String>()
     override fun setRoamedGrids(grids: Set<String>) = Unit
+    private var vuccStationIds = emptySet<String>()
+    override fun getVuccSelectedStationIds() = vuccStationIds
+    override fun setVuccSelectedStationIds(ids: Set<String>) { vuccStationIds = ids }
     override val lotwSettings = MutableStateFlow(LoTWSettings())
     override fun updateLoTWSettings(settings: LoTWSettings) = Unit
     override fun getLastLotwSyncDate() = ""
