@@ -5,9 +5,9 @@ name: Build Look4Sat APK
 #   mode=test     -> publish a test prerelease, hidden from /releases/latest.
 #   mode=release  -> publish the official GitHub Release (v<version>).
 #
-# The last run of this workflow before this scheme was #3; a separately built
-# Hermes test APK already uses versionCode 608. Run #4 starts at 609, and each
-# following new workflow run increases it by one (605+github.run_number).
+# Installed Hermes build has versionCode 608; diagnostic workflow runs #4-9
+# did not build usable APKs. The first preview build (#10) is versionCode 609.
+# Later workflow runs use 599+github.run_number (e.g. #11 -> 610).
 # Test builds and official releases share the same versionCode sequence. Test APKs add ".test.<run_number>"
 # to versionName; official release tags and versionName still use the version catalog.
 # Changes to the version catalog happen only in the runner's checkout, NOT in Git.
@@ -56,10 +56,9 @@ jobs:
           test -n "$VERSION"
           [[ "$SOURCE_CODE" =~ ^[0-9]+$ ]]
           [[ "$BUILD_RUN_NUMBER" =~ ^[0-9]+$ ]]
-          # Existing workflow run numbers 1-3 preceded the numbered test builds.
-          # Run #4 starts at versionCode 609 after the Hermes-built versionCode 608.
+          # Diagnostic runs #4-9 did not produce usable APKs. Run #10 starts at 609.
           # GitHub re-runs retain their original number.
-          CODE=$((605 + BUILD_RUN_NUMBER))
+          CODE=$((599 + BUILD_RUN_NUMBER))
           if (( CODE <= SOURCE_CODE || CODE > 2100000000 )); then
             echo "::error::Generated versionCode $CODE must exceed catalog code $SOURCE_CODE and fit Android's limit."
             exit 1
@@ -97,9 +96,6 @@ jobs:
           # them with debug symbols (~2.2 MB larger than the same sources built with the NDK).
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "ndk;28.2.13676358"
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
-
-      - name: Enable Gradle dependency caching
-        uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests before official Release
         if: ${{ inputs.mode == 'release' }}
@@ -161,14 +157,20 @@ jobs:
             || { echo "::error::APK versionCode does not match the CI-stamped version."; exit 1; }
           echo "apk bytes: $(stat -c%s "$APK")"
 
-      - name: Upload test APK without publishing any Release
+      # The repo's GitHub Actions policy rejects marketplace action refs at startup.
+      # This local JavaScript action uses GitHub's own artifact toolkit and receives
+      # the runtime artifact token from the runner, without publishing a Release.
+      - name: Install local artifact client
         if: ${{ inputs.mode == 'artifact' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: Look4Sat-test-${{ steps.version.outputs.code }}-${{ steps.version.outputs.short_sha }}
-          path: source/app/build/outputs/apk/release/app-release.apk
-          retention-days: 7
-          if-no-files-found: error
+        run: npm install --prefix source/.github/actions/local-artifact --no-save --no-audit --no-fund @actions/artifact@2.3.2
+
+      - name: Upload signed test APK without creating any Release
+        if: ${{ inputs.mode == 'artifact' }}
+        uses: ./source/.github/actions/local-artifact
+        env:
+          ARTIFACT_NAME: Look4Sat-test-${{ steps.version.outputs.code }}-${{ steps.version.outputs.short_sha }}
+          ARTIFACT_PATH: source/app/build/outputs/apk/release/app-release.apk
+          ARTIFACT_RETENTION_DAYS: 7
 
       - name: Publish as a prerelease test package
         if: ${{ inputs.mode == 'test' }}
