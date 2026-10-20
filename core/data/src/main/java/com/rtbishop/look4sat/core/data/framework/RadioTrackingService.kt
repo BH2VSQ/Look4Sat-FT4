@@ -127,6 +127,7 @@ class RadioTrackingService(
     @Volatile private var nativeBaseOverride: com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies? = null
     @Volatile private var ctcssExplicit = false
     private var manualJob: Job? = null
+    private var macroSyncJob: Job? = null
     @Volatile private var manualOwner = RadioTransmitOwner.NONE
     private val manualEpoch = AtomicLong()
     private val tuningWake = Channel<Unit>(Channel.CONFLATED)
@@ -532,6 +533,7 @@ class RadioTrackingService(
 
     private suspend fun disconnectRadiosLocked() {
         diagnose("disconnect/start", "disconnect requested")
+        macroSyncJob?.cancelAndJoin();macroSyncJob=null
         cancelTrackingAndJoin()
         emergencyPttOff()
         txController?.disconnect()
@@ -828,6 +830,58 @@ class RadioTrackingService(
                 }
             }
         }
+    }
+
+    override fun setNativeCwOptions(options: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions) = changeRadioSettings {
+        if(txController?.setNativeCwOptions(options)!=true) failTrackingCommand("CW settings were not accepted")
+        else { tuningRevision.incrementAndGet();tuningWake.trySend(Unit) }
+    }
+
+    override fun refreshNativeDiagnostics() {
+        appScope.launch { txController?.refreshNativeDiagnostics() }
+    }
+
+    override fun syncHandsetCwPresets() {
+        if(macroSyncJob?.isActive==true || userFrequencyEditingBlocked()) {
+            failTrackingCommand("Radio is busy");return
+        }
+        val radio=txController ?: return
+        val presets=runCatching { HandsetMacroSync.normalize(settingsRepo.getRemoteCwPresets()) }
+            .getOrElse {failTrackingCommand(it.message ?: "Invalid CW presets");return}
+        macroSyncJob=appScope.launch {
+            var staged=false
+            try {
+                check(radio.remoteState?.value?.capabilities?.handsetMacros==true) {"Upgrade the handset firmware to sync CW presets"}
+                HandsetMacroSync.stage(presets,(java.security.SecureRandom().nextInt().toLong() and 0xffffffffL).coerceAtLeast(1)) { data ->
+                    transmitMutex.withLock {
+                        check(txController===radio && radio.isConnected && !hasTransmitClaim && _state.value.pttState==PttState.OFF &&
+                            radio.remoteState?.value?.let {it.transmitStateKnown && it.txSource==0}==true) {"Radio is busy or disconnected"}
+                        if(data[0]==1.toByte())staged=true
+                        radio.handsetMacroCommand(data)
+                    }
+                }
+                val terminal=withTimeoutOrNull(300_000L) {
+                    radio.remoteState!!.first { !it.connected || it.handsetMacroStatus?.busy==false }
+                }
+                check(terminal?.connected==true && terminal.handsetMacroStatus?.phase==8) {"CW preset synchronization cancelled or failed"}
+                for(index in presets.indices) {
+                    val saved=radio.handsetMacroCommand(byteArrayOf(0,index.toByte()))?.let(L4sProtocol::macroStatus)
+                    check(saved?.text==presets[index]) {"CW preset readback failed for F${index+1}"}
+                }
+                staged=false
+                diagnose("l4s/macros","Eight handset CW presets saved and verified")
+            } catch(cancelled:CancellationException) {throw cancelled}
+            catch(error:Exception) {failTrackingCommand(error.message ?: "CW preset synchronization failed")}
+            finally {
+                if(staged) withContext(NonCancellable) {if(txController===radio && radio.isConnected)radio.handsetMacroCommand(byteArrayOf(4))}
+                tuningRevision.incrementAndGet();tuningWake.trySend(Unit)
+            }
+        }
+    }
+
+    override fun cancelHandsetCwSync() {
+        macroSyncJob?.cancel()
+        appScope.launch {txController?.handsetMacroCommand(byteArrayOf(4))}
     }
 
     override fun cancelRemoteTransmit() {
@@ -1424,13 +1478,15 @@ class RadioTrackingService(
                             pass.name,Math.toDegrees(position.azimuth),Math.toDegrees(position.elevation),
                             tx.remoteState?.value?.let { profileKey(it,transponder) } ?: radioContextKey(transponder.uuid),
                             distanceKm = position.distance, altitudeKm = position.altitude,
-                            secondsUntilAos = ((pass.aosTime - now) / 1000).coerceAtLeast(0)))
+                            secondsUntilAos = ((pass.aosTime - now) / 1000).coerceAtLeast(0),
+                            secondsUntilLos = ((pass.losTime - now) / 1000).coerceAtLeast(0),
+                            passPhase = when {now < pass.aosTime -> 1;now < pass.losTime -> 2;else -> 3} ))
                     }
                     // Keep BOTH RX and TX fixed during all transmission, including CW gaps.
                     val frozen = hasTransmitClaim || !current.catTransmitStateKnown || current.catTransmitting ||
                         current.pttState != PttState.OFF || tx?.remoteState?.value?.txSource?.let { it!=0 }==true ||
                         tx?.remoteState?.value?.nativeMenuOpen==true || tx?.remoteState?.value?.transmitStateKnown==false ||
-                        tx?.remoteState?.value?.profileStore?.busy==true
+                        tx?.remoteState?.value?.profileStore?.busy==true || tx?.remoteState?.value?.handsetMacroStatus?.busy==true
                     if (frozenLastCycle && !frozen) {
                         lastSetTx = null
                         lastSetRx = null
@@ -1667,7 +1723,7 @@ class RadioTrackingService(
         val current=_state.value
         val remote=txController?.remoteState?.value ?: current.remoteRadio
         return current.frequencyEditingLocked || hasTransmitClaim || manualJob?.isActive==true || remote?.txSource?.let {it!=0}==true ||
-            remote?.nativeMenuOpen==true || remote?.profileStore?.busy==true || remote?.let { !it.connected || !it.transmitStateKnown }==true
+            remote?.nativeMenuOpen==true || remote?.profileStore?.busy==true || remote?.handsetMacroStatus?.busy==true || remote?.let { !it.connected || !it.transmitStateKnown }==true
     }
 
     private fun frequencyEditingBlockMessage(): String {

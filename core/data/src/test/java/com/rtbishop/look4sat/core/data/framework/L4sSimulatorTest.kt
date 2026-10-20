@@ -33,14 +33,28 @@ class L4sSimulatorTest {
             assertTrue(radio.updateTrackingBases(com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(435100000,145900000)))
             assertEquals(250L,radio.remoteState.value.nativeStepHz)
             assertEquals(435100000L,radio.remoteState.value.nativeBaseFrequencies!!.rxHz)
+            assertTrue(radio.remoteState.value.capabilities!!.cwOptions)
+            val options=com.rtbishop.look4sat.core.domain.repository.NativeCwOptions(25,70,4,45,3,12)
+            assertTrue(radio.setNativeCwOptions(options))
+            assertEquals(options.copy(modified=true),radio.remoteState.value.nativeCwOptions)
+            assertTrue(radio.refreshNativeDiagnostics())
+            assertNotNull(radio.remoteState.value.nativeDiagnostics)
+            val staged=HandsetMacroSync.stage(List(8){"CQ F${it+1}"},123) {radio.handsetMacroCommand(it)}
+            assertTrue(staged.waitingForConfirmation)
+            assertFalse(radio.pttOn())
+            assertEquals(FrequencyPairResult.HELD,radio.setTrackingFrequencies(435101000,145901000))
+            assertNotNull(radio.handsetMacroCommand(byteArrayOf(4)))
+            withTimeout(5000) {radio.remoteState.first {it.handsetMacroStatus?.busy==false}}
             assertTrue(radio.setSplitModes("FM","FM"))
             assertEquals(FrequencyPairResult.APPLIED,radio.setTrackingFrequencies(435100006,145900004))
             assertEquals(435100000L,radio.remoteState.value.rxFrequencyHz)
             assertEquals(145900000L,radio.remoteState.value.txFrequencyHz)
             assertTrue(radio.configureTxCtcss(67.0))
             assertTrue(radio.pttOn())
+            assertFalse(radio.setNativeCwOptions(options.copy(wpm=30)))
             assertTrue(radio.remoteState.value.capabilities!!.trackingDisplay)
-            assertTrue(radio.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay("TEST",137.0,34.0)))
+            assertTrue(radio.updateTrackingDisplay(com.rtbishop.look4sat.core.domain.repository.RadioTrackingDisplay("TEST",137.0,34.0,
+                secondsUntilAos=120,secondsUntilLos=600,passPhase=1)))
             assertEquals(FrequencyPairResult.HELD,radio.setTrackingFrequencies(435101000,145901000))
             assertEquals(435100000L,radio.readWorkingFrequency())
             assertEquals(145900000L,radio.readTxVfoFrequency())
@@ -52,7 +66,7 @@ class L4sSimulatorTest {
             val heldRevision=radio.remoteState.value.appliedRevision
             withTimeout(5000) { radio.remoteState.first { it.cwState==CwTransmitState.DONE } }
             assertEquals(2,radio.remoteState.value.txSource) // operation held until STOP, including chunk boundaries
-            assertTrue(radio.startCw("DE TEST",20))
+            assertTrue(radio.remoteState.value.toString(),radio.startCw("DE TEST",20))
             withTimeout(5000) { radio.remoteState.first { it.cwState==CwTransmitState.DONE } }
             assertEquals(heldRevision,radio.remoteState.value.appliedRevision)
             assertTrue(radio.pttOff())

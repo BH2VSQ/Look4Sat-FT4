@@ -15,6 +15,18 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioProfileManagerTest {
+    @Test fun extendedCwBackupRequiresNewFirmwareBeforeAnyMutation()=runTest {
+        val fixture=Fixture()
+        val raw=RadioProfileRecordCodec.bytes(record().rawHex)
+        raw[4]=2;raw[46]=30;raw[47]=1;raw[60]=0;raw[61]=0
+        L4sProtocol.put16(raw,60,RadioProfileRecordCodec.crc(raw))
+        val upgraded=checkNotNull(RadioProfileRecordCodec.decode(0,raw))
+        val json=RadioProfileBackup.encode(listOf(upgraded),1)
+        assertFalse(fixture.manager.prepareImport(json));assertEquals(0,fixture.radio.mutations)
+        val remote=fixture.radio.remote.value
+        fixture.radio.remote.value=remote.copy(capabilities=remote.capabilities!!.copy(cwOptions=true))
+        assertTrue(fixture.manager.prepareImport(json));assertEquals(0,fixture.radio.mutations)
+    }
     @Test fun exportReadsSavedSnapshotWithoutMutatingRadio()=runTest {
         val fixture=Fixture();val json=fixture.manager.export()
         assertNotNull(json);assertEquals(1,RadioProfileBackup.decode(json!!).size)

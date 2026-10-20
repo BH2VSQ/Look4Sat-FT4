@@ -976,4 +976,18 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="prefs_bottom_tool_current">Current shortcut: %1$s</string>
     <string name="prefs_bottom_tool_choose">Choose shortcut</string>
     <string name="prefs_bottom_tool_description">Choose the feature shown in the fourth bottom-navigation slot. FT4 moves into More when another feature is selected.</string>
+    <string name="rc_native_diagnostics">Radio diagnostics</string>
+    <string name="rc_native_refresh">Refresh</string>
+    <string name="rc_cw_options">CW settings</string>
+    <string name="rc_cw_sync">Sync F1–F8</string>
+    <string name="rc_cw_sync_confirm">Confirm with MENU on the handset</string>
+    <string name="rc_cw_sync_busy">Syncing CW presets…</string>
+    <string name="rc_cw_sync_done">F1–F8 saved on handset</string>
+    <string name="rc_cw_pitch">Sidetone: %1$d Hz</string>
+    <string name="rc_cw_volume">Volume: %1$d</string>
+    <string name="rc_cw_hang">Break-in hang: %1$d ms</string>
+    <string name="rc_cw_keyer">Keyer: %1$s</string>
+    <string name="rc_cw_spacing">Farnsworth: %1$s</string>
+    <string name="rc_cw_spacing_off">Off</string>
+    <string name="rc_cw_save_on_radio">Apply here; save permanently with handset MENU.</string>
 </resources>

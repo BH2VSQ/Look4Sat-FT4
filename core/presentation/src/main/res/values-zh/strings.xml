@@ -928,4 +928,18 @@
     <string name="prefs_bottom_tool_current">当前快捷功能：%1$s</string>
     <string name="prefs_bottom_tool_choose">选择快捷功能</string>
     <string name="prefs_bottom_tool_description">选择显示在底部第 4 个功能位的页面。选择其他功能后，FT4 会自动移入“更多”菜单。</string>
+    <string name="rc_native_diagnostics">电台诊断</string>
+    <string name="rc_native_refresh">刷新</string>
+    <string name="rc_cw_options">CW 参数</string>
+    <string name="rc_cw_sync">同步 F1–F8</string>
+    <string name="rc_cw_sync_confirm">请在手台按 MENU 确认</string>
+    <string name="rc_cw_sync_busy">正在同步 CW 预设…</string>
+    <string name="rc_cw_sync_done">F1–F8 已保存到手台</string>
+    <string name="rc_cw_pitch">侧音：%1$d Hz</string>
+    <string name="rc_cw_volume">音量：%1$d</string>
+    <string name="rc_cw_hang">延时：%1$d ms</string>
+    <string name="rc_cw_keyer">键控：%1$s</string>
+    <string name="rc_cw_spacing">字符间隔：%1$s</string>
+    <string name="rc_cw_spacing_off">关闭</string>
+    <string name="rc_cw_save_on_radio">应用后，在手台 MENU 确认永久保存。</string>
 </resources>

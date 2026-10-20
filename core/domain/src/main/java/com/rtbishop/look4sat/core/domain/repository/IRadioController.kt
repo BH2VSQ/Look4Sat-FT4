@@ -33,6 +33,9 @@ interface IRadioController {
         prepareTrackingContext(radioContextKey(transponderUuid))
     suspend fun updateTrackingBases(bases: RadioBaseFrequencies): Boolean = true
     suspend fun profileStoreCommand(data:ByteArray):ByteArray?=null
+    suspend fun setNativeCwOptions(options: NativeCwOptions): Boolean = false
+    suspend fun handsetMacroCommand(data: ByteArray): ByteArray? = null
+    suspend fun refreshNativeDiagnostics(): Boolean = false
 
     val isConnected: Boolean
 

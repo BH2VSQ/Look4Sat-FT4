@@ -58,7 +58,7 @@ import com.rtbishop.look4sat.core.presentation.formatFrequency
 
 internal fun RadioControlSubState.canSendL4sCw(): Boolean =
     remoteRadio?.connected == true && remoteRadio.capabilities?.cwText == true &&
-        remoteRadio.txEnabled && remoteRadio.transmitStateKnown && remoteRadio.profileStore?.busy!=true &&
+        remoteRadio.txEnabled && remoteRadio.transmitStateKnown && remoteRadio.profileStore?.busy!=true && remoteRadio.handsetMacroStatus?.busy!=true &&
         !remoteRadio.nativeMenuOpen && remoteRadio.txSource == 0 && isReady && txPanel.mode == "CW" &&
         transmitOwner == RadioTransmitOwner.NONE && pttState == PttState.OFF
 
@@ -86,11 +86,13 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
     val action by rememberUpdatedState(onAction)
     val requiresMicrophone by rememberUpdatedState(remote.phoneMicrophone)
     val canVoice by rememberUpdatedState(remote.connected && !remote.nativeMenuOpen && control.isReady && caps?.voicePtt == true &&
-        remote.txEnabled && remote.transmitStateKnown && remote.profileStore?.busy!=true &&
+        remote.txEnabled && remote.transmitStateKnown && remote.profileStore?.busy!=true && remote.handsetMacroStatus?.busy!=true &&
         (!remote.phoneMicrophone || remote.bluetoothAudioConnected) &&
         control.txPanel.mode in setOf("FM", "NFM") && control.transmitOwner == RadioTransmitOwner.NONE &&
         control.pttState == PttState.OFF)
     var showCw by rememberSaveable { mutableStateOf(false) }
+    var showNativeOptions by rememberSaveable { mutableStateOf(false) }
+    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     val pttLabel = stringResource(R.string.rc_l4s_hold)
     DisposableEffect(Unit) { onDispose { action(RadarAction.StopRemoteTx) } }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -107,7 +109,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         Text(stringResource(R.string.rc_l4s_source, when(remote.txSource) {
             1 -> "PTT"; 2 -> "CW"; 3 -> stringResource(R.string.rc_l4s_local); else -> stringResource(R.string.rc_l4s_off)
         }), style = MaterialTheme.typography.bodySmall)
-        if(caps?.nativeSettings==true) {
+        if(caps.nativeSettings) {
             fun toneLabel(hz:Double?)=hz?.let { "${it} Hz" } ?: "OFF"
             Text(stringResource(R.string.rc_l4s_tones,toneLabel(remote.txCtcssHz),toneLabel(remote.rxCtcssHz),toneLabel(remote.activationCtcssHz)),
                 style=MaterialTheme.typography.bodySmall)
@@ -141,6 +143,11 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         }
         OutlinedButton(onClick = { action(RadarAction.StopRemoteTx) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.rc_l4s_stop))
+        }
+        if(caps?.nativeDiagnostics==true) {
+            OutlinedButton(onClick={showDiagnostics=true;action(RadarAction.RefreshNativeDiagnostics)},modifier=Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.rc_native_diagnostics))
+            }
         }
         if (remote.isN76) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -211,6 +218,22 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                         }
                     }
                 }
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    if(caps.cwOptions) OutlinedButton(onClick={showNativeOptions=true},
+                        enabled=!control.frequencyEditingLocked && remote.nativeCwOptions!=null,modifier=Modifier.weight(1f)) {
+                        Text(stringResource(R.string.rc_cw_options))
+                    }
+                    if(caps.handsetMacros) OutlinedButton(onClick={action(RadarAction.SyncHandsetCwPresets)},
+                        enabled=!control.frequencyEditingLocked,modifier=Modifier.weight(1f)) {
+                        Text(stringResource(R.string.rc_cw_sync))
+                    }
+                }
+                remote.handsetMacroStatus?.let { status ->
+                    if(status.busy) {
+                        Text(stringResource(if(status.waitingForConfirmation)R.string.rc_cw_sync_confirm else R.string.rc_cw_sync_busy))
+                        OutlinedButton(onClick={action(RadarAction.CancelHandsetCwSync)}) {Text(stringResource(android.R.string.cancel))}
+                    } else if(status.phase==8) Text(stringResource(R.string.rc_cw_sync_done))
+                }
                 OutlinedTextField(text, { text = it.take(4096); error = null },
                     label = { Text(stringResource(R.string.rc_l4s_message)) },
                     enabled = control.transmitOwner == RadioTransmitOwner.NONE, modifier = Modifier.fillMaxWidth())
@@ -221,7 +244,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                 Text(stringResource(R.string.rc_l4s_progress, remote.cwPosition, remote.cwLength, remote.cwState.name))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
-                        runCatching { CwTransmitText.chunks(text, caps?.maxCwText ?: 92) }
+                        runCatching { CwTransmitText.chunks(text, caps.maxCwText) }
                             .onSuccess { action(RadarAction.SendCw(text, wpm.coerceIn(minWpm, maxWpm))) }
                             .onFailure { error = it.message }
                     }, enabled = control.canSendL4sCw() && text.isNotBlank()) {
@@ -251,4 +274,9 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
             }
         }
     }
+    if(showNativeOptions) NativeCwOptionsDialog(remote.nativeCwOptions ?: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions(),
+        enabled=!control.frequencyEditingLocked,onDismiss={showNativeOptions=false},
+        onApply={action(RadarAction.SetNativeCwOptions(it));showNativeOptions=false})
+    if(showDiagnostics) NativeDiagnosticsDialog(remote.nativeDiagnostics,onDismiss={showDiagnostics=false},
+        onRefresh={action(RadarAction.RefreshNativeDiagnostics)})
 }

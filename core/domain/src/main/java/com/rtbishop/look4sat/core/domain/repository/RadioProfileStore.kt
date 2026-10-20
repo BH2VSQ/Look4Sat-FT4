@@ -38,8 +38,14 @@ object RadioProfileRecordCodec {
         require(slot in 0..55 && raw.size==64)
         if(raw.all {it==(-1).toByte()})return null
         fun u(index:Int)=raw[index].toInt() and 255
-        val valid=raw.copyOfRange(0,4).toString(Charsets.US_ASCII)=="L4SM" && u(4)==1 &&
-            u(46)==0 && u(47)==0 && u(62)==0 && u(63)==0 && crc(raw,60)==u(60)+(u(61) shl 8) &&
+        val storedCrc=u(60)+(u(61) shl 8)
+        val versionValid=when(u(4)) {
+            1 -> u(46)==0 && u(47)==0 && u(62)==0 && u(63)==0 && crc(raw,60)==storedCrc
+            2 -> u(46) in 1..200 && u(47) in 0..3 && (u(62)==0 || u(62) in 5..44) && u(63)==0 &&
+                crc(raw.copyOf().also {it[60]=0;it[61]=0})==storedCrc
+            else -> false
+        }
+        val valid=raw.copyOfRange(0,4).toString(Charsets.US_ASCII)=="L4SM" && versionValid &&
             u(5)<=3 && u(6)<=7 && u(7) in 10..45 && u(8) in 45..120 && u(8)%5==0 && u(9)<=6 &&
             (10..12).all {u(it)<=50} && u(13)<=9 && listOf(30,34).all {read32(raw,it).let {v->v==0L||v in 18000000L..1300000000L}} &&
             listOf(38,42).all {read32(raw,it).toInt() in -100000..100000}

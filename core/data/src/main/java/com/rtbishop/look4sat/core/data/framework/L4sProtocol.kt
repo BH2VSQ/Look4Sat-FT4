@@ -1,6 +1,7 @@
 package com.rtbishop.look4sat.core.data.framework
 
 import com.rtbishop.look4sat.core.domain.repository.CwTransmitState
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
 import com.rtbishop.look4sat.core.domain.repository.RemoteRadioCapabilities
 import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
 
@@ -20,6 +21,10 @@ internal object L4sProtocol {
     const val SETTINGS = 0x70C
     const val PROFILE = 0x70D
     const val PROFILE_STORE = 0x70E
+    const val CW_OPTIONS = 0x70F
+    const val MACROS = 0x710
+    const val DIAGNOSTICS = 0x711
+    const val PASS_INFO = 0x712
     const val APPLIED = 0
     const val ACCEPTED = 1
     private const val MAX_BODY = 120
@@ -58,7 +63,7 @@ internal object L4sProtocol {
     }
 
     fun reply(body: ByteArray): Reply? {
-        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x870e) return null
+        if(body.size < 12 || body[4]!=1.toByte() || u16(body,2)!=body.size-4 || u16(body,0) !in 0x8700..0x8712) return null
         return Reply(u16(body,0) and 0x7fff,u16(body,6),u32(body,8),body[5].toInt() and 255,body.copyOfRange(12,body.size))
     }
 
@@ -90,7 +95,8 @@ internal object L4sProtocol {
         val caps=RemoteRadioCapabilities(
             u16(data,9).toLong(),data[11].toInt() and 255,data[12].toInt() and 255,data[13].toInt() and 255,
             u16(data,14),u32(data,16),u32(data,20),data[40].toInt() and 255,data[41].toInt() and 255,
-            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0,bits and 256!=0,bits and 512!=0
+            bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0,bits and 256!=0,bits and 512!=0,
+            bits and 1024!=0,bits and 2048!=0,bits and 4096!=0,bits and 8192!=0
         )
         if(caps.frequencyStepHz!=10L || caps.maxCwText !in 1..92 || caps.minimumWpm !in 1..45 ||
             caps.maximumWpm !in caps.minimumWpm..45 || caps.watchdogMillis!=1500 || !caps.atomicPair) return null
@@ -120,7 +126,7 @@ internal object L4sProtocol {
         if(tones.any { it!=0 && it !in com.rtbishop.look4sat.core.domain.utility.CtcssTones.tenths }) return null
         val base=snapshot(reply.copy(data=p.copyOfRange(0,24)),old) ?: return null
         return base.copy(txCtcssHz=tones[0].takeIf {it!=0}?.div(10.0),rxCtcssHz=tones[1].takeIf {it!=0}?.div(10.0),
-            activationCtcssHz=tones[2].takeIf {it!=0}?.div(10.0),nativePower=p[25].toInt(),nativeCwWpm=p[26].toInt(),
+            activationCtcssHz=tones[2].takeIf {it!=0}?.div(10.0),nativePower=p[25].toInt(),nativeCwWpm=old.nativeCwOptions?.wpm ?: p[26].toInt(),
             nativeMenuOpen=p[38].toInt() and 1 !=0,settingsSequence=reply.sequence,
             nativeSettingsModified=p[38].toInt() and 8 !=0,nativeProfileValid=p[38].toInt() and 16 !=0,
             nativeProfileKey=p.copyOfRange(39,55).joinToString("") { "%02x".format(it.toInt() and 255) },
@@ -149,6 +155,29 @@ internal object L4sProtocol {
         if(u(1)>11 || u(2)>100 || u(5)>56 || u(6)!=56 || u(16)>56 || u16(data,17) !in 10..1000 || u16(data,17)%10!=0)return null
         return com.rtbishop.look4sat.core.domain.repository.RadioProfileStoreStatus(u(1),u(2),u(3),u(4) and 1!=0,
             u(4) and 2!=0,u(4) and 4!=0,u(5),u(6),u32(data,8),u32(data,12),u(16),u16(data,17).toLong(),u(19),u(20),u(21),u(22),u(4) and 8!=0)
+    }
+
+    fun cwOptions(p: ByteArray): com.rtbishop.look4sat.core.domain.repository.NativeCwOptions? {
+        if (p.size != 8 || p[0] != 1.toByte() || p[7].toInt() !in 0..1) return null
+        fun u(i: Int) = p[i].toInt() and 255
+        return com.rtbishop.look4sat.core.domain.repository.NativeCwOptions(u(1), u(2), u(3), u(4), u(5), u(6), u(7) != 0)
+            .takeIf { it.valid() }
+    }
+
+    fun macroStatus(p: ByteArray): com.rtbishop.look4sat.core.domain.repository.HandsetMacroStatus? {
+        if (p.size < 10 || p[0] != 1.toByte()) return null
+        fun u(i: Int) = p[i].toInt() and 255
+        if ((u(1) !in 0..7 && u(1) != 255) || u(2) > 10 || u(8) > 1 || u(9) > 92 || p.size != 10 + u(9)) return null
+        val text = p.copyOfRange(10, p.size).toString(Charsets.US_ASCII)
+        if (runCatching { CwTransmitText.normalize(text) }.isFailure && text.isNotEmpty()) return null
+        return com.rtbishop.look4sat.core.domain.repository.HandsetMacroStatus(u(2), u(3), u32(p, 4), u(8) != 0, u(1), text)
+    }
+
+    fun diagnostics(p: ByteArray): com.rtbishop.look4sat.core.domain.repository.NativeRadioDiagnostics? {
+        if (p.size != 36 || p[0] != 1.toByte()) return null
+        return com.rtbishop.look4sat.core.domain.repository.NativeRadioDiagnostics(
+            p[1].toInt() and 255, p[2].toInt() and 255, p[3].toInt() and 255,
+            u32(p,4), u32(p,8), u32(p,12), u32(p,16), u32(p,20), u32(p,24), u32(p,28), u32(p,32))
     }
 
     fun modeNumber(mode: String): Int? = when(mode.uppercase(java.util.Locale.ROOT)) {

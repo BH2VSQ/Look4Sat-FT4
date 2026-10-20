@@ -23,12 +23,36 @@ data class RemoteRadioCapabilities(
     val trackingDisplay: Boolean = false,
     val nativeSettings: Boolean = false,
     val satelliteProfiles: Boolean = false,
-    val transactionalProfileStore: Boolean = false
+    val transactionalProfileStore: Boolean = false,
+    val cwOptions: Boolean = false,
+    val handsetMacros: Boolean = false,
+    val nativeDiagnostics: Boolean = false,
+    val passClock: Boolean = false
 )
 
 data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double,
     val contextKey: String? = null, val distanceKm: Double = 0.0, val altitudeKm: Double = 0.0,
-    val secondsUntilAos: Long = 0)
+    val secondsUntilAos: Long = 0, val secondsUntilLos: Long = 0, val passPhase: Int = 0)
+
+data class NativeCwOptions(val wpm: Int = 20, val pitch: Int = 70, val volume: Int = 3,
+    val hang: Int = 30, val keyer: Int = 1, val spacing: Int = 0, val modified: Boolean = false) {
+    fun valid() = wpm in 10..45 && pitch in 45..120 && pitch % 5 == 0 && volume in 0..6 &&
+        hang in 1..200 && keyer in 0..3 && (spacing == 0 || spacing in 5..44)
+}
+
+data class HandsetMacroStatus(val phase: Int, val error: Int, val generation: Long, val readOnly: Boolean,
+    val slot: Int = 255, val text: String = "") {
+    val busy get() = phase in 1..7
+    val waitingForConfirmation get() = phase == 2
+}
+
+data class NativeRadioDiagnostics(val stopReason: Int, val lastRejection: Int, val rssi: Int,
+    val requests: Long, val rejected: Long, val aborts: Long, val usbLosses: Long, val replyDrops: Long,
+    val maximumGapMillis: Long, val crcErrors: Long, val lengthErrors: Long) {
+    fun summary() = "stop=$stopReason lastRejection=$lastRejection rssi=$rssi requests=$requests rejected=$rejected " +
+        "aborts=$aborts usbLosses=$usbLosses replyDrops=$replyDrops maxGapMs=$maximumGapMillis " +
+        "crcErrors=$crcErrors lengthErrors=$lengthErrors"
+}
 
 fun radioContextKey(uuid: String): String = java.security.MessageDigest.getInstance("SHA-256")
     .digest(uuid.toByteArray(Charsets.UTF_8)).take(16).joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -102,7 +126,10 @@ data class RemoteRadioState(
     val recordingExportError: String? = null,
     val recordingExporting: Boolean = false,
     val recordingExported: Boolean = false,
-    val isN76: Boolean = false
+    val isN76: Boolean = false,
+    val nativeCwOptions: NativeCwOptions? = null,
+    val handsetMacroStatus: HandsetMacroStatus? = null,
+    val nativeDiagnostics: NativeRadioDiagnostics? = null
 )
 
 object CwTransmitText {

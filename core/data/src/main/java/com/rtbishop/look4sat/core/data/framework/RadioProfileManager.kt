@@ -86,7 +86,11 @@ internal class RadioProfileManager(
     }
     suspend fun refresh():Boolean=execute {val records=readAll(radio());mutable.update {it.copy(profiles=records)}}
     suspend fun prepareImport(json:String):Boolean=execute {
-        val imported=RadioProfileBackup.decode(json);val radio=radio();val existing=readAll(radio)
+        val imported=RadioProfileBackup.decode(json);val radio=radio()
+        check(radio.remoteState?.value?.capabilities?.cwOptions==true || imported.none {RadioProfileRecordCodec.bytes(it.rawHex)[4]==2.toByte()}) {
+            "Upgrade the handset firmware before restoring extended CW settings"
+        }
+        val existing=readAll(radio)
         RadioProfileRecordCodec.merge(existing,imported,emptySet())
         previewGeneration=listedGeneration
         mutable.update {it.copy(profiles=existing,importProfiles=imported)}

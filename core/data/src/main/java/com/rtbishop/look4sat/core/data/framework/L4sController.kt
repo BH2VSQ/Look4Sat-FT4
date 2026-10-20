@@ -89,6 +89,9 @@ class L4sController(
                             if(caps.satelliteProfiles) request(L4sProtocol.PROFILE,byteArrayOf(2)) else request(L4sProtocol.SETTINGS)
                             if(caps.transactionalProfileStore) request(L4sProtocol.PROFILE_STORE,byteArrayOf(0))
                         }
+                        if(isConnected && caps.cwOptions && polls%5==0) request(L4sProtocol.CW_OPTIONS,byteArrayOf(0))
+                        if(isConnected && caps.handsetMacros) request(L4sProtocol.MACROS,byteArrayOf(0,-1))
+                        if(isConnected && caps.nativeDiagnostics && polls%15==0) request(L4sProtocol.DIAGNOSTICS)
                     }
                 } catch(cancelled: CancellationException) { throw cancelled }
                 catch(error: Exception) {
@@ -141,7 +144,7 @@ class L4sController(
                         return@withLock null
                     }
                 }
-                val response=withTimeoutOrNull(if(command==L4sProtocol.PROFILE_STORE)250L else 600L) {
+                val response=withTimeoutOrNull(if(command in setOf(L4sProtocol.PROFILE_STORE,L4sProtocol.MACROS))250L else 600L) {
                     var match: L4sProtocol.Reply?=null
                     while(match==null) {
                         val chunk=transport.readAvailable(1024)
@@ -159,10 +162,27 @@ class L4sController(
                 if(response!=null) {
                     if(command!=L4sProtocol.KEEPALIVE) diagnose("l4s/reply","cmd=$label seq=$seq result=${response.result} rxBytes=$receivedBytes")
                     if(command!=L4sProtocol.HELLO) {
+                        if(command in setOf(L4sProtocol.CW_OPTIONS,L4sProtocol.MACROS,L4sProtocol.DIAGNOSTICS) && response.result<=1) {
+                            val valid=when(command) {
+                                L4sProtocol.CW_OPTIONS -> L4sProtocol.cwOptions(response.data)?.also { options ->
+                                    state.update {it.copy(nativeCwOptions=options,nativeCwWpm=options.wpm)}
+                                }!=null
+                                L4sProtocol.MACROS -> L4sProtocol.macroStatus(response.data)?.also { status ->
+                                    if(state.value.handsetMacroStatus?.generation?.let {it!=status.generation}==true || status.busy) {armed=false;requestedPair=null}
+                                    state.update {it.copy(handsetMacroStatus=status)}
+                                }!=null
+                                else -> L4sProtocol.diagnostics(response.data)?.also { counters ->
+                                    state.update {it.copy(nativeDiagnostics=counters)}
+                                    diagnose("l4s/native-diagnostics",counters.summary())
+                                }!=null
+                            }
+                            if(!valid) {state.update {it.copy(error="Malformed L4S extended reply")};return@withLock null}
+                            return@withLock response
+                        }
                         if(command==L4sProtocol.PROFILE_STORE && response.result<=1) {
                             val store=L4sProtocol.storeStatus(response.data)
                             if(store==null){state.update {it.copy(error="Malformed L4S profile store reply",transmitStateKnown=false)};return@withLock null}
-                            if(store.generation!=state.value.profileStore?.generation){armed=false;requestedPair=null}
+                            if(state.value.profileStore?.generation?.let {it!=store.generation}==true){armed=false;requestedPair=null}
                             if(data.firstOrNull()==7.toByte()){armed=false;requestedPair=null}
                             state.update {it.copy(profileStore=store)}
                             return@withLock response
@@ -206,7 +226,12 @@ class L4sController(
         display.satelliteName.take(16).map { if(it in ' '..'~')it else '?' }.joinToString("")
             .toByteArray(Charsets.US_ASCII).copyInto(data,4)
         if(data.size==36) (display.contextKey ?: state.value.nativeProfileKey)?.let { decodeContextKey(it).copyInto(data,20) }
-        ok(request(L4sProtocol.CONTEXT,data))
+        if(!ok(request(L4sProtocol.CONTEXT,data))) return@withContext false
+        if(state.value.capabilities?.passClock==true) {
+            val clock=ByteArray(5);clock[0]=display.passPhase.coerceIn(0,3).toByte()
+            L4sProtocol.put32(clock,1,(if(display.passPhase==1)display.secondsUntilAos else display.secondsUntilLos).coerceIn(0,604800))
+            ok(request(L4sProtocol.PASS_INFO,clock))
+        } else true
     }
     override suspend fun prepareTrackingContext(contextKey: String): Boolean = withContext(dispatcher) {
         if(state.value.capabilities?.nativeSettings!=true) return@withContext true
@@ -251,9 +276,31 @@ class L4sController(
         if(!isConnected || state.value.capabilities?.transactionalProfileStore!=true)return@withContext null
         request(L4sProtocol.PROFILE_STORE,data)?.takeIf {it.result<=1}?.data
     }
+    override suspend fun setNativeCwOptions(options: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions): Boolean = withContext(dispatcher) {
+        if(!isConnected || state.value.capabilities?.cwOptions!=true || !options.valid() || nativeEditingBlocked()) return@withContext false
+        val result=ok(request(L4sProtocol.CW_OPTIONS,byteArrayOf(1,options.wpm.toByte(),options.pitch.toByte(),
+            options.volume.toByte(),options.hang.toByte(),options.keyer.toByte(),options.spacing.toByte())))
+        if(result) {armed=false;requestedPair=null}
+        result && ok(request(L4sProtocol.PROFILE,byteArrayOf(2)))
+    }
+    override suspend fun handsetMacroCommand(data: ByteArray): ByteArray? = withContext(dispatcher) {
+        if(!isConnected || state.value.capabilities?.handsetMacros!=true || data.isEmpty()) return@withContext null
+        if(data[0].toInt() !in setOf(0,4) && (state.value.txSource!=0 || !state.value.transmitStateKnown ||
+            state.value.profileStore?.busy==true || state.value.cwState in setOf(
+                com.rtbishop.look4sat.core.domain.repository.CwTransmitState.QUEUED,
+                com.rtbishop.look4sat.core.domain.repository.CwTransmitState.SENDING))) return@withContext null
+        request(L4sProtocol.MACROS,data)?.takeIf {it.result<=1}?.data
+    }
+    override suspend fun refreshNativeDiagnostics(): Boolean = withContext(dispatcher) {
+        isConnected && state.value.capabilities?.nativeDiagnostics==true && ok(request(L4sProtocol.DIAGNOSTICS))
+    }
+    private fun nativeEditingBlocked() = state.value.let { !it.transmitStateKnown || it.txSource!=0 || it.nativeMenuOpen ||
+        it.profileStore?.busy==true || it.handsetMacroStatus?.busy==true || it.cwState in setOf(
+            com.rtbishop.look4sat.core.domain.repository.CwTransmitState.QUEUED,
+            com.rtbishop.look4sat.core.domain.repository.CwTransmitState.SENDING) }
     override suspend fun setTrackingFrequencies(rxHz: Long, txHz: Long?): FrequencyPairResult = withContext(dispatcher) {
         if(!isConnected) return@withContext FrequencyPairResult.FAILED
-        if(!state.value.transmitStateKnown || state.value.profileStore?.busy==true)return@withContext FrequencyPairResult.HELD
+        if(!state.value.transmitStateKnown || state.value.profileStore?.busy==true || state.value.handsetMacroStatus?.busy==true)return@withContext FrequencyPairResult.HELD
         if(state.value.txSource!=0 || state.value.cwState in setOf(
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.QUEUED,
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.SENDING)) {
@@ -342,7 +389,7 @@ class L4sController(
         val raw=rawTargets ?: return false
         val rawTx=raw.txHz ?: return false
         val current=state.value
-        if(!current.transmitStateKnown || current.nativeMenuOpen || current.profileStore?.busy==true)return false
+        if(!current.transmitStateKnown || current.nativeMenuOpen || current.profileStore?.busy==true || current.handsetMacroStatus?.busy==true)return false
         val expected=com.rtbishop.look4sat.core.domain.repository.AppliedRadioFrequencies(
             com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(raw.rxHz,current.nativeRxCorrectionHz,tuningStepHz()),
             com.rtbishop.look4sat.core.domain.repository.l4sTrackingTarget(rawTx,current.nativeTxCorrectionHz,tuningStepHz()))

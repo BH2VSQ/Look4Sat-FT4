@@ -81,7 +81,7 @@ data class RadioTrackingState(
     val frequencyEditingLocked get()=trackingPhase==TrackingPhase.INITIALIZING || transmitPreparing || txLeaseId!=null ||
         !catTransmitStateKnown || catTransmitting || pttState!=PttState.OFF || transmitOwner!=RadioTransmitOwner.NONE ||
         remoteRadio?.txSource?.let {it!=0}==true || remoteRadio?.nativeMenuOpen==true || remoteRadio?.profileStore?.busy==true ||
-        remoteRadio?.let {!it.connected || !it.transmitStateKnown}==true
+        remoteRadio?.handsetMacroStatus?.busy==true || remoteRadio?.let {!it.connected || !it.transmitStateKnown}==true
 }
 
 interface IRadioTrackingService {
@@ -102,6 +102,10 @@ interface IRadioTrackingService {
     fun setMode(txMode: String, rxMode: String)
     fun setVoicePtt(enabled: Boolean) = Unit
     fun sendCw(text: String, wpm: Int) = Unit
+    fun setNativeCwOptions(options: NativeCwOptions) = Unit
+    fun syncHandsetCwPresets() = Unit
+    fun cancelHandsetCwSync() = Unit
+    fun refreshNativeDiagnostics() = Unit
     fun cancelRemoteTransmit() = Unit
     suspend fun refreshRadioProfiles():Boolean=false
     suspend fun requestDeleteRadioProfile(slot:Int):Boolean=false
