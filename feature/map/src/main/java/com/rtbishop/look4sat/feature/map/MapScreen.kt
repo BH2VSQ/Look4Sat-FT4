@@ -329,7 +329,6 @@ fun MapDestination(
 @Composable
 fun RadarPassMapScreenDestination(
     pass: RadarPassMapDestination,
-    navigateUp: () -> Unit,
     onSwitchPass: (RadarPassMapDestination) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -393,7 +392,6 @@ fun RadarPassMapScreenDestination(
         onMatchGrid = {},
         matchCalculating = false,
         passWindow = pass,
-        navigateUp = navigateUp,
         previousPass = previousPass,
         nextPass = nextPass,
         onSwitchPass = onSwitchPass,
@@ -413,7 +411,6 @@ private fun MapScreen(
     onMatchGrid: (String) -> Unit,
     matchCalculating: Boolean,
     passWindow: RadarPassMapDestination? = null,
-    navigateUp: () -> Unit = {},
     previousPass: RadarPassMapDestination? = null,
     nextPass: RadarPassMapDestination? = null,
     onSwitchPass: (RadarPassMapDestination) -> Unit = {},
@@ -582,14 +579,13 @@ private fun MapScreen(
         val isVertical = isVerticalLayout()
         if (passWindow != null) {
             TopBar {
-                IconCard(action = navigateUp, resId = R.drawable.ic_back)
                 IconCard(
                     action = { previousPass?.let(onSwitchPass) },
                     resId = R.drawable.ic_arrow,
                     modifier = rotateMod,
                     enabled = previousPass != null
                 )
-                TimerRow(timeString = timeString, isTimeAos = isTimeAos, showAosLabel = false)
+                TimerRow(timeString = timeString, isTimeAos = isTimeAos)
                 IconCard(
                     action = { nextPass?.let(onSwitchPass) },
                     resId = R.drawable.ic_arrow,

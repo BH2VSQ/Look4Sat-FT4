@@ -111,6 +111,9 @@ fun NavRoot(deeplink: String? = null) {
         deeplink?.let { rootBackStack.add(deeplinkResolver.resolve(it)) }
     }
     val navigateBack: () -> Unit = { rootBackStack.removeLastOrNull() }
+    // From the dedicated pass map, switch to an existing main tab and clear the
+    // radar/map overlays. The inner MainScreen keeps its own independent back stack.
+    var requestedMainTab by remember { androidx.compose.runtime.mutableStateOf<Screen?>(null) }
     val navigateToRadar: () -> Unit = { rootBackStack.add(RadarDestination) }
     val navigateToRadarPassMap: (Int, Long, Long) -> Unit = { catNum, aos, los ->
         if (los > aos) rootBackStack.add(RadarPassMapDestination(catNum, aos, los))
@@ -183,7 +186,9 @@ fun NavRoot(deeplink: String? = null) {
                     MainScreen(
                         navigateToRadar = navigateToRadar,
                         navigateToGridFinder = navigateToGridFinder,
-                        mutualViewModel = mutualViewModel
+                        mutualViewModel = mutualViewModel,
+                        requestedTab = requestedMainTab,
+                        onRequestedTabHandled = { requestedMainTab = null }
                     )
                 }
                 entry<RadarDestination> {
@@ -213,15 +218,25 @@ fun NavRoot(deeplink: String? = null) {
                     }
                 }
                 entry<RadarPassMapDestination> { pass ->
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background
+                    // Dedicated map keeps the same bottom navigation as regular
+                    // map/screens. It selects Map but every tab (including Map)
+                    // returns to that main tab instead of stacking more pages.
+                    Look4SatNavigationScaffold(
+                        selectedScreen = Screen.Map,
+                        onSelectScreen = { screen ->
+                            requestedMainTab = screen
+                            while (rootBackStack.size > 1) rootBackStack.removeLastOrNull()
+                        }
                     ) {
-                        RadarPassMapScreenDestination(
-                            pass = pass,
-                            navigateUp = navigateBack,
-                            onSwitchPass = switchRadarPassMap
-                        )
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background
+                        ) {
+                            RadarPassMapScreenDestination(
+                                pass = pass,
+                                onSwitchPass = switchRadarPassMap
+                            )
+                        }
                     }
                 }
                 entry<GridFinderDestination> {
@@ -248,20 +263,62 @@ fun NavRoot(deeplink: String? = null) {
     }
 }
 
+/**
+ * The same navigation bar/rail for the normal tabs and dedicated pass map.
+ * Do not use a separate lookalike: both destinations must stay consistent.
+ */
+@Composable
+private fun Look4SatNavigationScaffold(
+    selectedScreen: Screen?,
+    onSelectScreen: (Screen) -> Unit,
+    content: @Composable () -> Unit
+) {
+    val navItems = listOf(
+        Screen.Satellites, Screen.Passes, Screen.AMSAT,
+        Screen.Map, Screen.Mutual, Screen.Settings
+    )
+    NavigationSuiteScaffold(
+        navigationSuiteItems = {
+            navItems.forEach { screen ->
+                item(
+                    icon = { Icon(painterResource(screen.iconResId), stringResource(screen.titleResId)) },
+                    label = { Text(stringResource(screen.titleResId)) },
+                    selected = selectedScreen == screen,
+                    onClick = { onSelectScreen(screen) }
+                )
+            }
+        },
+        navigationSuiteColors = NavigationSuiteDefaults.colors(
+            navigationRailContainerColor = MaterialTheme.colorScheme.surfaceContainer
+        ),
+        layoutType = when {
+            !hasEnoughHeight() && hasEnoughWidth() -> NavigationSuiteType.NavigationRail
+            !hasEnoughWidth() -> NavigationSuiteType.ShortNavigationBarCompact
+            else -> NavigationSuiteType.ShortNavigationBarMedium
+        }
+    ) { content() }
+}
+
 @Composable
 fun MainScreen(
     navigateToRadar: () -> Unit = {},
     navigateToGridFinder: () -> Unit = {},
-    mutualViewModel: MutualViewModel
+    mutualViewModel: MutualViewModel,
+    requestedTab: Screen? = null,
+    onRequestedTabHandled: () -> Unit = {}
 ) {
     val backStack = rememberNavBackStack(Screen.Passes)
     val currentKey = backStack.lastOrNull()
     val navigateBack: () -> Unit = { backStack.removeLastOrNull() }
     val fadeTransition = fadeIn(animationSpec = tween(350)) togetherWith fadeOut(animationSpec = tween(350))
-    // Map sits at position 4 from the left, matching the upstream nav order
-    // (Satellites, Passes, AMSAT/Status, Map, ...), with the fork's Mutual tab
-    // appended before Settings.
-    val navItems = listOf(Screen.Satellites, Screen.Passes, Screen.AMSAT, Screen.Map, Screen.Mutual, Screen.Settings)
+    // Root-level dedicated map toolbar tabs target this nested main navigation.
+    LaunchedEffect(requestedTab) {
+        requestedTab?.let { tab ->
+            while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+            if (tab !is Screen.Passes) backStack.add(tab)
+            onRequestedTabHandled()
+        }
+    }
 
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
@@ -303,37 +360,13 @@ fun MainScreen(
             high = otherSettings.highElevation
         )
     ) {
-        NavigationSuiteScaffold(
-            navigationSuiteItems = {
-                navItems.forEach { screen ->
-                    val isSelected = when (currentKey) {
-                        is Screen.Satellites -> screen is Screen.Satellites
-                        is Screen.Passes -> screen is Screen.Passes
-                        is Screen.Map -> screen is Screen.Map
-                        is Screen.AMSAT -> screen is Screen.AMSAT
-                        is Screen.Mutual -> screen is Screen.Mutual
-                        is Screen.Settings -> screen is Screen.Settings
-                        else -> false
-                    }
-                    item(
-                        icon = { Icon(painterResource(screen.iconResId), stringResource(screen.titleResId)) },
-                        label = { Text(stringResource(screen.titleResId)) },
-                        selected = isSelected,
-                        onClick = {
-                            if (isSelected) return@item
-                            while (backStack.size > 1) backStack.removeAt(backStack.size - 1)
-                            if (screen !is Screen.Passes) backStack.add(screen)
-                        }
-                    )
+        Look4SatNavigationScaffold(
+            selectedScreen = currentKey as? Screen,
+            onSelectScreen = { screen ->
+                if (currentKey != screen) {
+                    while (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+                    if (screen !is Screen.Passes) backStack.add(screen)
                 }
-            },
-            navigationSuiteColors = NavigationSuiteDefaults.colors(
-                navigationRailContainerColor = MaterialTheme.colorScheme.surfaceContainer
-            ),
-            layoutType = when {
-                !hasEnoughHeight() && hasEnoughWidth() -> NavigationSuiteType.NavigationRail
-                !hasEnoughWidth() -> NavigationSuiteType.ShortNavigationBarCompact
-                else -> NavigationSuiteType.ShortNavigationBarMedium
             }
         ) {
             Column {

@@ -129,7 +129,7 @@ fun TopBar(content: @Composable RowScope.() -> Unit) {
 }
 
 @Composable
-fun RowScope.TimerRow(timeString: String, isTimeAos: Boolean, showAosLabel: Boolean = true) {
+fun RowScope.TimerRow(timeString: String, isTimeAos: Boolean) {
     val colorScheme = MaterialTheme.colorScheme
     val (aosColor, losColor) = if (isTimeAos) {
         colorScheme.primary to colorScheme.onSurface
@@ -142,14 +142,10 @@ fun RowScope.TimerRow(timeString: String, isTimeAos: Boolean, showAosLabel: Bool
             horizontalArrangement = Arrangement.SpaceEvenly,
             modifier = Modifier.fillMaxSize()
         ) {
-            if (showAosLabel) {
-                Text(text = "AOS", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = aosColor)
-            }
+            Text(text = "AOS", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = aosColor)
             Text(
                 text = timeString,
-                // A radar pass map has three navigation buttons beside this card; keep
-                // the time readable while reserving space for the LOS label.
-                fontSize = if (showAosLabel) 32.sp else 26.sp,
+                fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = colorScheme.primary
             )
