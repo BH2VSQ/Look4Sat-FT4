@@ -155,7 +155,8 @@ private const val OVERLAY_POSITIONS = 5
 private const val OVERLAY_TERMINATOR = 6
 private const val OVERLAY_SUN = 7
 private const val OVERLAY_MOON = 8
-private const val OVERLAY_COUNT = 9
+private const val OVERLAY_OTHER_STATION = 9
+private const val OVERLAY_COUNT = 10
 
 private val minLat = MapView.getTileSystem().minLatitude
 private val maxLat = MapView.getTileSystem().maxLatitude
@@ -335,6 +336,16 @@ fun RadarPassMapScreenDestination(
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val viewModel: MapViewModel = viewModel(factory = MapViewModel.factory(container, pass))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val mutualData by container.mutualPassData.collectAsStateWithLifecycle()
+    val otherStationPosition = remember(
+        mutualData.endTime, mutualData.stationBLatitude, mutualData.stationBLongitude
+    ) {
+        if (mutualData.endTime > 0L) {
+            val latitude = mutualData.stationBLatitude
+            val longitude = mutualData.stationBLongitude
+            if (latitude != null && longitude != null) GeoPos(latitude, longitude) else null
+        } else null
+    }
     val allPasses by container.satelliteRepo.passes.collectAsStateWithLifecycle()
     val passSettings by container.settingsRepo.passesSettings.collectAsStateWithLifecycle()
     // Match the Passes page's visible sequence: deep-space group first (if enabled),
@@ -385,7 +396,9 @@ fun RadarPassMapScreenDestination(
         navigateUp = navigateUp,
         previousPass = previousPass,
         nextPass = nextPass,
-        onSwitchPass = onSwitchPass
+        onSwitchPass = onSwitchPass,
+        otherStationPosition = otherStationPosition,
+        otherStationGrid = mutualData.stationBGrid.takeIf { otherStationPosition != null }
     )
 }
 
@@ -403,7 +416,9 @@ private fun MapScreen(
     navigateUp: () -> Unit = {},
     previousPass: RadarPassMapDestination? = null,
     nextPass: RadarPassMapDestination? = null,
-    onSwitchPass: (RadarPassMapDestination) -> Unit = {}
+    onSwitchPass: (RadarPassMapDestination) -> Unit = {},
+    otherStationPosition: GeoPos? = null,
+    otherStationGrid: String? = null
 ) {
     val rotateMod = Modifier.rotate(180f)
     val timeString = uiState.mapData?.aosTime ?: "00:00:00"
@@ -663,6 +678,7 @@ private fun MapScreen(
                     }
                     if (!uiState.isGridMode) {
                         uiState.stationPosition?.let { setStationPosition(it, view, uiState.isLightUi) }
+                        setOtherStationPosition(otherStationPosition, otherStationGrid, view)
                         uiState.track?.let { setSatelliteTrack(it, view) }
                         uiState.footprint?.let { setFootprint(it, view) }
                         uiState.positions?.let { setPositions(it, view) { item -> onAction(MapAction.SelectItem(item)) } }
@@ -2028,6 +2044,41 @@ private fun setStationPosition(stationPos: GeoPos, mapView: MapView, isLightUi: 
                 position = stationPoint
                 relatedObject = isLightUi
             }
+        }
+    } catch (e: Exception) {
+        println(e)
+    }
+}
+
+/**
+ * Opposite-station marker used only by the matched radar's dedicated map.
+ * Its coordinates come from the centre of the entered Maidenhead square.
+ */
+private const val OTHER_STATION_MARKER_STYLE = "look4sat-other-station-blue"
+
+private fun setOtherStationPosition(position: GeoPos?, grid: String?, mapView: MapView) {
+    try {
+        val existing = mapView.overlays.getOrNull(OVERLAY_OTHER_STATION)
+        if (position == null) {
+            if (existing is Marker) mapView.overlays[OVERLAY_OTHER_STATION] = FolderOverlay()
+            return
+        }
+        val marker = (existing as? Marker) ?: Marker(mapView).also {
+            it.setInfoWindow(null)
+            it.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            it.icon = ContextCompat.getDrawable(mapView.context, R.drawable.ic_position)?.apply {
+                setTint("#1976D2".toColorInt())
+            }
+            it.relatedObject = OTHER_STATION_MARKER_STYLE
+            mapView.overlays[OVERLAY_OTHER_STATION] = it
+        }
+        marker.position = GeoPoint(position.latitude, position.longitude)
+        marker.title = grid.orEmpty()
+        if (marker.relatedObject != OTHER_STATION_MARKER_STYLE) {
+            marker.icon = ContextCompat.getDrawable(mapView.context, R.drawable.ic_position)?.apply {
+                setTint("#1976D2".toColorInt())
+            }
+            marker.relatedObject = OTHER_STATION_MARKER_STYLE
         }
     } catch (e: Exception) {
         println(e)

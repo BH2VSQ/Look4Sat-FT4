@@ -26,6 +26,8 @@ import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
 import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
+import com.rtbishop.look4sat.core.domain.repository.MutualPassData
+import com.rtbishop.look4sat.core.domain.repository.TrackSampleData
 import com.rtbishop.look4sat.core.domain.source.Sources
 import com.rtbishop.look4sat.core.domain.utility.positionToQth
 import com.rtbishop.look4sat.core.domain.utility.qthToPosition
@@ -42,6 +44,14 @@ import kotlin.math.PI
 import kotlin.math.roundToInt
 
 private const val TAG = "Look4SatMutual"
+
+/** Ready-to-open matched radar session, including the other station's grid-centre pin. */
+data class RadarMatchSelection(
+    val catNum: Int,
+    val aosTime: Long,
+    val stationBGrid: String,
+    val mutualPassData: MutualPassData
+)
 
 data class MutualUiState(
     val stationALat: String = "",
@@ -214,6 +224,67 @@ class MutualViewModel(
     fun onSelectPass(index: Int) = _uiState.update { it.copy(selectedPassIndex = index) }
 
     /**
+     * Run the existing two-station pass calculation from the radar overflow menu,
+     * then return the earliest mutual pass that is still active or upcoming.
+     * This does not request navigation to the Match tab.
+     */
+    fun prepareRadarMatchFromGrid(
+        grid: String,
+        onComplete: (RadarMatchSelection?) -> Unit
+    ) {
+        val normalized = grid.trim().uppercase()
+        val target = qthToPosition(normalized)
+        if (target == null) {
+            onComplete(null)
+            return
+        }
+        _uiState.update { state ->
+            val enableBothFilters = !state.filterFM && !state.filterLinear
+            state.copy(
+                stationBGrid = normalized,
+                stationBLat = "%.4f".format(target.latitude),
+                stationBLon = "%.4f".format(target.longitude),
+                hoursAhead = 24,
+                pendingNavigation = false,
+                scrollToTimeRange = false,
+                filterFM = state.filterFM || enableBothFilters,
+                filterLinear = state.filterLinear || enableBothFilters
+            )
+        }
+        queryMutualPasses(onCompleted = { passes ->
+            val selected = nextUpcomingMutualPass(passes, nowMillis())
+            val selection = selected?.let { pass ->
+                RadarMatchSelection(
+                    catNum = pass.catNum,
+                    aosTime = pass.startTime,
+                    stationBGrid = normalized,
+                    mutualPassData = MutualPassData(
+                        samples = pass.elevationSamples,
+                        trackSamples = pass.trackSamples.map { sample ->
+                            TrackSampleData(
+                                time = sample.time,
+                                azimuthA = sample.azimuthA,
+                                elevationA = sample.elevationA,
+                                azimuthB = sample.azimuthB,
+                                elevationB = sample.elevationB
+                            )
+                        },
+                        startTime = pass.startTime,
+                        endTime = pass.endTime,
+                        maxElev = maxOf(pass.maxElevationA, pass.maxElevationB, 10.0),
+                        labelA = "你",
+                        labelB = "友台",
+                        stationBGrid = normalized,
+                        stationBLatitude = target.latitude,
+                        stationBLongitude = target.longitude
+                    )
+                )
+            }
+            onComplete(selection)
+        })
+    }
+
+    /**
      * Pre-fill the match page for a target grid picked from the map's grid-QSO
      * dialog ("Match" button): set the opposite-station grid (with its
      * coordinates), reset the time range to 24h, start the query immediately
@@ -256,7 +327,10 @@ class MutualViewModel(
      * clamped away); they are replaced — possibly with empty — when the new
      * results arrive.
      */
-    fun queryMutualPasses(initialScrollIndex: Int? = null) {
+    fun queryMutualPasses(
+        initialScrollIndex: Int? = null,
+        onCompleted: ((List<MutualPass>) -> Unit)? = null
+    ) {
         val state = _uiState.value
 
         // Resolve positions from lat/lon or grid
@@ -264,20 +338,23 @@ class MutualViewModel(
         var posB = resolvePosition(state.stationBLat, state.stationBLon, state.stationBGrid)
 
         if (posA == null || posB == null) {
-            _uiState.update { it.copy(errorMessage = "Please enter valid coordinates or a Maidenhead grid (4/6/8 chars)") }
+            _uiState.update { it.copy(isCalculating = false, errorMessage = "Please enter valid coordinates or a Maidenhead grid (4/6/8 chars)") }
+            onCompleted?.invoke(emptyList())
             return
         }
 
         val satellites = satelliteRepo.satellites.value
         if (satellites.isEmpty()) {
-            _uiState.update { it.copy(errorMessage = "No satellite data. Select satellites from the list first.") }
+            _uiState.update { it.copy(isCalculating = false, errorMessage = "No satellite data. Select satellites from the list first.") }
+            onCompleted?.invoke(emptyList())
             return
         }
 
         // 转发器类型筛选: 至少勾选一种(默认 FM + Linear 都开), 否则提示不查询.
         // 防止用户选入大量无转发器卫星占用匹配页.
         if (!state.filterFM && !state.filterLinear) {
-            _uiState.update { it.copy(errorMessage = "Select at least one transponder type (FM / Linear) to run the match.") }
+            _uiState.update { it.copy(isCalculating = false, errorMessage = "Select at least one transponder type (FM / Linear) to run the match.") }
+            onCompleted?.invoke(emptyList())
             return
         }
         // AMSAT Live 清单(同步自 AMSAT "Live FM/Linear Satellites" 页面)是本过滤的
@@ -345,13 +422,15 @@ class MutualViewModel(
                 }
             } else null
 
+            val sortedResults = results.sortedBy { mp -> mp.startTime }
             _uiState.update {
                 it.copy(
-                    mutualPasses = results.sortedBy { mp -> mp.startTime },
+                    mutualPasses = sortedResults,
                     isCalculating = false,
                     errorMessage = errorMsg
                 )
             }
+            onCompleted?.invoke(sortedResults)
         }
     }
 

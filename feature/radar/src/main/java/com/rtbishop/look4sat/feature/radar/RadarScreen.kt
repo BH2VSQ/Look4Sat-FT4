@@ -45,8 +45,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
@@ -79,6 +83,7 @@ import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.MutualPassData
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
+import com.rtbishop.look4sat.core.domain.utility.qthToPosition
 import com.rtbishop.look4sat.core.domain.utility.toDegrees
 import com.rtbishop.look4sat.core.presentation.EmptyListCard
 import com.rtbishop.look4sat.core.presentation.IconCard
@@ -183,7 +188,8 @@ internal fun radarFillSizes(maxWidth: Dp, maxHeight: Dp): RadarFillSizes {
 fun RadarDestination(
     navigateUp: () -> Unit,
     onOpenLoTWStation: () -> Unit = {},
-    onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> }
+    onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> },
+    onStartMatch: (String, (Boolean) -> Unit) -> Unit = { _, complete -> complete(false) }
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
@@ -233,7 +239,7 @@ fun RadarDestination(
     }
     RadarScreen(uiState, viewModel::onAction, navigateUpAndClearMutual, mutualData, logViewModel, requestMicPermission = {
         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-    }, onFixGrid = openLoTWStationForGridFix, onOpenPassMap = onOpenPassMap)
+    }, onFixGrid = openLoTWStationForGridFix, onOpenPassMap = onOpenPassMap, onStartMatch = onStartMatch)
 }
 
 @Composable
@@ -245,7 +251,8 @@ private fun RadarScreen(
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
     onFixGrid: (List<String>) -> Unit,
-    onOpenPassMap: (Int, Long, Long) -> Unit
+    onOpenPassMap: (Int, Long, Long) -> Unit,
+    onStartMatch: (String, (Boolean) -> Unit) -> Unit
 ) {
     val upcomingPass = uiState.currentPass ?: getDefaultPass()
     // 日程功能: 把当前过境写入系统日历(原仓库的 addToCalendar, ic_calendar 按钮)
@@ -279,6 +286,11 @@ private fun RadarScreen(
                 time = it.time
             )
         }
+    val context = LocalContext.current
+    var showMatchDialog by remember { mutableStateOf(false) }
+    var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
+    var matchLoading by remember { mutableStateOf(false) }
+    var matchError by remember { mutableStateOf<String?>(null) }
     BoxWithConstraints(
         modifier = Modifier
             .layoutPadding()
@@ -312,7 +324,8 @@ private fun RadarScreen(
                     RadarActionsMenu(
                         enabled = uiState.currentPass != null,
                         addToCalendar = addToCalendar,
-                        openMap = openPassMap
+                        openMap = openPassMap,
+                        startMatch = { showMatchDialog = true; matchError = null }
                     )
                 }
                 TopBar {
@@ -332,7 +345,8 @@ private fun RadarScreen(
                     RadarActionsMenu(
                         enabled = uiState.currentPass != null,
                         addToCalendar = addToCalendar,
-                        openMap = openPassMap
+                        openMap = openPassMap,
+                        startMatch = { showMatchDialog = true; matchError = null }
                     )
                 }
             }
@@ -360,6 +374,70 @@ private fun RadarScreen(
             }
         }
     }
+    if (showMatchDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!matchLoading) showMatchDialog = false },
+            title = { Text(stringResource(R.string.radar_match_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = matchGrid,
+                        onValueChange = {
+                            matchGrid = it.uppercase()
+                            matchError = null
+                        },
+                        label = { Text(stringResource(R.string.radar_match_grid_label)) },
+                        placeholder = { Text(stringResource(R.string.radar_match_grid_hint)) },
+                        singleLine = true,
+                        isError = matchError != null,
+                        supportingText = {
+                            if (matchError != null) {
+                                Text(matchError!!, color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        enabled = !matchLoading
+                    )
+                    if (matchLoading) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Text(stringResource(R.string.radar_match_searching))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !matchLoading,
+                    onClick = {
+                        val normalized = matchGrid.trim().uppercase()
+                        if (qthToPosition(normalized) == null) {
+                            matchError = context.getString(R.string.radar_match_grid_invalid)
+                            return@TextButton
+                        }
+                        matchLoading = true
+                        matchError = null
+                        onStartMatch(normalized) { success ->
+                            matchLoading = false
+                            if (success) {
+                                showMatchDialog = false
+                            } else {
+                                matchError = context.getString(R.string.radar_match_no_pass)
+                            }
+                        }
+                    }
+                ) { Text(stringResource(R.string.btn_accept)) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !matchLoading,
+                    onClick = { showMatchDialog = false }
+                ) { Text(stringResource(R.string.btn_cancel)) }
+            }
+        )
+    }
 }
 
 /** Shared top-right overflow menu for portrait and landscape radar layouts. */
@@ -367,7 +445,8 @@ private fun RadarScreen(
 private fun RadarActionsMenu(
     enabled: Boolean,
     addToCalendar: () -> Unit,
-    openMap: () -> Unit
+    openMap: () -> Unit,
+    startMatch: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -385,6 +464,10 @@ private fun RadarActionsMenu(
                 text = { Text(stringResource(R.string.radar_menu_calendar)) },
                 enabled = enabled,
                 onClick = { expanded = false; addToCalendar() }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.radar_menu_match)) },
+                onClick = { expanded = false; startMatch() }
             )
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.nav_map)) },

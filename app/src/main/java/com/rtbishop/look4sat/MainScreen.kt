@@ -80,6 +80,7 @@ import com.rtbishop.look4sat.core.presentation.LocalElevationThresholds
 import com.rtbishop.look4sat.core.presentation.LoTWUploadDestination
 import com.rtbishop.look4sat.core.presentation.RadarDestination
 import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
+import com.rtbishop.look4sat.core.presentation.RadarMatchDestination
 import com.rtbishop.look4sat.core.presentation.Screen
 import com.rtbishop.look4sat.core.presentation.hasEnoughHeight
 import com.rtbishop.look4sat.core.presentation.hasEnoughWidth
@@ -99,6 +100,12 @@ import com.rtbishop.look4sat.feature.status.SatStatusDestination
 @Composable
 fun NavRoot(deeplink: String? = null) {
     val rootBackStack = rememberNavBackStack(Screen.Passes)
+    val context = LocalContext.current
+    val container = (context.applicationContext as IContainerProvider).getMainContainer()
+    val mutualViewModel: MutualViewModel = viewModel(
+        viewModelStoreOwner = context as ViewModelStoreOwner,
+        factory = MutualViewModel.factory(container)
+    )
     val deeplinkResolver = DeeplinkResolver()
     LaunchedEffect(deeplink) {
         deeplink?.let { rootBackStack.add(deeplinkResolver.resolve(it)) }
@@ -119,6 +126,30 @@ fun NavRoot(deeplink: String? = null) {
     }
     val navigateToGridFinder: () -> Unit = { rootBackStack.add(GridFinderDestination) }
     val navigateToLoTWStation: () -> Unit = { rootBackStack.add(LoTWUploadDestination) }
+    val startRadarMatch: (String, (Boolean) -> Unit) -> Unit = { grid, onComplete ->
+        mutualViewModel.prepareRadarMatchFromGrid(grid) { selection ->
+            if (selection == null) {
+                onComplete(false)
+            } else {
+                container.setMutualPassData(selection.mutualPassData)
+                container.satelliteRepo.selectPass(selection.catNum, selection.aosTime)
+                // Keep the originating radar underneath, but replace an already matched
+                // radar so repeated matches never create a long stack of radar pages.
+                if (rootBackStack.lastOrNull() is RadarMatchDestination) {
+                    rootBackStack.removeLastOrNull()
+                }
+                rootBackStack.add(
+                    RadarMatchDestination(
+                        stationBGrid = selection.stationBGrid,
+                        catNum = selection.catNum,
+                        aosTime = selection.aosTime,
+                        sessionId = System.currentTimeMillis()
+                    )
+                )
+                onComplete(true)
+            }
+        }
+    }
     // Incoming screen slides in from the right, outgoing drifts left at 1/3 speed (API35+ style)
     val pushTransition = slideInHorizontally(tween(300)) { it } togetherWith
         slideOutHorizontally(tween(300)) { -it / 3 }
@@ -129,8 +160,6 @@ fun NavRoot(deeplink: String? = null) {
     // the tab content (MainScreen) and the root-level RadarDestination see the
     // user's custom thresholds. RadarDestination is a sibling entry of MainScreen
     // in this NavDisplay, so a provider inside MainScreen never reaches it.
-    val context = LocalContext.current
-    val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
     CompositionLocalProvider(
         LocalElevationThresholds provides ElevationThresholds(
@@ -153,7 +182,8 @@ fun NavRoot(deeplink: String? = null) {
                 entry<Screen.Passes> {
                     MainScreen(
                         navigateToRadar = navigateToRadar,
-                        navigateToGridFinder = navigateToGridFinder
+                        navigateToGridFinder = navigateToGridFinder,
+                        mutualViewModel = mutualViewModel
                     )
                 }
                 entry<RadarDestination> {
@@ -164,7 +194,21 @@ fun NavRoot(deeplink: String? = null) {
                         RadarDestination(
                             navigateUp = navigateBack,
                             onOpenLoTWStation = navigateToLoTWStation,
-                            onOpenPassMap = navigateToRadarPassMap
+                            onOpenPassMap = navigateToRadarPassMap,
+                            onStartMatch = startRadarMatch
+                        )
+                    }
+                }
+                entry<RadarMatchDestination> {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        RadarDestination(
+                            navigateUp = navigateBack,
+                            onOpenLoTWStation = navigateToLoTWStation,
+                            onOpenPassMap = navigateToRadarPassMap,
+                            onStartMatch = startRadarMatch
                         )
                     }
                 }
@@ -207,7 +251,8 @@ fun NavRoot(deeplink: String? = null) {
 @Composable
 fun MainScreen(
     navigateToRadar: () -> Unit = {},
-    navigateToGridFinder: () -> Unit = {}
+    navigateToGridFinder: () -> Unit = {},
+    mutualViewModel: MutualViewModel
 ) {
     val backStack = rememberNavBackStack(Screen.Passes)
     val currentKey = backStack.lastOrNull()
@@ -222,11 +267,7 @@ fun MainScreen(
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
-    // Activity-scoped so the mutual query results survive navigation to Radar and back
-    val mutualViewModel: MutualViewModel = viewModel(
-        viewModelStoreOwner = context as ViewModelStoreOwner,
-        factory = MutualViewModel.factory(container)
-    )
+    // Activity-scoped MutualViewModel is shared with root-level Radar destinations.
     // Activity-scoped so the map's award filter survives page switches;
     // resets to VUCC only on cold start (fresh process).
     val mapFilterViewModel: MapFilterViewModel = viewModel(
