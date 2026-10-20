@@ -1,4 +1,4 @@
-name: Publish Look4Sat release
+name: Build Look4Sat APK
 
 # Manually build a signed release-variant APK from the selected commit:
 #   mode=artifact -> upload an Actions artifact only (no tag, prerelease, or Release).
