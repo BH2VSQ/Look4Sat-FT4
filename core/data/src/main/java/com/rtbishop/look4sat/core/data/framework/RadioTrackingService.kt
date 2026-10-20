@@ -132,7 +132,6 @@ class RadioTrackingService(
     private val transmitMutex = Mutex()
     private val tuningRevision = AtomicLong()
     private val pendingControls = AtomicInteger()
-    @Volatile private var transmitPreparing = false
     private val commandActor = RadioCommandActor(appScope) { busy, failure ->
         _state.update { current ->
             current.copy(
@@ -143,7 +142,7 @@ class RadioTrackingService(
         }
     }
     private val hasTransmitClaim: Boolean
-        get() = transmitPreparing || manualOwner != RadioTransmitOwner.NONE
+        get() = manualOwner != RadioTransmitOwner.NONE
 
     private val profiles=RadioProfileManager({txController},{_state.value},settingsRepo,satelliteRepo) {radio,data->
         transmitMutex.withLock {
@@ -1380,7 +1379,7 @@ class RadioTrackingService(
         val current = _state.value
         val remote = txController?.remoteState?.value ?: current.remoteRadio
         return when {
-            current.transmitPreparing || hasTransmitClaim || current.pttState != PttState.OFF ||
+            hasTransmitClaim || current.pttState != PttState.OFF ||
                 current.catTransmitting || remote?.txSource?.let { it != 0 } == true ->
                 "Frequency editing is disabled during transmission"
             remote?.connected == false -> "Radio is not connected"

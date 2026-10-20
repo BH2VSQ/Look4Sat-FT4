@@ -17,8 +17,12 @@ class AudioCapture(private val hub: IAudioHub) : IAudioCapture {
     override fun audioFlow(): Flow<FloatArray> = flow {
         var resampler: StreamingAudioResampler? = null
         hub.audioFlow(AudioConsumer.SSTV, AudioDelivery.RELIABLE).collect { chunk ->
-            if(resampler?.inputRate != chunk.sampleRate) resampler=StreamingAudioResampler(chunk.sampleRate,sampleRate)
+            if(resampler?.inputRate != chunk.sampleRate) {
+                resampler?.finish()?.takeIf {it.isNotEmpty()}?.let {emit(it)}
+                resampler=StreamingAudioResampler(chunk.sampleRate,sampleRate)
+            }
             emit(resampler.process(chunk.samples))
         }
+        resampler?.finish()?.takeIf {it.isNotEmpty()}?.let {emit(it)}
     }
 }

@@ -72,11 +72,10 @@ data class RadioTrackingState(
     val cwMessageLength: Int = 0,
     val calculatorLinked:Boolean=false,
     val referenceDirty:Boolean=false,
-    val transmitPreparing: Boolean = false,
     val catTransmitStateKnown: Boolean = true,
     val catTransmitting: Boolean = false
 ) {
-    val frequencyEditingLocked get()=trackingPhase==TrackingPhase.INITIALIZING || transmitPreparing ||
+    val frequencyEditingLocked get()=trackingPhase==TrackingPhase.INITIALIZING ||
         !catTransmitStateKnown || catTransmitting || pttState!=PttState.OFF || transmitOwner!=RadioTransmitOwner.NONE ||
         remoteRadio?.txSource?.let {it!=0}==true || remoteRadio?.nativeMenuOpen==true || remoteRadio?.profileStore?.busy==true ||
         remoteRadio?.handsetMacroStatus?.busy==true || remoteRadio?.let {!it.connected || !it.transmitStateKnown}==true

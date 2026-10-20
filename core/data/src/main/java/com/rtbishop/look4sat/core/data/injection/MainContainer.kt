@@ -35,8 +35,6 @@ import com.rtbishop.look4sat.core.data.database.MIGRATION_QSO_3_4
 import com.rtbishop.look4sat.core.data.database.MIGRATION_QSO_4_5
 import com.rtbishop.look4sat.core.data.database.QsoDatabase
 import com.rtbishop.look4sat.core.data.framework.BluetoothReporter
-import com.rtbishop.look4sat.core.data.framework.Ft817Controller
-import com.rtbishop.look4sat.core.data.framework.Ic705Controller
 import com.rtbishop.look4sat.core.data.framework.NetworkReporter
 import com.rtbishop.look4sat.core.data.framework.RadioTrackingService
 import com.rtbishop.look4sat.core.data.lotw.LoTWUploadRepository
@@ -60,11 +58,9 @@ import com.rtbishop.look4sat.core.data.usecase.AudioCapture
 import com.rtbishop.look4sat.core.data.usecase.SaveImage
 import com.rtbishop.look4sat.core.data.usecase.ShowToast
 import com.rtbishop.look4sat.core.domain.logbook.IQsoRepository
-import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 import com.rtbishop.look4sat.core.domain.repository.IDatabaseRepo
 import com.rtbishop.look4sat.core.domain.repository.ILoTWUploadRepository
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
-import com.rtbishop.look4sat.core.domain.repository.IRadioController
 import com.rtbishop.look4sat.core.domain.repository.IRadioTrackingService
 import com.rtbishop.look4sat.core.domain.repository.IReporter
 import com.rtbishop.look4sat.core.domain.repository.ILoTWRepository
@@ -187,28 +183,6 @@ class MainContainer(private val context: Context) : IMainContainer {
             rc.frequencyPort.toIntOrNull() ?: 0,
             rc.frequencyOffsetHz
         )
-    }
-
-    override fun provideTxRadioController(): IRadioController {
-        val manager  = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val settings = settingsRepo.radioControlSettings.value
-        val address  = settings.txRadioAddress
-        return if (settings.radioModel == RadioControlSettings.MODEL_ICOM_IC705) {
-            Ic705Controller(manager, address)
-        } else {
-            Ft817Controller(manager, address)
-        }
-    }
-
-    override fun provideRxRadioController(): IRadioController {
-        val manager  = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val settings = settingsRepo.radioControlSettings.value
-        val address  = settings.rxRadioAddress
-        return if (settings.radioModel == RadioControlSettings.MODEL_ICOM_IC705) {
-            Ic705Controller(manager, address)
-        } else {
-            Ft817Controller(manager, address)
-        }
     }
 
     override fun provideSensorsRepo(): ISensorsRepo {
