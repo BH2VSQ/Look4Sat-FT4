@@ -186,7 +186,8 @@ internal fun radarFillSizes(maxWidth: Dp, maxHeight: Dp): RadarFillSizes {
 fun RadarDestination(
     navigateUp: () -> Unit,
     navigateToMap: () -> Unit,
-    onOpenLoTWStation: () -> Unit = {}
+    onOpenLoTWStation: () -> Unit = {},
+    onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
@@ -205,6 +206,12 @@ fun RadarDestination(
             container.setMutualPassData(MutualPassData())
         }
         navigateToMap()
+    }
+    val onOpenPassMapAndClearMutual: (Int, Long, Long) -> Unit = { catNum, aos, los ->
+        if (container.mutualPassData.value.endTime > 0L) {
+            container.setMutualPassData(MutualPassData())
+        }
+        onOpenPassMap(catNum, aos, los)
     }
     LaunchedEffect(mutualData.endTime) {
         if (mutualData.endTime <= 0L) return@LaunchedEffect
@@ -265,7 +272,8 @@ fun RadarDestination(
         requestMicPermission = {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         },
-        onFixGrid = openLoTWStationForGridFix
+        onFixGrid = openLoTWStationForGridFix,
+        onOpenPassMap = onOpenPassMapAndClearMutual
     )
 }
 
@@ -280,12 +288,18 @@ private fun RadarScreen(
     connectRadios: () -> Unit,
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
-    onFixGrid: (List<String>) -> Unit
+    onFixGrid: (List<String>) -> Unit,
+    onOpenPassMap: (Int, Long, Long) -> Unit
 ) {
     val upcomingPass = uiState.currentPass ?: getDefaultPass()
     // 日程功能: 把当前过境写入系统日历(原仓库的 addToCalendar, ic_calendar 按钮)
     val addToCalendar: () -> Unit = {
         uiState.currentPass?.let { onAction(RadarAction.AddToCalendar(it.name, it.aosTime, it.losTime)) }
+    }
+    val openPassMap: () -> Unit = {
+        val pass = uiState.currentPass
+        if (pass != null && pass.losTime > pass.aosTime) onOpenPassMap(pass.catNum, pass.aosTime, pass.losTime)
+        else navigateToMap()
     }
     // Station-B overlay: full track line (only where B's elevation > 0) + live position dot
     // at the current moment, same display mode as the local station.
@@ -341,7 +355,7 @@ private fun RadarScreen(
                 TopBar {
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
-                    IconCard(action = navigateToMap, resId = R.drawable.ic_map)
+                    IconCard(action = openPassMap, resId = R.drawable.ic_map)
                     IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
                 }
                 TopBar {
@@ -358,7 +372,7 @@ private fun RadarScreen(
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
                     NextPassRow(pass = upcomingPass, modifier = Modifier.weight(1f), isUtc = uiState.isUtc)
-                    IconCard(action = navigateToMap, resId = R.drawable.ic_map)
+                    IconCard(action = openPassMap, resId = R.drawable.ic_map)
                     IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
                 }
             }

@@ -63,6 +63,10 @@ data object RadarDestination : NavKey
 @Serializable
 data object LogbookDestination : NavKey
 
+/** Dedicated map with the AOS–LOS bounds of the pass opened from radar. */
+@Serializable
+data class RadarPassMapDestination(val catNum: Int, val aosTime: Long, val losTime: Long) : NavKey
+
 /** Full-screen field tool: guides the operator onto a VUCC grid line or corner. */
 @Serializable
 data object GridFinderDestination : NavKey

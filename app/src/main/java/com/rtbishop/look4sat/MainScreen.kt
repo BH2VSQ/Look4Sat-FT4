@@ -98,6 +98,7 @@ import com.rtbishop.look4sat.core.presentation.LogbookDestination
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.LoTWUploadDestination as LoTWUploadRoute
 import com.rtbishop.look4sat.core.presentation.RadarDestination as RadarRoute
+import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
 import com.rtbishop.look4sat.core.presentation.Screen
 import com.rtbishop.look4sat.core.presentation.hasEnoughHeight
 import com.rtbishop.look4sat.core.presentation.hasEnoughWidth
@@ -105,6 +106,7 @@ import com.rtbishop.look4sat.feature.ft4.Ft4ShellDestination
 import com.rtbishop.look4sat.feature.logbook.LogbookScreenDestination
 import com.rtbishop.look4sat.feature.gridfinder.GridFinderDestination
 import com.rtbishop.look4sat.feature.map.MapDestination
+import com.rtbishop.look4sat.feature.map.RadarPassMapScreenDestination
 import com.rtbishop.look4sat.feature.map.MapFilterViewModel
 import com.rtbishop.look4sat.feature.mutual.MutualScreen
 import com.rtbishop.look4sat.feature.mutual.MutualViewModel
@@ -136,6 +138,18 @@ fun NavRoot(deeplink: String? = null) {
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
     val navigateToLoTWStation: () -> Unit = { rootBackStack.add(LoTWUploadRoute) }
+    val navigateToRadarPassMap: (Int, Long, Long) -> Unit = { catNum, aos, los ->
+        if (los > aos) rootBackStack.add(RadarPassMapDestination(catNum, aos, los))
+    }
+    // Replace, don't push: Back must always return directly to the originating radar page
+    // even after browsing dozens of passes in the dedicated map.
+    val switchRadarPassMap: (RadarPassMapDestination) -> Unit = { next ->
+        val current = rootBackStack.lastOrNull()
+        if (current is RadarPassMapDestination && current != next) {
+            rootBackStack.removeLastOrNull()
+            rootBackStack.add(next)
+        }
+    }
     // Incoming screen slides in from the right, outgoing drifts left at 1/3 speed (API35+ style)
     val pushTransition = slideInHorizontally(tween(300)) { it } togetherWith
         slideOutHorizontally(tween(300)) { -it / 3 }
@@ -177,7 +191,20 @@ fun NavRoot(deeplink: String? = null) {
                         RadarDestination(
                             navigateUp = navigateBack,
                             navigateToMap = navigateToMap,
-                            onOpenLoTWStation = navigateToLoTWStation
+                            onOpenLoTWStation = navigateToLoTWStation,
+                            onOpenPassMap = navigateToRadarPassMap
+                        )
+                    }
+                }
+                entry<RadarPassMapDestination> { pass ->
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        RadarPassMapScreenDestination(
+                            pass = pass,
+                            navigateUp = navigateBack,
+                            onSwitchPass = switchRadarPassMap
                         )
                     }
                 }
