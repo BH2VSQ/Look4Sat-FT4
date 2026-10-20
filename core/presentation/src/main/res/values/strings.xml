@@ -480,6 +480,16 @@
     <string name="prefs_map_tianditu_key_help">Request a server-side application key from the TianDiTu developer console before using TianDiTu maps.</string>
     <string name="prefs_map_tianditu_key_required">A TianDiTu key is required. Offline OSM remains active until it is entered.</string>
     <string name="prefs_ft4_title">FT4 and time synchronization</string>
+    <string name="prefs_time_sync_title">Time synchronization</string>
+    <string name="prefs_display_title">Display settings</string>
+    <string name="prefs_display_font_size_title">Pass list and schedule font size</string>
+    <string name="prefs_display_font_size_value">Font size: %1$d%%</string>
+    <string name="prefs_display_font_size_hint">Adjust text size in the pass list and pass schedule.</string>
+    <string name="prefs_display_font_size_tiny">Very small</string>
+    <string name="prefs_display_font_size_small">Small</string>
+    <string name="prefs_display_font_size_standard">Standard</string>
+    <string name="prefs_display_font_size_large">Large</string>
+    <string name="prefs_display_font_size_huge">Very large</string>
     <string name="prefs_ft4_callsign">Operator callsign</string>
     <string name="prefs_ft4_grid">Maidenhead grid: %s</string>
     <string name="prefs_ft4_edit_grid">Edit grid</string>

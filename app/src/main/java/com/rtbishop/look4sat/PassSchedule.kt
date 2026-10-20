@@ -35,6 +35,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -60,18 +64,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -517,6 +524,13 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
     }
 
     Scaffold(
+        // NavigationSuiteScaffold owns the app's bottom navigation area. Do not
+        // apply the system navigation-bar inset a second time inside this screen.
+        // Keeping top and horizontal safe insets still protects the content on
+        // edge-to-edge devices in both gesture and three-button navigation modes.
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+        ),
         topBar = {
             TopAppBar(
                 title = {
@@ -649,61 +663,69 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                verticalArrangement = Arrangement.spacedBy(0.dp)
+            val baseDensity = LocalDensity.current
+            CompositionLocalProvider(
+                LocalDensity provides Density(
+                    density = baseDensity.density,
+                    fontScale = baseDensity.fontScale * otherSettings.passListFontScale
+                )
             ) {
-                item {
-                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Text(stringResource(R.string.pass_schedule_range), style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            stringResource(R.string.pass_schedule_summary, config.satelliteIds.size, visiblePasses.size),
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                        if (isCalculating) Text(stringResource(R.string.pass_schedule_calculating),
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                if (config.satelliteIds.isEmpty()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(innerPadding),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
                     item {
-                        Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-                            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(stringResource(R.string.pass_schedule_empty_selection), fontWeight = FontWeight.Medium)
-                                Text(stringResource(R.string.pass_schedule_empty_selection_hint), style = MaterialTheme.typography.bodyMedium)
-                                Button(onClick = { showTrackingSettings.value = true }) {
-                                    Text(stringResource(R.string.pass_schedule_tracking_settings))
+                        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Text(stringResource(R.string.pass_schedule_range), style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                stringResource(R.string.pass_schedule_summary, config.satelliteIds.size, visiblePasses.size),
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                            if (isCalculating) Text(stringResource(R.string.pass_schedule_calculating),
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    if (config.satelliteIds.isEmpty()) {
+                        item {
+                            Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(stringResource(R.string.pass_schedule_empty_selection), fontWeight = FontWeight.Medium)
+                                    Text(stringResource(R.string.pass_schedule_empty_selection_hint), style = MaterialTheme.typography.bodyMedium)
+                                    Button(onClick = { showTrackingSettings.value = true }) {
+                                        Text(stringResource(R.string.pass_schedule_tracking_settings))
+                                    }
                                 }
                             }
                         }
+                    } else if (visiblePasses.isEmpty() && !isCalculating) {
+                        item {
+                            Text(stringResource(R.string.pass_schedule_no_passes),
+                                modifier = Modifier.fillMaxWidth().padding(24.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                } else if (visiblePasses.isEmpty() && !isCalculating) {
-                    item {
-                        Text(stringResource(R.string.pass_schedule_no_passes),
-                            modifier = Modifier.fillMaxWidth().padding(24.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    scheduleDays.forEach { day ->
+                        stickyHeader(key = "schedule_date_${day.label}") {
+                            PassDateDivider(
+                                label = day.label,
+                                sunriseTime = day.sunriseTime,
+                                sunsetTime = day.sunsetTime
+                            )
+                        }
+                        items(day.passes, key = { "${it.catNum}-${it.aosTime}" }) { pass ->
+                            PassScheduleItem(
+                                pass = pass,
+                                now = currentTime,
+                                isUtc = isUtc,
+                                satelliteRepo = container.satelliteRepo,
+                                stationPosition = stationPosition
+                            )
+                        }
                     }
-                }
-                scheduleDays.forEach { day ->
-                    stickyHeader(key = "schedule_date_${day.label}") {
-                        PassDateDivider(
-                            label = day.label,
-                            sunriseTime = day.sunriseTime,
-                            sunsetTime = day.sunsetTime
-                        )
+                    item { Spacer(Modifier.height(8.dp)) }
                     }
-                    items(day.passes, key = { "${it.catNum}-${it.aosTime}" }) { pass ->
-                        PassScheduleItem(
-                            pass = pass,
-                            now = currentTime,
-                            isUtc = isUtc,
-                            satelliteRepo = container.satelliteRepo,
-                            stationPosition = stationPosition
-                        )
-                    }
-                }
-                item { Spacer(Modifier.height(8.dp)) }
             }
         }
     }

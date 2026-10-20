@@ -450,6 +450,16 @@
     <string name="prefs_map_tianditu_key_help">使用天地图前，需先在天地图开发者控制台申请服务端应用 Key。</string>
     <string name="prefs_map_tianditu_key_required">选择天地图需要填写访问密钥；保存密钥前将继续使用离线 OSM 地图。</string>
     <string name="prefs_ft4_title">FT4 与时间同步</string>
+    <string name="prefs_time_sync_title">時間同步</string>
+    <string name="prefs_display_title">顯示設定</string>
+    <string name="prefs_display_font_size_title">過境列表與過境日程字體大小</string>
+    <string name="prefs_display_font_size_value">字體大小：%1$d%%</string>
+    <string name="prefs_display_font_size_hint">調整過境列表與過境日程中的文字大小。</string>
+    <string name="prefs_display_font_size_tiny">極小</string>
+    <string name="prefs_display_font_size_small">小</string>
+    <string name="prefs_display_font_size_standard">標準</string>
+    <string name="prefs_display_font_size_large">大</string>
+    <string name="prefs_display_font_size_huge">極大</string>
     <string name="prefs_ft4_callsign">本机呼号</string>
     <string name="prefs_ft4_grid">网格：%s</string>
     <string name="prefs_ft4_edit_grid">编辑网格</string>

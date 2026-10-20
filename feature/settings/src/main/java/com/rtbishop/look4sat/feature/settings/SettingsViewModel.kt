@@ -330,6 +330,9 @@ class SettingsViewModel(
             is SettingsAction.SetBottomBarTool -> settingsRepo.updateOtherSettings {
                 it.copy(bottomBarTool = BottomBarTool.normalize(action.value))
             }
+            is SettingsAction.SetPassListFontScale -> settingsRepo.updateOtherSettings {
+                it.copy(passListFontScale = action.value.coerceIn(0.6f, 1.4f))
+            }
             is SettingsAction.SetFt4Callsign -> settingsRepo.updateFt4Settings {
                 it.copy(operatorCallsign = action.value)
             }

@@ -55,15 +55,18 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -106,13 +109,15 @@ fun PassesDestination(
     val viewModel: PassesViewModel = viewModel(factory = PassesViewModel.factory(container))
     val uiState = viewModel.uiState.collectAsStateWithLifecycle().value
     val stationPosition = container.settingsRepo.stationPosition.collectAsStateWithLifecycle().value
+    val passListFontScale = container.settingsRepo.otherSettings.collectAsStateWithLifecycle().value.passListFontScale
     PassesScreen(
         uiState = uiState,
         onAction = viewModel::onAction,
         navigateToRadar = navigateToRadar,
         navigateToMap = navigateToMap,
         satelliteRepo = container.satelliteRepo,
-        stationPosition = stationPosition
+        stationPosition = stationPosition,
+        passListFontScale = passListFontScale
     )
 }
 
@@ -123,7 +128,8 @@ private fun PassesScreen(
     navigateToRadar: (Int, Long) -> Unit,
     navigateToMap: () -> Unit,
     satelliteRepo: ISatelliteRepo,
-    stationPosition: GeoPos
+    stationPosition: GeoPos,
+    passListFontScale: Float
 ) {
     if (uiState.isPassesDialogShown) {
         PassesFilterDialog(
@@ -206,18 +212,26 @@ private fun PassesScreen(
                 }
             )
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                PassesList(
-                    isRefreshing = uiState.isRefreshing,
-                    isUtc = uiState.isUtc,
-                    passes = uiState.itemsList,
-                    groupedPasses = uiState.groupedPasses,
-                    sunTimes = uiState.sunTimes,
-                    focusedCatNum = uiState.focusedCatNum,
-                    navigateToRadar = navigateToRadar,
-                    onAction = onAction,
-                    satelliteRepo = satelliteRepo,
-                    stationPosition = stationPosition
-                )
+                val baseDensity = LocalDensity.current
+                CompositionLocalProvider(
+                    LocalDensity provides Density(
+                        density = baseDensity.density,
+                        fontScale = baseDensity.fontScale * passListFontScale
+                    )
+                ) {
+                    PassesList(
+                        isRefreshing = uiState.isRefreshing,
+                        isUtc = uiState.isUtc,
+                        passes = uiState.itemsList,
+                        groupedPasses = uiState.groupedPasses,
+                        sunTimes = uiState.sunTimes,
+                        focusedCatNum = uiState.focusedCatNum,
+                        navigateToRadar = navigateToRadar,
+                        onAction = onAction,
+                        satelliteRepo = satelliteRepo,
+                        stationPosition = stationPosition
+                    )
+                }
             }
         }
     }
