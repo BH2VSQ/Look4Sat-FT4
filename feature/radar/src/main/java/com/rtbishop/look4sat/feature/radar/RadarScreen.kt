@@ -50,9 +50,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
@@ -93,6 +91,7 @@ import com.rtbishop.look4sat.core.presentation.EmptyListCard
 import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.R
+import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.TimerRow
 import com.rtbishop.look4sat.core.presentation.TopBar
 import com.rtbishop.look4sat.core.presentation.formatFrequency
@@ -293,14 +292,11 @@ private fun RadarScreen(
     val context = LocalContext.current
     var showMatchDialog by remember { mutableStateOf(false) }
     var showToolsSheet by remember { mutableStateOf(false) }
-    val toolsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val toolsSheetScope = rememberCoroutineScope()
+    // SharedDialog owns the standard app bottom-sheet style and lifecycle.
+    // Close the tools sheet before navigating/opening the selected action.
     val closeToolsSheetThen: (() -> Unit) -> Unit = { action ->
-        toolsSheetScope.launch {
-            toolsSheetState.hide()
-            showToolsSheet = false
-            action()
-        }
+        showToolsSheet = false
+        action()
     }
     var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
     var matchLoading by remember { mutableStateOf(false) }
@@ -379,29 +375,30 @@ private fun RadarScreen(
         }
     }
     if (showToolsSheet) {
-        ModalBottomSheet(
+        // Use the same sheet template as the rest of the app: no Material default
+        // drag handle, themed shape/scrim, standard header and intrinsic height.
+        SharedDialog(
+            title = stringResource(R.string.radar_tools_title),
             onDismissRequest = { showToolsSheet = false },
-            sheetState = toolsSheetState
-        ) {
+            onCancel = { showToolsSheet = false }
+        ) { padding ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 16.dp)
+                    .padding(bottom = padding)
             ) {
-                Text(
-                    text = stringResource(R.string.radar_tools_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                )
                 RadarToolSheetItem(
                     iconRes = R.drawable.ic_calendar,
                     label = stringResource(R.string.radar_menu_calendar),
                     enabled = uiState.currentPass != null,
+                    horizontalPadding = padding,
                     onClick = { closeToolsSheetThen(addToCalendar) }
                 )
                 RadarToolSheetItem(
-                    iconRes = R.drawable.ic_match,
+                    // Match the icon already used by the app's Mutual/Match tab.
+                    iconRes = R.drawable.ic_radio_tower,
                     label = stringResource(R.string.radar_menu_match),
+                    horizontalPadding = padding,
                     onClick = {
                         closeToolsSheetThen {
                             showMatchDialog = true
@@ -413,6 +410,7 @@ private fun RadarScreen(
                     iconRes = R.drawable.ic_map,
                     label = stringResource(R.string.nav_map),
                     enabled = uiState.currentPass != null,
+                    horizontalPadding = padding,
                     onClick = { closeToolsSheetThen(openPassMap) }
                 )
             }
@@ -509,6 +507,7 @@ private fun RadarToolSheetItem(
     iconRes: Int,
     label: String,
     enabled: Boolean = true,
+    horizontalPadding: Dp,
     onClick: () -> Unit
 ) {
     val contentColor = if (enabled) MaterialTheme.colorScheme.onSurface
@@ -517,7 +516,7 @@ private fun RadarToolSheetItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .padding(horizontal = horizontalPadding, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
@@ -526,7 +525,7 @@ private fun RadarToolSheetItem(
             tint = contentColor,
             modifier = Modifier.size(24.dp)
         )
-        Spacer(Modifier.width(20.dp))
+        Spacer(Modifier.width(16.dp))
         Text(label, style = MaterialTheme.typography.titleMedium, color = contentColor)
     }
 }
