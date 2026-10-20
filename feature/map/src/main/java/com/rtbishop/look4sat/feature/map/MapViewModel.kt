@@ -27,6 +27,7 @@ import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.repository.IMainContainer
+import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
 import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
 import com.rtbishop.look4sat.core.domain.utility.clipLat
@@ -55,7 +56,8 @@ import kotlin.math.abs
 
 class MapViewModel(
     private val satelliteRepo: ISatelliteRepo,
-    private val settingsRepo: ISettingsRepo
+    private val settingsRepo: ISettingsRepo,
+    private val passWindow: RadarPassMapDestination? = null
 ) : ViewModel() {
 
     private val stationPos = settingsRepo.stationPosition.value
@@ -75,6 +77,8 @@ class MapViewModel(
     private var dataUpdateJob: Job? = null
     private var dataUpdateRate = 1000L
     private var selectedOrbitalObject: OrbitalObject? = null
+    private var radarPass: OrbitalPass? = null
+    private val passTimeRequest = MutableStateFlow<Long?>(null)
     /** Time-scrub offset ahead of "now" (0 = live). The tick loop reads it on Default while
      *  slider actions arrive on Main, hence @Volatile. */
     @Volatile
@@ -139,7 +143,7 @@ class MapViewModel(
                         isLightUi = settings.stateOfLightTheme,
                         mapSource = settings.mapSource,
                         tiandituKey = settings.tiandituKey,
-                        isGridMode = settings.stateOfMapGrid,
+                        isGridMode = if (passWindow == null) settings.stateOfMapGrid else false,
                         showFirstCallLabels = settings.stateOfMapFirstCall
                     )
                 }
@@ -158,6 +162,7 @@ class MapViewModel(
             // newest offset, and "now" is read here so a step that arrives mid-prediction is not
             // dropped. Runs on Default for the same reason the tick loop does.
             scrubOffset.collect { offset ->
+                if (passWindow != null) return@collect
                 val selected = selectedOrbitalObject ?: return@collect
                 val nowMs = System.currentTimeMillis()
                 val scrubDate = Date(nowMs + offset)
@@ -177,6 +182,7 @@ class MapViewModel(
         }
         viewModelScope.launch(Dispatchers.Default) {
             fullRefreshRequest.collect {
+                if (passWindow != null) return@collect
                 val selected = selectedOrbitalObject ?: return@collect
                 val timeMs = System.currentTimeMillis() + timeOffsetMs
                 val startedAt = System.nanoTime()
@@ -201,8 +207,20 @@ class MapViewModel(
             }
         }
         val (selectedCatNum, _) = satelliteRepo.selectedPass.value
-        selectDefaultSatellite(if (selectedCatNum != 0) selectedCatNum else -1)
         getStationPosition()
+        if (passWindow == null) {
+            selectDefaultSatellite(if (selectedCatNum != 0) selectedCatNum else -1)
+        } else {
+            viewModelScope.launch(Dispatchers.Default) {
+                passTimeRequest.collectLatest { at ->
+                    val satellite = selectedOrbitalObject
+                    if (at != null && satellite != null) {
+                        updateScrubbedState(satellite, stationPos, Date(at))
+                    }
+                }
+            }
+            openRadarPassMap(passWindow)
+        }
     }
 
     /** Loads the worked-grid / mark data into the map state (see the visibility collector). */
@@ -226,11 +244,13 @@ class MapViewModel(
 
     fun onAction(action: MapAction) {
         when (action) {
-            MapAction.SelectPrev -> scrollSelection(true)
-            MapAction.SelectNext -> scrollSelection(false)
-            is MapAction.SelectItem -> selectSatellite(action.item)
-            is MapAction.SelectDefaultItem -> selectDefaultSatellite(action.catnum)
-            is MapAction.ToggleGridMode -> settingsRepo.updateOtherSettings { it.copy(stateOfMapGrid = action.value) }
+            MapAction.SelectPrev -> if (passWindow == null) scrollSelection(true)
+            MapAction.SelectNext -> if (passWindow == null) scrollSelection(false)
+            is MapAction.SelectItem -> if (passWindow == null) selectSatellite(action.item)
+            is MapAction.SelectDefaultItem -> if (passWindow == null) selectDefaultSatellite(action.catnum)
+            is MapAction.ToggleGridMode -> if (passWindow == null) {
+                settingsRepo.updateOtherSettings { it.copy(stateOfMapGrid = action.value) }
+            }
             is MapAction.ToggleFirstCallLabels -> settingsRepo.updateOtherSettings { it.copy(stateOfMapFirstCall = action.value) }
             is MapAction.SetMarkedStation -> {
                 val call = action.call.trim().uppercase()
@@ -265,7 +285,10 @@ class MapViewModel(
                 }
             }
             is MapAction.SetVisible -> isScreenVisible.value = action.isVisible
-            is MapAction.SetTimeOffset -> setTimeOffset(action.offsetMs)
+            is MapAction.SetTimeOffset -> if (passWindow == null) setTimeOffset(action.offsetMs)
+            is MapAction.SetPassTime -> passWindow?.let { pass ->
+                passTimeRequest.value = action.timeMs.coerceIn(pass.aosTime, pass.losTime)
+            }
             MapAction.ResetTimeOffset -> setTimeOffset(0L)
             is MapAction.SetScrubbing -> {
                 isScrubbing = action.isScrubbing
@@ -312,6 +335,51 @@ class MapViewModel(
                 if (index < allSatellites.size - 1) selectSatellite(allSatellites[index + 1])
                 else selectSatellite(allSatellites[0])
             }
+        }
+    }
+
+    /** Build the selected pass once and keep the map fixed to AOS–LOS. */
+    private fun openRadarPassMap(pass: RadarPassMapDestination) {
+        viewModelScope.launch(Dispatchers.Default) {
+            if (pass.losTime <= pass.aosTime) return@launch
+            val foundPass = satelliteRepo.passes.value.find {
+                it.catNum == pass.catNum && it.aosTime == pass.aosTime
+            }
+            val satellite = foundPass?.orbitalObject
+                ?: satelliteRepo.satellites.value.find { it.data.catnum == pass.catNum }
+                ?: return@launch
+            radarPass = foundPass ?: OrbitalPass(
+                aosTime = pass.aosTime, losTime = pass.losTime, orbitalObject = satellite
+            )
+            selectedOrbitalObject = satellite
+            // Repository getTrack samples [AOS, LOS); append LOS exactly.
+            val duration = pass.losTime - pass.aosTime
+            val predicted = if (duration <= 4 * 60 * 60_000L) {
+                satelliteRepo.getTrack(satellite, stationPos, pass.aosTime, pass.losTime)
+                    .map { it.toMapGeoPos() }.toMutableList()
+            } else {
+                // Deep-space passes may span days. Cap the drawn samples so the map
+                // doesn't run thousands of 15-second orbital predictions.
+                val stepMs = (duration / 1_200L).coerceAtLeast(15_000L)
+                val points = ArrayList<GeoPos>()
+                var time = pass.aosTime
+                while (time < pass.losTime) {
+                    points.add(satelliteRepo.getPosition(satellite, stationPos, time).toMapGeoPos())
+                    time += stepMs
+                }
+                points
+            }
+            predicted.add(
+                satelliteRepo.getPosition(satellite, stationPos, pass.losTime).toMapGeoPos()
+            )
+            _uiState.update {
+                it.copy(
+                    isGridMode = false,
+                    track = splitGroundTrackAtDateLine(predicted),
+                    orbitalPass = radarPass ?: it.orbitalPass
+                )
+            }
+            passTimeRequest.value = System.currentTimeMillis().coerceIn(pass.aosTime, pass.losTime)
         }
     }
 
@@ -404,16 +472,23 @@ class MapViewModel(
      */
     private suspend fun updateScrubbedState(selected: OrbitalObject, pos: GeoPos, date: Date) {
         val satPos = satelliteRepo.getPosition(selected, pos, date.time)
-        val mapData = buildMapData(selected, satPos, date)
+        val (predictedData, detectedPass) = buildMapData(selected, satPos, date)
+        val chosenPass = radarPass ?: detectedPass
+        val mapData = if (passWindow != null) {
+            predictedData.copy(
+                aosTime = (chosenPass.losTime - date.time).coerceAtLeast(0L).toTimerString(),
+                isTimeAos = false
+            )
+        } else predictedData
         val sunPos = CelestialComputer.getSunPosition(stationPos, date.time)
         val moonPos = CelestialComputer.getMoonPosition(stationPos, date.time)
         _uiState.update { state ->
             val positions = glidePositions(state.positions, selected, satPos.toMapGeoPos(), date.time)
             state.copy(
-                positions = positions ?: state.positions,
+                positions = positions ?: mapOf(selected to satPos.toMapGeoPos()),
                 footprint = satPos,
-                mapData = mapData.first,
-                orbitalPass = mapData.second,
+                mapData = mapData,
+                orbitalPass = chosenPass,
                 sunLatDeg = sunPos.latitude,
                 sunLonDeg = sunPos.longitude,
                 moonLatDeg = moonPos.declination, // sub-lunar latitude = declination
@@ -674,11 +749,15 @@ class MapViewModel(
         /** Ceiling: a catalogue too slow to refresh often is still corrected, just less often. */
         private const val MAX_FULL_SCRUB_INTERVAL_MS = 2000L
 
-        fun factory(container: IMainContainer) = viewModelFactory {
+        fun factory(
+            container: IMainContainer,
+            passWindow: RadarPassMapDestination? = null
+        ) = viewModelFactory {
             initializer {
                 MapViewModel(
                     satelliteRepo = container.satelliteRepo,
-                    settingsRepo = container.settingsRepo
+                    settingsRepo = container.settingsRepo,
+                    passWindow = passWindow
                 )
             }
         }

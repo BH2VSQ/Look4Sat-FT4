@@ -77,6 +77,8 @@ sealed interface MapAction {
     data class SetVisible(val isVisible: Boolean) : MapAction
     /** Time scrub: [offsetMs] ahead of now; the ViewModel clamps it at 0. */
     data class SetTimeOffset(val offsetMs: Long) : MapAction
+    /** Fixed absolute time on the radar pass map, clamped to AOS–LOS. */
+    data class SetPassTime(val timeMs: Long) : MapAction
     /** Back to live tracking (the "Now" button). */
     data object ResetTimeOffset : MapAction
     /** Finger down/up on the time slider. */

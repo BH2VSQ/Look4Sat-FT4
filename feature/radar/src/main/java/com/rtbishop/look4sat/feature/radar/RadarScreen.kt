@@ -45,6 +45,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
@@ -178,7 +180,11 @@ internal fun radarFillSizes(maxWidth: Dp, maxHeight: Dp): RadarFillSizes {
 }
 
 @Composable
-fun RadarDestination(navigateUp: () -> Unit, onOpenLoTWStation: () -> Unit = {}) {
+fun RadarDestination(
+    navigateUp: () -> Unit,
+    onOpenLoTWStation: () -> Unit = {},
+    onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> }
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val viewModel: RadarViewModel = viewModel(factory = RadarViewModel.factory(container))
@@ -227,7 +233,7 @@ fun RadarDestination(navigateUp: () -> Unit, onOpenLoTWStation: () -> Unit = {})
     }
     RadarScreen(uiState, viewModel::onAction, navigateUpAndClearMutual, mutualData, logViewModel, requestMicPermission = {
         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-    }, onFixGrid = openLoTWStationForGridFix)
+    }, onFixGrid = openLoTWStationForGridFix, onOpenPassMap = onOpenPassMap)
 }
 
 @Composable
@@ -238,12 +244,16 @@ private fun RadarScreen(
     mutualData: MutualPassData,
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
-    onFixGrid: (List<String>) -> Unit
+    onFixGrid: (List<String>) -> Unit,
+    onOpenPassMap: (Int, Long, Long) -> Unit
 ) {
     val upcomingPass = uiState.currentPass ?: getDefaultPass()
     // 日程功能: 把当前过境写入系统日历(原仓库的 addToCalendar, ic_calendar 按钮)
     val addToCalendar: () -> Unit = {
         uiState.currentPass?.let { onAction(RadarAction.AddToCalendar(it.name, it.aosTime, it.losTime)) }
+    }
+    val openPassMap: () -> Unit = {
+        uiState.currentPass?.let { onOpenPassMap(it.catNum, it.aosTime, it.losTime) }
     }
     // Station-B overlay: full track line (only where B's elevation > 0) + live position dot
     // at the current moment, same display mode as the local station.
@@ -299,7 +309,11 @@ private fun RadarScreen(
                 TopBar {
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
-                    IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
+                    RadarActionsMenu(
+                        enabled = uiState.currentPass != null,
+                        addToCalendar = addToCalendar,
+                        openMap = openPassMap
+                    )
                 }
                 TopBar {
                     NextPassRow(pass = upcomingPass, isUtc = uiState.isUtc)
@@ -315,7 +329,11 @@ private fun RadarScreen(
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
                     NextPassRow(pass = upcomingPass, modifier = Modifier.weight(1f), isUtc = uiState.isUtc)
-                    IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
+                    RadarActionsMenu(
+                        enabled = uiState.currentPass != null,
+                        addToCalendar = addToCalendar,
+                        openMap = openPassMap
+                    )
                 }
             }
             if (isVertical) {
@@ -340,6 +358,39 @@ private fun RadarScreen(
                     PagerCard(uiState, onAction, logViewModel, requestMicPermission, Modifier.weight(1f), onFixGrid = onFixGrid)
                 }
             }
+        }
+    }
+}
+
+/** Shared top-right overflow menu for portrait and landscape radar layouts. */
+@Composable
+private fun RadarActionsMenu(
+    enabled: Boolean,
+    addToCalendar: () -> Unit,
+    openMap: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        ElevatedCard(modifier = Modifier.size(48.dp), onClick = { expanded = true }) {
+            Box(
+                modifier = Modifier.fillMaxSize()
+                    .semantics { contentDescription = "More options" },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("...", fontSize = 22.sp)
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.radar_menu_calendar)) },
+                enabled = enabled,
+                onClick = { expanded = false; addToCalendar() }
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.nav_map)) },
+                enabled = enabled,
+                onClick = { expanded = false; openMap() }
+            )
         }
     }
 }

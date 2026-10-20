@@ -116,6 +116,7 @@ import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.utility.clipLon
 import com.rtbishop.look4sat.core.presentation.IconCard
+import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SheetDialogTitle
@@ -320,6 +321,47 @@ fun MapDestination(
     )
 }
 
+/**
+ * Standalone map tied to the radar's selected pass, not the normal Map tab.
+ * Its own ViewModel keeps scrubbing and camera state independent.
+ */
+@Composable
+fun RadarPassMapScreenDestination(pass: RadarPassMapDestination, navigateUp: () -> Unit) {
+    val context = LocalContext.current
+    val container = (context.applicationContext as IContainerProvider).getMainContainer()
+    val viewModel: MapViewModel = viewModel(factory = MapViewModel.factory(container, pass))
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val mapFilter: MapFilterViewModel = viewModel(factory = MapFilterViewModel.factory())
+    val mapView = rememberMapViewWithLifecycle(mapFilter, restoreViewport = false)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onAction(MapAction.SetVisible(true))
+                Lifecycle.Event.ON_STOP -> viewModel.onAction(MapAction.SetVisible(false))
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            viewModel.onAction(MapAction.SetVisible(false))
+        }
+    }
+    MapScreen(
+        uiState = uiState,
+        onAction = viewModel::onAction,
+        mapView = mapView,
+        mapFilterViewModel = mapFilter,
+        selectedStationIds = emptySet(),
+        onSelectedStationIdsChange = {},
+        onMatchGrid = {},
+        matchCalculating = false,
+        passWindow = pass,
+        navigateUp = navigateUp
+    )
+}
+
 @Composable
 private fun MapScreen(
     uiState: MapState,
@@ -329,7 +371,9 @@ private fun MapScreen(
     selectedStationIds: Set<String>,
     onSelectedStationIdsChange: (Set<String>) -> Unit,
     onMatchGrid: (String) -> Unit,
-    matchCalculating: Boolean
+    matchCalculating: Boolean,
+    passWindow: RadarPassMapDestination? = null,
+    navigateUp: () -> Unit = {}
 ) {
     val rotateMod = Modifier.rotate(180f)
     val timeString = uiState.mapData?.aosTime ?: "00:00:00"
@@ -491,7 +535,13 @@ private fun MapScreen(
     }
     Column(modifier = Modifier.layoutPadding(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         val isVertical = isVerticalLayout()
-        if (isGridMode) {
+        if (passWindow != null) {
+            TopBar {
+                IconCard(action = navigateUp, resId = R.drawable.ic_back)
+                TimerRow(timeString = timeString, isTimeAos = isTimeAos)
+            }
+            TopBar { NextPassRow(pass = uiState.orbitalPass, isUtc = uiState.isUtc) }
+        } else if (isGridMode) {
             // Grid mode: replace the satellite-selection top bar with the
             // award filter chips (All / DXCC / VUCC / WAPC / WAJA / WAZ / WAS).
             AwardChipsRow(
@@ -600,7 +650,18 @@ private fun MapScreen(
                 // Satellite mode: the time slider replaces the old info cards. Grid mode keeps
                 // its own overlay set untouched.
                 if (!uiState.isGridMode) {
-                    TimeScrubBar(
+                    if (passWindow != null) {
+                        PassTimeScrubBar(
+                            pass = passWindow,
+                            mapTimeMs = uiState.mapTimeMs,
+                            isUtc = uiState.isUtc,
+                            copyrightResId = copyrightResId,
+                            onSeek = { onAction(MapAction.SetPassTime(it)) },
+                            onScrubStart = { onAction(MapAction.SetScrubbing(true)) },
+                            onScrubEnd = { onAction(MapAction.SetScrubbing(false)) },
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    } else TimeScrubBar(
                         offsetMs = uiState.timeOffsetMs,
                         spanMs = scrubSpanMs,
                         mapTimeMs = uiState.mapTimeMs,
@@ -635,7 +696,7 @@ private fun MapScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.End
                 ) {
-                    GridModeToggle(
+                    if (passWindow == null) GridModeToggle(
                         isGridMode = uiState.isGridMode,
                         onToggle = { onAction(MapAction.ToggleGridMode(it)) }
                     )
@@ -1120,6 +1181,69 @@ private fun formatTime(epochMs: Long, isUtc: Boolean): String {
 // endregion
 
 // region Time scrub bar
+
+/** Fixed AOS–LOS slider; unlike the normal map, neither endpoint moves with "now". */
+@Composable
+private fun PassTimeScrubBar(
+    pass: RadarPassMapDestination,
+    mapTimeMs: Long,
+    isUtc: Boolean,
+    copyrightResId: Int,
+    onSeek: (Long) -> Unit,
+    onScrubStart: () -> Unit,
+    onScrubEnd: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val duration = (pass.losTime - pass.aosTime).coerceAtLeast(1L)
+    val fraction = ((mapTimeMs - pass.aosTime).toDouble() / duration).toFloat().coerceIn(0f, 1f)
+    // Keep the thumb at the finger while the asynchronous orbital prediction catches up.
+    var draggedFraction by remember(pass.aosTime, pass.losTime) { mutableStateOf<Float?>(null) }
+    val labelShadow = Shadow(color = ComposeColor.Black.copy(alpha = 0.85f), blurRadius = 4f)
+    Column(
+        modifier = modifier.fillMaxWidth()
+            .background(ComposeColor.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = formatTime(mapTimeMs.coerceIn(pass.aosTime, pass.losTime), isUtc),
+            color = MaterialTheme.colorScheme.primary,
+            fontSize = 12.sp,
+            style = LocalTextStyle.current.copy(shadow = labelShadow)
+        )
+        Slider(
+            value = draggedFraction ?: fraction,
+            onValueChange = { value ->
+                draggedFraction = value
+                onSeek(timeOnRadarPass(pass.aosTime, pass.losTime, value))
+            },
+            onValueChangeFinished = {
+                draggedFraction = null
+                onScrubEnd()
+            },
+            valueRange = 0f..1f,
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = ComposeColor.White.copy(alpha = 0.3f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+                .pointerInput(pass.aosTime, pass.losTime) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        onScrubStart()
+                        waitForUpOrCancellation()
+                    }
+                }
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatTime(pass.aosTime, isUtc), color = ComposeColor.White, fontSize = 11.sp)
+            Text(formatTime(pass.losTime, isUtc), color = ComposeColor.White, fontSize = 11.sp)
+        }
+        Text(stringResource(copyrightResId), color = ComposeColor.White, fontSize = 9.sp)
+    }
+}
+
 
 /**
  * Time constant of the eased scrub clock, in milliseconds. The readout and the map chase the

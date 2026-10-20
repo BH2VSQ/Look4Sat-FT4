@@ -86,6 +86,7 @@
     <string name="radar_use_small">使用小雷达</string>
     <string name="radar_size_large_short">大</string>
     <string name="radar_size_small_short">小</string>
+    <string name="radar_menu_calendar">添加日程</string>
     <string name="radar_notify">通知</string>
     <string name="radar_az_text">方位角</string>
     <string name="radar_el_text">仰角</string>

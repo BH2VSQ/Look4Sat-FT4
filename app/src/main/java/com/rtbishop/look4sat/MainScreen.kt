@@ -79,11 +79,13 @@ import com.rtbishop.look4sat.core.presentation.GridFinderDestination
 import com.rtbishop.look4sat.core.presentation.LocalElevationThresholds
 import com.rtbishop.look4sat.core.presentation.LoTWUploadDestination
 import com.rtbishop.look4sat.core.presentation.RadarDestination
+import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
 import com.rtbishop.look4sat.core.presentation.Screen
 import com.rtbishop.look4sat.core.presentation.hasEnoughHeight
 import com.rtbishop.look4sat.core.presentation.hasEnoughWidth
 import com.rtbishop.look4sat.feature.gridfinder.GridFinderDestination
 import com.rtbishop.look4sat.feature.map.MapDestination
+import com.rtbishop.look4sat.feature.map.RadarPassMapScreenDestination
 import com.rtbishop.look4sat.feature.map.MapFilterViewModel
 import com.rtbishop.look4sat.feature.mutual.MutualScreen
 import com.rtbishop.look4sat.feature.mutual.MutualViewModel
@@ -103,6 +105,9 @@ fun NavRoot(deeplink: String? = null) {
     }
     val navigateBack: () -> Unit = { rootBackStack.removeLastOrNull() }
     val navigateToRadar: () -> Unit = { rootBackStack.add(RadarDestination) }
+    val navigateToRadarPassMap: (Int, Long, Long) -> Unit = { catNum, aos, los ->
+        if (los > aos) rootBackStack.add(RadarPassMapDestination(catNum, aos, los))
+    }
     val navigateToGridFinder: () -> Unit = { rootBackStack.add(GridFinderDestination) }
     val navigateToLoTWStation: () -> Unit = { rootBackStack.add(LoTWUploadDestination) }
     // Incoming screen slides in from the right, outgoing drifts left at 1/3 speed (API35+ style)
@@ -147,7 +152,19 @@ fun NavRoot(deeplink: String? = null) {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        RadarDestination(navigateUp = navigateBack, onOpenLoTWStation = navigateToLoTWStation)
+                        RadarDestination(
+                            navigateUp = navigateBack,
+                            onOpenLoTWStation = navigateToLoTWStation,
+                            onOpenPassMap = navigateToRadarPassMap
+                        )
+                    }
+                }
+                entry<RadarPassMapDestination> { pass ->
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        RadarPassMapScreenDestination(pass, navigateUp = navigateBack)
                     }
                 }
                 entry<GridFinderDestination> {

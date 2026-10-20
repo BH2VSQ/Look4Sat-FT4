@@ -98,6 +98,7 @@
     <string name="radar_size_large_short">L</string>
     <string name="radar_size_small_short">S</string>
     <string name="radar_notify">Notify</string>
+    <string name="radar_menu_calendar">Add to calendar</string>
     <string name="radar_az_text">Azimuth</string>
     <string name="radar_az_value" translatable="false">%.1f°</string>
     <string name="radar_el_text">Elevation</string>
