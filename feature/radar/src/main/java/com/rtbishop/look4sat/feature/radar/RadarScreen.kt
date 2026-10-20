@@ -300,6 +300,9 @@ private fun RadarScreen(
         showToolsMenu = false
         action()
     }
+    var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
+    var matchLoading by remember { mutableStateOf(false) }
+    var matchError by remember { mutableStateOf<String?>(null) }
     // Compose the menu at the top-right list button, rather than opening a
     // full-width bottom sheet. Both toolbar arrangements use the same popup.
     val toolsMenu: @Composable () -> Unit = {
@@ -318,9 +321,6 @@ private fun RadarScreen(
             onMap = { closeToolsMenuThen(openPassMap) }
         )
     }
-    var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
-    var matchLoading by remember { mutableStateOf(false) }
-    var matchError by remember { mutableStateOf<String?>(null) }
     BoxWithConstraints(
         modifier = Modifier
             .layoutPadding()
