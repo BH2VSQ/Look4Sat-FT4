@@ -57,7 +57,7 @@ import kotlin.math.abs
 class MapViewModel(
     private val satelliteRepo: ISatelliteRepo,
     private val settingsRepo: ISettingsRepo,
-    private val passWindow: RadarPassMapDestination? = null
+    private var passWindow: RadarPassMapDestination? = null
 ) : ViewModel() {
 
     private val stationPos = settingsRepo.stationPosition.value
@@ -75,6 +75,8 @@ class MapViewModel(
     private var allPasses = satelliteRepo.passes.value
     private var allSatellites = satelliteRepo.satellites.value
     private var dataUpdateJob: Job? = null
+    /** At most one dedicated-pass prediction/ticker may own this MapViewModel. */
+    private var passLoadJob: Job? = null
     private var dataUpdateRate = 1000L
     private var selectedOrbitalObject: OrbitalObject? = null
     private var radarPass: OrbitalPass? = null
@@ -354,14 +356,47 @@ class MapViewModel(
         }
     }
 
-    /** Build the selected pass once and keep the map fixed to AOS–LOS. */
+    /**
+     * Replace pass contents without recreating the MapView or NavEntry.
+     * A new request cancels the old track computation before its result can
+     * overwrite the new pass. Empty layers remove stale markers while loading.
+     */
+    fun switchPassWindow(next: RadarPassMapDestination) {
+        if (passWindow == null || passWindow == next) return
+        passLoadJob?.cancel()
+        passWindow = next
+        selectedOrbitalObject = null
+        radarPass = null
+        passTimePinned = false
+        isScrubbing = false
+        passTimeRequest.value = null
+        _uiState.update {
+            it.copy(
+                mapData = null,
+                orbitalPass = getDefaultPass(),
+                track = emptyList(),
+                footprint = null,
+                positions = emptyMap(),
+                mapTimeMs = System.currentTimeMillis().coerceIn(next.aosTime, next.losTime),
+                isScrubbing = false
+            )
+        }
+        openRadarPassMap(next)
+    }
+
+    /** Build one selected pass, canceling any old prediction loop. */
     private fun openRadarPassMap(pass: RadarPassMapDestination) {
-        viewModelScope.launch(Dispatchers.Default) {
+        passLoadJob?.cancel()
+        passLoadJob = viewModelScope.launch(Dispatchers.Default) {
             if (pass.losTime <= pass.aosTime) return@launch
             // Navigation can reach this page while the repository is still loading its selected
             // satellite catalogue. Reading .value once here could see an empty list and return
             // permanently, leaving the map without either the track or the satellite marker.
-            val satellite = satelliteRepo.satellites.first { satellites ->
+            // A pass already carries its satellite object. Prefer it when the selected
+            // satellite list is briefly being rebuilt after switching/filtering.
+            val satellite = satelliteRepo.passes.value.firstOrNull {
+                it.catNum == pass.catNum && it.aosTime == pass.aosTime
+            }?.orbitalObject ?: satelliteRepo.satellites.first { satellites ->
                 satellites.any { it.data.catnum == pass.catNum }
             }.first { it.data.catnum == pass.catNum }
             val foundPass = satelliteRepo.passes.value.find {
@@ -371,6 +406,13 @@ class MapViewModel(
                 aosTime = pass.aosTime, losTime = pass.losTime, orbitalObject = satellite
             )
             selectedOrbitalObject = satellite
+            // Show the newly selected satellite immediately; ground-track prediction can
+            // take much longer for deep-space passes. The marker/time need not wait.
+            val initialTime = System.currentTimeMillis().coerceIn(pass.aosTime, pass.losTime)
+            passTimePinned = false
+            isScrubbing = false
+            updateScrubbedState(satellite, stationPos, Date(initialTime))
+            passTimeRequest.value = initialTime
             // Repository getTrack samples [AOS, LOS); append LOS exactly.
             val duration = pass.losTime - pass.aosTime
             val predicted = if (duration <= 4 * 60 * 60_000L) {
@@ -398,13 +440,6 @@ class MapViewModel(
                     orbitalPass = radarPass ?: it.orbitalPass
                 )
             }
-            val initialTime = System.currentTimeMillis().coerceIn(pass.aosTime, pass.losTime)
-            passTimePinned = false
-            isScrubbing = false
-            passTimeRequest.value = initialTime
-            // Prime the selected satellite marker, footprint and readout immediately instead of
-            // relying on the asynchronous StateFlow collector's first scheduling turn.
-            updateScrubbedState(satellite, stationPos, Date(initialTime))
             // Preserve live tracking while the pass is underway. Once the operator
             // seeks an absolute time, keep that instant rather than snapping back.
             while (isActive) {

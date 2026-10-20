@@ -115,16 +115,21 @@ fun NavRoot(deeplink: String? = null) {
     // radar/map overlays. The inner MainScreen keeps its own independent back stack.
     var requestedMainTab by remember { androidx.compose.runtime.mutableStateOf<Screen?>(null) }
     val navigateToRadar: () -> Unit = { rootBackStack.add(RadarDestination) }
+    // Keep a single dedicated-map NavEntry and MapView while switching passes.
+    // Replacing the entry used to overlap two osmdroid views during transitions;
+    // their shared rendering caches could detach each other's satellite overlays.
+    var currentRadarMapPass by remember { androidx.compose.runtime.mutableStateOf<RadarPassMapDestination?>(null) }
     val navigateToRadarPassMap: (Int, Long, Long) -> Unit = { catNum, aos, los ->
-        if (los > aos) rootBackStack.add(RadarPassMapDestination(catNum, aos, los))
-    }
-    // Replace, don't push: Back must always return directly to the originating radar page
-    // even after browsing dozens of passes in the dedicated map.
-    val switchRadarPassMap: (RadarPassMapDestination) -> Unit = { next ->
-        val current = rootBackStack.lastOrNull()
-        if (current is RadarPassMapDestination && current != next) {
-            rootBackStack.removeLastOrNull()
+        if (los > aos) {
+            val next = RadarPassMapDestination(catNum, aos, los)
+            currentRadarMapPass = next
             rootBackStack.add(next)
+        }
+    }
+    // Only the pass data changes. System Back still returns to the original radar.
+    val switchRadarPassMap: (RadarPassMapDestination) -> Unit = { next ->
+        if (rootBackStack.lastOrNull() is RadarPassMapDestination) {
+            currentRadarMapPass = next
         }
     }
     val navigateToGridFinder: () -> Unit = { rootBackStack.add(GridFinderDestination) }
@@ -233,7 +238,7 @@ fun NavRoot(deeplink: String? = null) {
                             color = MaterialTheme.colorScheme.background
                         ) {
                             RadarPassMapScreenDestination(
-                                pass = pass,
+                                pass = currentRadarMapPass ?: pass,
                                 onSwitchPass = switchRadarPassMap
                             )
                         }
