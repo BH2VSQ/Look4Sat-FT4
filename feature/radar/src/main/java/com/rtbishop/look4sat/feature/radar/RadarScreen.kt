@@ -49,6 +49,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ElevatedCard
@@ -92,7 +94,6 @@ import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SheetDialogTitle
-import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.TimerRow
 import com.rtbishop.look4sat.core.presentation.TopBar
 import com.rtbishop.look4sat.core.presentation.formatFrequency
@@ -294,12 +295,28 @@ private fun RadarScreen(
         }
     val context = LocalContext.current
     var showMatchDialog by remember { mutableStateOf(false) }
-    var showToolsSheet by remember { mutableStateOf(false) }
-    // SharedDialog owns the standard app bottom-sheet style and lifecycle.
-    // Close the tools sheet before navigating/opening the selected action.
-    val closeToolsSheetThen: (() -> Unit) -> Unit = { action ->
-        showToolsSheet = false
+    var showToolsMenu by remember { mutableStateOf(false) }
+    val closeToolsMenuThen: (() -> Unit) -> Unit = { action ->
+        showToolsMenu = false
         action()
+    }
+    // Compose the menu at the top-right list button, rather than opening a
+    // full-width bottom sheet. Both toolbar arrangements use the same popup.
+    val toolsMenu: @Composable () -> Unit = {
+        RadarActionsMenu(
+            expanded = showToolsMenu,
+            onToggle = { showToolsMenu = !showToolsMenu },
+            onDismissRequest = { showToolsMenu = false },
+            hasPass = uiState.currentPass != null,
+            onAddToCalendar = { closeToolsMenuThen(addToCalendar) },
+            onMatch = {
+                closeToolsMenuThen {
+                    showMatchDialog = true
+                    matchError = null
+                }
+            },
+            onMap = { closeToolsMenuThen(openPassMap) }
+        )
     }
     var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
     var matchLoading by remember { mutableStateOf(false) }
@@ -334,7 +351,7 @@ private fun RadarScreen(
                 TopBar {
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
-                    RadarActionsMenu(onClick = { showToolsSheet = true })
+                    toolsMenu()
                 }
                 TopBar {
                     NextPassRow(pass = upcomingPass, isUtc = uiState.isUtc)
@@ -350,7 +367,7 @@ private fun RadarScreen(
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
                     NextPassRow(pass = upcomingPass, modifier = Modifier.weight(1f), isUtc = uiState.isUtc)
-                    RadarActionsMenu(onClick = { showToolsSheet = true })
+                    toolsMenu()
                 }
             }
             if (isVertical) {
@@ -374,48 +391,6 @@ private fun RadarScreen(
                     RadarCard(uiState, trackB, trackBPosition, Modifier.weight(1f))
                     PagerCard(uiState, onAction, logViewModel, requestMicPermission, Modifier.weight(1f), onFixGrid = onFixGrid)
                 }
-            }
-        }
-    }
-    if (showToolsSheet) {
-        // Use the same sheet template as the rest of the app: no Material default
-        // drag handle, themed shape/scrim, standard header and intrinsic height.
-        SharedDialog(
-            title = stringResource(R.string.radar_tools_title),
-            onDismissRequest = { showToolsSheet = false },
-            onCancel = { showToolsSheet = false }
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = padding)
-            ) {
-                RadarToolSheetItem(
-                    iconRes = R.drawable.ic_calendar,
-                    label = stringResource(R.string.radar_menu_calendar),
-                    enabled = uiState.currentPass != null,
-                    horizontalPadding = padding,
-                    onClick = { closeToolsSheetThen(addToCalendar) }
-                )
-                RadarToolSheetItem(
-                    // Match the icon already used by the app's Mutual/Match tab.
-                    iconRes = R.drawable.ic_radio_tower,
-                    label = stringResource(R.string.radar_menu_match),
-                    horizontalPadding = padding,
-                    onClick = {
-                        closeToolsSheetThen {
-                            showMatchDialog = true
-                            matchError = null
-                        }
-                    }
-                )
-                RadarToolSheetItem(
-                    iconRes = R.drawable.ic_map,
-                    label = stringResource(R.string.nav_map),
-                    enabled = uiState.currentPass != null,
-                    horizontalPadding = padding,
-                    onClick = { closeToolsSheetThen(openPassMap) }
-                )
             }
         }
     }
@@ -493,52 +468,84 @@ private fun RadarScreen(
     }
 }
 
-/** List-style button that opens the radar tools bottom sheet. */
+/** Compact popup anchored to the radar toolbar's upper-right list button. */
 @Composable
-private fun RadarActionsMenu(onClick: () -> Unit) {
+private fun RadarActionsMenu(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onDismissRequest: () -> Unit,
+    hasPass: Boolean,
+    onAddToCalendar: () -> Unit,
+    onMatch: () -> Unit,
+    onMap: () -> Unit
+) {
     val context = LocalContext.current
-    ElevatedCard(modifier = Modifier.size(48.dp), onClick = onClick) {
-        Box(
-            modifier = Modifier.fillMaxSize()
-                .semantics { contentDescription = context.getString(R.string.radar_menu_tools) },
-            contentAlignment = Alignment.Center
+    Box(modifier = Modifier.size(48.dp)) {
+        ElevatedCard(modifier = Modifier.fillMaxSize(), onClick = onToggle) {
+            Box(
+                modifier = Modifier.fillMaxSize()
+                    .semantics { contentDescription = context.getString(R.string.radar_menu_tools) },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_list),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = onDismissRequest,
+            modifier = Modifier.width(220.dp)
         ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_list),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(24.dp)
+            Text(
+                text = stringResource(R.string.radar_tools_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            RadarToolMenuItem(
+                iconRes = R.drawable.ic_calendar,
+                label = stringResource(R.string.radar_menu_calendar),
+                enabled = hasPass,
+                onClick = onAddToCalendar
+            )
+            RadarToolMenuItem(
+                iconRes = R.drawable.ic_radio_tower,
+                label = stringResource(R.string.radar_menu_match),
+                onClick = onMatch
+            )
+            RadarToolMenuItem(
+                iconRes = R.drawable.ic_map,
+                label = stringResource(R.string.nav_map),
+                enabled = hasPass,
+                onClick = onMap
             )
         }
     }
 }
 
 @Composable
-private fun RadarToolSheetItem(
+private fun RadarToolMenuItem(
     iconRes: Int,
     label: String,
     enabled: Boolean = true,
-    horizontalPadding: Dp,
     onClick: () -> Unit
 ) {
-    val contentColor = if (enabled) MaterialTheme.colorScheme.onSurface
-    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = horizontalPadding, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            painter = painterResource(iconRes),
-            contentDescription = null,
-            tint = contentColor,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(Modifier.width(16.dp))
-        Text(label, style = MaterialTheme.typography.titleMedium, color = contentColor)
-    }
+    DropdownMenuItem(
+        text = { Text(label, style = MaterialTheme.typography.titleMedium) },
+        leadingIcon = {
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                modifier = Modifier.size(24.dp)
+            )
+        },
+        enabled = enabled,
+        onClick = onClick
+    )
 }
 
 @Composable
