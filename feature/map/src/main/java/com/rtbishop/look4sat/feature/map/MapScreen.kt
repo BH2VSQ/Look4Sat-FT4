@@ -589,7 +589,7 @@ private fun MapScreen(
                     modifier = rotateMod,
                     enabled = previousPass != null
                 )
-                TimerRow(timeString = timeString, isTimeAos = isTimeAos)
+                TimerRow(timeString = timeString, isTimeAos = isTimeAos, showAosLabel = false)
                 IconCard(
                     action = { nextPass?.let(onSwitchPass) },
                     resId = R.drawable.ic_arrow,
