@@ -28,7 +28,8 @@ enum class LogbookFilter { ALL, CONFIRMED, UNCONFIRMED, DRAFTS }
  * here, next to the record model, as the single definition of "matches the query".
  *
  * [query] is matched case-insensitively against the opposite callsign, the own callsign,
- * the satellite name, both grids, the VUCC grids and the comment. [modeFilter] is either blank (any mode)
+ * the satellite name, both primary grids, the counterpart's VUCC grids and the comment.
+ * [modeFilter] is either blank (any mode)
  * or an exact [displayMode] — the modes offered are whatever the log actually contains, so
  * there is no sentinel for "worked via satellite". [confirmation] narrows to confirmed,
  * completed-but-unconfirmed, or not-completed records.
@@ -40,15 +41,14 @@ fun filterRecords(
     confirmation: LogbookFilter
 ): List<QsoRecord> = records.filter { record ->
     val trimmed = query.trim()
-    (trimmed.isEmpty() || listOf(
+    (trimmed.isEmpty() || (listOf(
         record.theirCallsign,
         record.myCallsign,
         record.satelliteName,
         record.theirGrid,
-        record.theirVuccGrids.joinToString(" "),
         record.myGrid,
         record.comment
-    ).any { it.contains(trimmed, ignoreCase = true) }) &&
+    ) + record.theirVuccGrids).any { it.contains(trimmed, ignoreCase = true) }) &&
         when (modeFilter) {
             "" -> true
             else -> record.displayMode == modeFilter

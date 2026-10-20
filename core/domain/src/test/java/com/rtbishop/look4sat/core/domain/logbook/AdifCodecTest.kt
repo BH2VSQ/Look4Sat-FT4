@@ -200,6 +200,21 @@ class AdifCodecTest {
     }
 
     @Test
+    fun displayTheirGridCombinesLegacyPrimaryWithAdditionalVuccGrids() {
+        val record = QsoRecord(
+            startUtcMillis = 1_760_000_000_000L,
+            theirCallsign = "BA8AFK/9",
+            myCallsign = "BH2VSQ",
+            theirGrid = "NM84",
+            theirVuccGrids = listOf("NM94")
+        )
+
+        assertEquals("NM84, NM94", record.displayTheirGrid)
+        assertEquals("NM84, NM94", record.copy(theirGrid = "", theirVuccGrids = listOf("NM84", "NM94")).displayTheirGrid)
+        assertEquals("NM84XO", record.copy(theirGrid = "NM84XO", theirVuccGrids = emptyList()).displayTheirGrid)
+    }
+
+    @Test
     fun decodeNormalizesPrimaryAndMultiGridFieldsIntoCompleteVuccSets() {
         val adi = """
             <EOH>
@@ -221,18 +236,30 @@ class AdifCodecTest {
     }
 
     @Test
-    fun displayTheirGridCombinesLegacyPrimaryWithAdditionalVuccGrids() {
-        // Older records may have the first grid in theirGrid and only additional
-        // grids in theirVuccGrids. The logbook must still show the complete set.
-        val record = QsoRecord(
-            startUtcMillis = 1_760_000_000_000L,
-            theirCallsign = "BA8AFK/9",
-            myCallsign = "BH2VSQ",
-            theirGrid = "NM84",
-            theirVuccGrids = listOf("NM94")
-        )
+    fun decodeMultiGridSetsDeduplicateSquaresAndDiscardInvalidLocators() {
+        val record = AdifCodec.decodeRecords(listOf(mapOf(
+            "CALL" to "K1ABC", "QSO_DATE" to "20260820", "TIME_ON" to "1130",
+            "GRIDSQUARE" to "EN52EN",
+            "VUCC_GRIDS" to "en52en01, EN53fa, ZZ99, garbage",
+            "MY_GRIDSQUARE" to "OL62TI",
+            "MY_VUCC_GRIDS" to "ol62ti01, OL63, XX99"
+        ))).single()
 
-        assertEquals("NM84, NM94", record.displayTheirGrid)
+        assertEquals(listOf("EN52", "EN53"), record.theirVuccGrids)
+        assertEquals(listOf("OL62", "OL63"), record.vuccGrids)
+    }
+
+    @Test
+    fun decodeSingleGridWithoutMultiFieldKeepsLocatorPrecisionAndEmptySets() {
+        val record = AdifCodec.decodeRecords(listOf(mapOf(
+            "CALL" to "K1ABC", "QSO_DATE" to "20260820", "TIME_ON" to "1130",
+            "GRIDSQUARE" to "EN52EN01", "MY_GRIDSQUARE" to "OL62TI"
+        ))).single()
+
+        assertEquals("EN52EN01", record.theirGrid)
+        assertEquals("OL62TI", record.myGrid)
+        assertTrue(record.theirVuccGrids.isEmpty())
+        assertTrue(record.vuccGrids.isEmpty())
     }
 
     @Test

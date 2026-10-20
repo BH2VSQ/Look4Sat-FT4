@@ -97,11 +97,8 @@ object AdifCodec {
         val end = values["QSO_DATE_OFF"]?.let { endDate ->
             values["TIME_OFF"]?.let { endTime -> parse(endDate, endTime) }
         }
-        // LoTW omits GRIDSQUARE when the other station operated on a grid line
-        // or corner and supplies only VUCC_GRIDS. Keep the first valid grid in
-        // theirGrid for legacy single-grid UI/editor fields, while retaining the
-        // complete normalized set in theirVuccGrids.
         val theirVuccGrids = decodeGridSet(values["GRIDSQUARE"], values["VUCC_GRIDS"])
+        // Boundary QSOs may carry only VUCC_GRIDS; keep a primary for legacy consumers.
         val theirGrid = values["GRIDSQUARE"].orEmpty().uppercase(Locale.US)
             .ifBlank { theirVuccGrids.firstOrNull().orEmpty() }
         QsoRecord(
@@ -110,8 +107,6 @@ object AdifCodec {
             theirCallsign = call,
             myCallsign = values["STATION_CALLSIGN"].orEmpty().uppercase(Locale.US),
             theirGrid = theirGrid,
-            // Once a multi-grid field is present, expose the complete normalized
-            // set (primary GRIDSQUARE + VUCC_GRIDS), not only the raw field value.
             theirVuccGrids = theirVuccGrids,
             myGrid = values["MY_GRIDSQUARE"].orEmpty().uppercase(Locale.US),
             vuccGrids = decodeGridSet(values["MY_GRIDSQUARE"], values["MY_VUCC_GRIDS"]),
@@ -184,14 +179,9 @@ object AdifCodec {
         .filter { it.matches(gridPattern) }
         .distinct()
 
-    /**
-     * The model's multi-grid properties represent the complete 4-character set.
-     * ADIF producers are inconsistent about whether VUCC_GRIDS repeats the
-     * primary GRIDSQUARE, so add the primary when the multi-grid field exists and
-     * normalize every valid locator to its VUCC (four-character) square. A plain
-     * single-grid record without the multi-grid field keeps the legacy empty list.
-     */
+    /** Merge the primary locator into a multi-grid field's complete VUCC square set. */
     private fun decodeGridSet(primary: String?, multi: String?): List<String> {
+        // Single-grid records keep the legacy empty list and full locator precision.
         if (multi.isNullOrBlank()) return emptyList()
         return (decodeGrids(primary) + decodeGrids(multi))
             .map { it.take(4) }

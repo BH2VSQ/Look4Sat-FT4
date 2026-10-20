@@ -87,16 +87,9 @@ data class QsoRecord(
     val comment: String = ""
 )
 
-/**
- * Grid label for logbook presentation. LoTW reports multi-grid boundary QSOs
- * in VUCC_GRIDS without GRIDSQUARE, so the display must use the complete grid
- * set when it is available instead of relying on [theirGrid] alone.
- */
+/** Complete counterpart grid label, including legacy records with no primary grid. */
 val QsoRecord.displayTheirGrid: String
     get() {
-        // Some older records store the primary grid only in theirGrid and the
-        // remaining boundary grids in theirVuccGrids. Merge both fields before
-        // deciding whether to show one full locator or the complete 4-char set.
         val grids = (listOf(theirGrid) + theirVuccGrids)
             .map { it.trim().uppercase(Locale.US).take(4) }
             .filter { it.matches(Regex("[A-R]{2}[0-9]{2}")) }

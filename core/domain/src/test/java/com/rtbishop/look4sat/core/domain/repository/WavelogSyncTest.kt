@@ -113,6 +113,24 @@ class WavelogSyncTest {
         assertEquals(setOf("OL62", "OL63"), data.roamedGrids)
         assertEquals(listOf("EN52", "EN53"), data.gridQsos.getValue("EN52").single().theirGrids)
         assertEquals(setOf("OL62", "OL63"), data.gridQsos.getValue("EN52").single().myGrids)
+        assertEquals(1, data.gridQsos.getValue("EN52").size)
+        assertEquals(1, data.gridQsos.getValue("EN53").size)
+    }
+
+    @Test
+    fun gridDataMergesDuplicateLocatorsWithoutCountingOwnSquaresAsWorked() {
+        val qso = record(
+            start = 1_000L,
+            theirGrid = "EN52EN",
+            theirVucc = listOf("EN52", "en53fa", "ZZ99"),
+            myGrid = "OL62TI"
+        ).copy(vuccGrids = listOf("OL62", "ol63ti", "XX99"))
+
+        val data = buildWavelogGridData(listOf(qso))
+        assertEquals(setOf("EN52", "EN53"), data.grids)
+        assertEquals(setOf("OL62", "OL63"), data.roamedGrids)
+        assertEquals(1, data.gridQsos.getValue("EN52").size)
+        assertEquals(1, data.gridQsos.getValue("EN53").size)
     }
 
     @Test
@@ -322,6 +340,8 @@ class WavelogSyncTest {
         override fun setWorkedGridQsos(qsos: Map<String, List<GridQso>>) { workedGridQsos = qsos }
         override fun getRoamedGrids(): Set<String> = roamedGrids
         override fun setRoamedGrids(grids: Set<String>) { roamedGrids = grids }
+        override fun getVuccSelectedStationIds(): Set<String> = emptySet()
+        override fun setVuccSelectedStationIds(ids: Set<String>) = Unit
         override fun getWavelogSyncCursors(): Map<String, Long> = cursors
         override fun setWavelogSyncCursors(cursors: Map<String, Long>) { this.cursors = cursors }
         override fun getWavelogSyncUrl(): String = syncUrl

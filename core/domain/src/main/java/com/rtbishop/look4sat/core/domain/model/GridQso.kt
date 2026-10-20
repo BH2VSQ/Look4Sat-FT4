@@ -143,6 +143,27 @@ fun List<GridQso>.scopedToStation(stationId: String?): List<GridQso> =
     }
 
 /**
+ * Scope to any selected operated-station grid-set. This is a UNION of the
+ * existing covering scopes, not an exact-match comparison: selecting OL62
+ * still includes QSO records from an OL62/OL63 location. A QSO matching two
+ * selections is returned once. An empty selection represents All.
+ */
+fun List<GridQso>.scopedToStations(stationIds: Set<String>): List<GridQso> {
+    if (stationIds.isEmpty()) return this
+    val scopes = stationIds.map { it.split(',').toSet() }
+    return filter { qso ->
+        val grids = qso.myStationGrids()
+        scopes.any { grids.containsAll(it) }
+    }
+}
+
+/** Earliest QSO per grid within a multi-station selection (empty means All). */
+fun Map<String, List<GridQso>>.firstCallsByGrid(stationIds: Set<String>): Map<String, String> =
+    mapNotNull { (grid, qsos) ->
+        qsos.scopedToStations(stationIds).minByOrNull { it.epochMs }?.let { grid to it.call }
+    }.toMap()
+
+/**
  * For every grid in the store, the callsign of the earliest QSO — scoped to the
  * operated-grid selector's choice first, so a specific 台址 labels each worked
  * cell with ITS first contact; null ("All") keeps the global first call.

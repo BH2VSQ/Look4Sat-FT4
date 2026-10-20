@@ -160,6 +160,9 @@ class FakeSettingsRepo(
     override fun setWorkedGridQsos(qsos: Map<String, List<GridQso>>) = TODO()
     override fun getRoamedGrids(): Set<String> = TODO()
     override fun setRoamedGrids(grids: Set<String>) = TODO()
+    // VUCC map's operated-station selection: the ViewModel under test never touches it.
+    override fun getVuccSelectedStationIds(): Set<String> = TODO()
+    override fun setVuccSelectedStationIds(ids: Set<String>) = TODO()
     override fun getMarkedGridStations(): Map<String, List<com.rtbishop.look4sat.core.domain.model.MarkedStation>> = emptyMap()
     override fun setMarkedGridStations(stations: Map<String, List<com.rtbishop.look4sat.core.domain.model.MarkedStation>>) = Unit
     override fun updateLoTWSettings(settings: LoTWSettings) = TODO()
