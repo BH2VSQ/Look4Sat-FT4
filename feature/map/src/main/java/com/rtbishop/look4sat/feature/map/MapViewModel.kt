@@ -78,6 +78,7 @@ class MapViewModel(
     private var dataUpdateRate = 1000L
     private var selectedOrbitalObject: OrbitalObject? = null
     private var radarPass: OrbitalPass? = null
+    @Volatile private var passTimePinned = false
     private val passTimeRequest = MutableStateFlow<Long?>(null)
     /** Time-scrub offset ahead of "now" (0 = live). The tick loop reads it on Default while
      *  slider actions arrive on Main, hence @Volatile. */
@@ -287,6 +288,7 @@ class MapViewModel(
             is MapAction.SetVisible -> isScreenVisible.value = action.isVisible
             is MapAction.SetTimeOffset -> if (passWindow == null) setTimeOffset(action.offsetMs)
             is MapAction.SetPassTime -> passWindow?.let { pass ->
+                passTimePinned = true
                 passTimeRequest.value = action.timeMs.coerceIn(pass.aosTime, pass.losTime)
             }
             MapAction.ResetTimeOffset -> setTimeOffset(0L)
@@ -380,6 +382,16 @@ class MapViewModel(
                 )
             }
             passTimeRequest.value = System.currentTimeMillis().coerceIn(pass.aosTime, pass.losTime)
+            // Preserve live tracking while the pass is underway. Once the operator
+            // seeks an absolute time, keep that instant rather than snapping back.
+            while (isActive) {
+                isScreenVisible.first { it }
+                if (!passTimePinned && !isScrubbing) {
+                    passTimeRequest.value =
+                        System.currentTimeMillis().coerceIn(pass.aosTime, pass.losTime)
+                }
+                delay(1_000L)
+            }
         }
     }
 
@@ -494,7 +506,10 @@ class MapViewModel(
                 moonLatDeg = moonPos.declination, // sub-lunar latitude = declination
                 moonLonDeg = if (moonPos.gha <= 180.0) -moonPos.gha else 360.0 - moonPos.gha,
                 mapTimeMs = date.time,
-                scrubSerial = state.scrubSerial + 1
+                // Auto playback does not seize the camera from the user's panning.
+                // A manual seek still follows the satellite as the thumb moves.
+                scrubSerial = state.scrubSerial +
+                    if (passWindow == null || passTimePinned) 1 else 0
             )
         }
     }
