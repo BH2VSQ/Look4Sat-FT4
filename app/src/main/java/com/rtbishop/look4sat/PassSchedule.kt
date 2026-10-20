@@ -35,6 +35,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -517,6 +521,13 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
     }
 
     Scaffold(
+        // NavigationSuiteScaffold owns the app's bottom navigation area. Do not
+        // apply the system navigation-bar inset a second time inside this screen.
+        // Keeping top and horizontal safe insets still protects the content on
+        // edge-to-edge devices in both gesture and three-button navigation modes.
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+        ),
         topBar = {
             TopAppBar(
                 title = {
