@@ -84,7 +84,7 @@ jobs:
             if [ -d source ]; then
               python3 - <<'PY'
           import glob
-                    import xml.etree.ElementTree as ET
+          import xml.etree.ElementTree as ET
 
           files = glob.glob("source/**/build/test-results/**/*.xml", recursive=True)
           totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
