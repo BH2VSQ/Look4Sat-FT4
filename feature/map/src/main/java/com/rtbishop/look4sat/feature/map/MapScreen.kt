@@ -716,6 +716,7 @@ private fun MapScreen(
                             onSeek = { onAction(MapAction.SetPassTime(it)) },
                             onScrubStart = { onAction(MapAction.SetScrubbing(true)) },
                             onScrubEnd = { onAction(MapAction.SetScrubbing(false)) },
+                            onReset = { onAction(MapAction.ResetTimeOffset) },
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
                     } else TimeScrubBar(
@@ -1249,6 +1250,7 @@ private fun PassTimeScrubBar(
     onSeek: (Long) -> Unit,
     onScrubStart: () -> Unit,
     onScrubEnd: () -> Unit,
+    onReset: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val duration = (pass.losTime - pass.aosTime).coerceAtLeast(1L)
@@ -1262,12 +1264,26 @@ private fun PassTimeScrubBar(
             .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = formatTime(mapTimeMs.coerceIn(pass.aosTime, pass.losTime), isUtc),
-            color = MaterialTheme.colorScheme.primary,
-            fontSize = 12.sp,
-            style = LocalTextStyle.current.copy(shadow = labelShadow)
-        )
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = formatTime(mapTimeMs.coerceIn(pass.aosTime, pass.losTime), isUtc),
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 12.sp,
+                style = LocalTextStyle.current.copy(shadow = labelShadow),
+                modifier = Modifier.align(Alignment.Center)
+            )
+            TextButton(
+                onClick = onReset,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Text(
+                    text = stringResource(R.string.map_time_reset),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 12.sp,
+                    style = LocalTextStyle.current.copy(shadow = labelShadow)
+                )
+            }
+        }
         Slider(
             value = draggedFraction ?: fraction,
             onValueChange = { value ->

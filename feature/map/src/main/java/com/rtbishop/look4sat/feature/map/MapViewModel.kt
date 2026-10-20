@@ -291,7 +291,21 @@ class MapViewModel(
                 passTimePinned = true
                 passTimeRequest.value = action.timeMs.coerceIn(pass.aosTime, pass.losTime)
             }
-            MapAction.ResetTimeOffset -> setTimeOffset(0L)
+            MapAction.ResetTimeOffset -> {
+                val pass = passWindow
+                if (pass == null) {
+                    setTimeOffset(0L)
+                } else {
+                    val nowMs = System.currentTimeMillis()
+                    val isPassActive = nowMs in pass.aosTime..pass.losTime
+                    // During the pass, reset returns to live time. Outside it, reset to AOS and
+                    // pin there instead of being clamped to LOS by the live update loop.
+                    passTimePinned = !isPassActive
+                    isScrubbing = false
+                    _uiState.update { it.copy(isScrubbing = false) }
+                    passTimeRequest.value = radarPassResetTime(nowMs, pass.aosTime, pass.losTime)
+                }
+            }
             is MapAction.SetScrubbing -> {
                 isScrubbing = action.isScrubbing
                 _uiState.update { it.copy(isScrubbing = action.isScrubbing) }
@@ -344,12 +358,15 @@ class MapViewModel(
     private fun openRadarPassMap(pass: RadarPassMapDestination) {
         viewModelScope.launch(Dispatchers.Default) {
             if (pass.losTime <= pass.aosTime) return@launch
+            // Navigation can reach this page while the repository is still loading its selected
+            // satellite catalogue. Reading .value once here could see an empty list and return
+            // permanently, leaving the map without either the track or the satellite marker.
+            val satellite = satelliteRepo.satellites.first { satellites ->
+                satellites.any { it.data.catnum == pass.catNum }
+            }.first { it.data.catnum == pass.catNum }
             val foundPass = satelliteRepo.passes.value.find {
                 it.catNum == pass.catNum && it.aosTime == pass.aosTime
             }
-            val satellite = foundPass?.orbitalObject
-                ?: satelliteRepo.satellites.value.find { it.data.catnum == pass.catNum }
-                ?: return@launch
             radarPass = foundPass ?: OrbitalPass(
                 aosTime = pass.aosTime, losTime = pass.losTime, orbitalObject = satellite
             )
@@ -381,7 +398,13 @@ class MapViewModel(
                     orbitalPass = radarPass ?: it.orbitalPass
                 )
             }
-            passTimeRequest.value = System.currentTimeMillis().coerceIn(pass.aosTime, pass.losTime)
+            val initialTime = System.currentTimeMillis().coerceIn(pass.aosTime, pass.losTime)
+            passTimePinned = false
+            isScrubbing = false
+            passTimeRequest.value = initialTime
+            // Prime the selected satellite marker, footprint and readout immediately instead of
+            // relying on the asynchronous StateFlow collector's first scheduling turn.
+            updateScrubbedState(satellite, stationPos, Date(initialTime))
             // Preserve live tracking while the pass is underway. Once the operator
             // seeks an absolute time, keep that instant rather than snapping back.
             while (isActive) {

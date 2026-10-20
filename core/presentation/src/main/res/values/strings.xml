@@ -98,6 +98,8 @@
     <string name="radar_size_large_short">L</string>
     <string name="radar_size_small_short">S</string>
     <string name="radar_notify">Notify</string>
+    <string name="radar_tools_title">Radar tools</string>
+    <string name="radar_menu_tools">Open radar tools</string>
     <string name="radar_menu_calendar">Add to calendar</string>
     <string name="radar_menu_match">Match</string>
     <string name="radar_match_title">Match another station</string>

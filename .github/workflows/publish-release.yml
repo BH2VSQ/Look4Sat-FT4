@@ -73,6 +73,14 @@ jobs:
           "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "ndk;28.2.13676358"
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
 
+      - name: Run unit tests before official Release
+        if: ${{ inputs.mode == 'release' }}
+        working-directory: source
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon --continue --stacktrace test
+
       - name: Build the signed release APK
         working-directory: source
         env:

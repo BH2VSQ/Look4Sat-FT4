@@ -96,6 +96,8 @@
     <string name="radar_use_small">使用小雷达</string>
     <string name="radar_size_large_short">大</string>
     <string name="radar_size_small_short">小</string>
+    <string name="radar_tools_title">雷达工具</string>
+    <string name="radar_menu_tools">打开雷达工具</string>
     <string name="radar_menu_calendar">添加日程</string>
     <string name="radar_menu_match">匹配</string>
     <string name="radar_match_title">匹配友台</string>

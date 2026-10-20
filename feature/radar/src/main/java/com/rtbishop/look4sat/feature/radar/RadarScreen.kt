@@ -43,13 +43,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +71,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -288,6 +292,16 @@ private fun RadarScreen(
         }
     val context = LocalContext.current
     var showMatchDialog by remember { mutableStateOf(false) }
+    var showToolsSheet by remember { mutableStateOf(false) }
+    val toolsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val toolsSheetScope = rememberCoroutineScope()
+    val closeToolsSheetThen: (() -> Unit) -> Unit = { action ->
+        toolsSheetScope.launch {
+            toolsSheetState.hide()
+            showToolsSheet = false
+            action()
+        }
+    }
     var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
     var matchLoading by remember { mutableStateOf(false) }
     var matchError by remember { mutableStateOf<String?>(null) }
@@ -321,12 +335,7 @@ private fun RadarScreen(
                 TopBar {
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
-                    RadarActionsMenu(
-                        enabled = uiState.currentPass != null,
-                        addToCalendar = addToCalendar,
-                        openMap = openPassMap,
-                        startMatch = { showMatchDialog = true; matchError = null }
-                    )
+                    RadarActionsMenu(onClick = { showToolsSheet = true })
                 }
                 TopBar {
                     NextPassRow(pass = upcomingPass, isUtc = uiState.isUtc)
@@ -342,12 +351,7 @@ private fun RadarScreen(
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
                     NextPassRow(pass = upcomingPass, modifier = Modifier.weight(1f), isUtc = uiState.isUtc)
-                    RadarActionsMenu(
-                        enabled = uiState.currentPass != null,
-                        addToCalendar = addToCalendar,
-                        openMap = openPassMap,
-                        startMatch = { showMatchDialog = true; matchError = null }
-                    )
+                    RadarActionsMenu(onClick = { showToolsSheet = true })
                 }
             }
             if (isVertical) {
@@ -371,6 +375,46 @@ private fun RadarScreen(
                     RadarCard(uiState, trackB, trackBPosition, Modifier.weight(1f))
                     PagerCard(uiState, onAction, logViewModel, requestMicPermission, Modifier.weight(1f), onFixGrid = onFixGrid)
                 }
+            }
+        }
+    }
+    if (showToolsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showToolsSheet = false },
+            sheetState = toolsSheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.radar_tools_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
+                )
+                RadarToolSheetItem(
+                    iconRes = R.drawable.ic_calendar,
+                    label = stringResource(R.string.radar_menu_calendar),
+                    enabled = uiState.currentPass != null,
+                    onClick = { closeToolsSheetThen(addToCalendar) }
+                )
+                RadarToolSheetItem(
+                    iconRes = R.drawable.ic_match,
+                    label = stringResource(R.string.radar_menu_match),
+                    onClick = {
+                        closeToolsSheetThen {
+                            showMatchDialog = true
+                            matchError = null
+                        }
+                    }
+                )
+                RadarToolSheetItem(
+                    iconRes = R.drawable.ic_map,
+                    label = stringResource(R.string.nav_map),
+                    enabled = uiState.currentPass != null,
+                    onClick = { closeToolsSheetThen(openPassMap) }
+                )
             }
         }
     }
@@ -440,41 +484,50 @@ private fun RadarScreen(
     }
 }
 
-/** Shared top-right overflow menu for portrait and landscape radar layouts. */
+/** List-style button that opens the radar tools bottom sheet. */
 @Composable
-private fun RadarActionsMenu(
-    enabled: Boolean,
-    addToCalendar: () -> Unit,
-    openMap: () -> Unit,
-    startMatch: () -> Unit
+private fun RadarActionsMenu(onClick: () -> Unit) {
+    val context = LocalContext.current
+    ElevatedCard(modifier = Modifier.size(48.dp), onClick = onClick) {
+        Box(
+            modifier = Modifier.fillMaxSize()
+                .semantics { contentDescription = context.getString(R.string.radar_menu_tools) },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_list),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RadarToolSheetItem(
+    iconRes: Int,
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        ElevatedCard(modifier = Modifier.size(48.dp), onClick = { expanded = true }) {
-            Box(
-                modifier = Modifier.fillMaxSize()
-                    .semantics { contentDescription = "More options" },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("...", fontSize = 22.sp)
-            }
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.radar_menu_calendar)) },
-                enabled = enabled,
-                onClick = { expanded = false; addToCalendar() }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.radar_menu_match)) },
-                onClick = { expanded = false; startMatch() }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.nav_map)) },
-                enabled = enabled,
-                onClick = { expanded = false; openMap() }
-            )
-        }
+    val contentColor = if (enabled) MaterialTheme.colorScheme.onSurface
+    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(Modifier.width(20.dp))
+        Text(label, style = MaterialTheme.typography.titleMedium, color = contentColor)
     }
 }
 
