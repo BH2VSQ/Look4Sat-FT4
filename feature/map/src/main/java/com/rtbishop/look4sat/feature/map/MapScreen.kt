@@ -326,11 +326,35 @@ fun MapDestination(
  * Its own ViewModel keeps scrubbing and camera state independent.
  */
 @Composable
-fun RadarPassMapScreenDestination(pass: RadarPassMapDestination, navigateUp: () -> Unit) {
+fun RadarPassMapScreenDestination(
+    pass: RadarPassMapDestination,
+    navigateUp: () -> Unit,
+    onSwitchPass: (RadarPassMapDestination) -> Unit = {}
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val viewModel: MapViewModel = viewModel(factory = MapViewModel.factory(container, pass))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val allPasses by container.satelliteRepo.passes.collectAsStateWithLifecycle()
+    val passSettings by container.settingsRepo.passesSettings.collectAsStateWithLifecycle()
+    // Match the Passes page's visible sequence: deep-space group first (if enabled),
+    // followed by normal passes in chronological AOS order across ALL satellites.
+    val visiblePasses = remember(allPasses, passSettings) {
+        val cutoff = System.currentTimeMillis() - passSettings.hoursBefore * 3600_000L
+        val compare = compareBy<com.rtbishop.look4sat.core.domain.predict.OrbitalPass> { it.aosTime }
+            .thenBy { it.catNum }.thenBy { it.losTime }
+        val filtered = allPasses.filter { candidate ->
+            candidate.losTime > candidate.aosTime &&
+                (passSettings.showDeepSpace || !candidate.isDeepSpace) &&
+                (candidate.isDeepSpace || candidate.losTime >= cutoff)
+        }
+        (filtered.filter { it.isDeepSpace }.sortedWith(compare) +
+            filtered.filterNot { it.isDeepSpace }.sortedWith(compare))
+            .map { RadarPassMapDestination(it.catNum, it.aosTime, it.losTime) }
+            .distinctBy { it.catNum to it.aosTime }
+    }
+    val previousPass = adjacentRadarPass(visiblePasses, pass, -1)
+    val nextPass = adjacentRadarPass(visiblePasses, pass, 1)
     val mapFilter: MapFilterViewModel = viewModel(factory = MapFilterViewModel.factory())
     val mapView = rememberMapViewWithLifecycle(mapFilter, restoreViewport = false)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -358,7 +382,10 @@ fun RadarPassMapScreenDestination(pass: RadarPassMapDestination, navigateUp: () 
         onMatchGrid = {},
         matchCalculating = false,
         passWindow = pass,
-        navigateUp = navigateUp
+        navigateUp = navigateUp,
+        previousPass = previousPass,
+        nextPass = nextPass,
+        onSwitchPass = onSwitchPass
     )
 }
 
@@ -373,7 +400,10 @@ private fun MapScreen(
     onMatchGrid: (String) -> Unit,
     matchCalculating: Boolean,
     passWindow: RadarPassMapDestination? = null,
-    navigateUp: () -> Unit = {}
+    navigateUp: () -> Unit = {},
+    previousPass: RadarPassMapDestination? = null,
+    nextPass: RadarPassMapDestination? = null,
+    onSwitchPass: (RadarPassMapDestination) -> Unit = {}
 ) {
     val rotateMod = Modifier.rotate(180f)
     val timeString = uiState.mapData?.aosTime ?: "00:00:00"
@@ -538,7 +568,18 @@ private fun MapScreen(
         if (passWindow != null) {
             TopBar {
                 IconCard(action = navigateUp, resId = R.drawable.ic_back)
+                IconCard(
+                    action = { previousPass?.let(onSwitchPass) },
+                    resId = R.drawable.ic_arrow,
+                    modifier = rotateMod,
+                    enabled = previousPass != null
+                )
                 TimerRow(timeString = timeString, isTimeAos = isTimeAos)
+                IconCard(
+                    action = { nextPass?.let(onSwitchPass) },
+                    resId = R.drawable.ic_arrow,
+                    enabled = nextPass != null
+                )
             }
             TopBar { NextPassRow(pass = uiState.orbitalPass, isUtc = uiState.isUtc) }
         } else if (isGridMode) {

@@ -108,6 +108,15 @@ fun NavRoot(deeplink: String? = null) {
     val navigateToRadarPassMap: (Int, Long, Long) -> Unit = { catNum, aos, los ->
         if (los > aos) rootBackStack.add(RadarPassMapDestination(catNum, aos, los))
     }
+    // Replace, don't push: Back must always return directly to the originating radar page
+    // even after browsing dozens of passes in the dedicated map.
+    val switchRadarPassMap: (RadarPassMapDestination) -> Unit = { next ->
+        val current = rootBackStack.lastOrNull()
+        if (current is RadarPassMapDestination && current != next) {
+            rootBackStack.removeLastOrNull()
+            rootBackStack.add(next)
+        }
+    }
     val navigateToGridFinder: () -> Unit = { rootBackStack.add(GridFinderDestination) }
     val navigateToLoTWStation: () -> Unit = { rootBackStack.add(LoTWUploadDestination) }
     // Incoming screen slides in from the right, outgoing drifts left at 1/3 speed (API35+ style)
@@ -164,7 +173,11 @@ fun NavRoot(deeplink: String? = null) {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        RadarPassMapScreenDestination(pass, navigateUp = navigateBack)
+                        RadarPassMapScreenDestination(
+                            pass = pass,
+                            navigateUp = navigateBack,
+                            onSwitchPass = switchRadarPassMap
+                        )
                     }
                 }
                 entry<GridFinderDestination> {
