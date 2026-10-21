@@ -34,6 +34,7 @@ data class RadioPanelState(
 )
 
 data class RadioControlSubState(
+    val catEnabled: Boolean = false,
     val isL4sModel: Boolean = false,
     val cwPresets: List<String> = com.rtbishop.look4sat.core.domain.repository.CwTransmitPresets.defaults,
     val txPanel: RadioPanelState = RadioPanelState("TX (Uplink)"),
@@ -55,6 +56,11 @@ data class RadioControlSubState(
     val referenceDirty:Boolean=false,
     val serviceEditingLocked:Boolean=false
 ) {
+    val remoteControlsVisible get() = catEnabled && remoteRadio?.connected == true &&
+        remoteRadio.capabilities?.let { it.voicePtt || it.cwText || it.nativeSettings || remoteRadio.isN76 } == true
+    val voicePttVisible get() = remoteControlsVisible && remoteRadio?.capabilities?.voicePtt == true
+    val stopRemoteTxVisible get() = remoteControlsVisible &&
+        remoteRadio?.capabilities?.let { it.voicePtt || it.cwText } == true
     val frequencyEditingLocked get()=serviceEditingLocked || isTracking && !isReady || pttState!=com.rtbishop.look4sat.core.domain.repository.PttState.OFF ||
         transmitOwner!=com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner.NONE || remoteRadio?.txSource?.let {it!=0}==true ||
         remoteRadio?.nativeMenuOpen==true || remoteRadio?.profileStore?.busy==true || remoteRadio?.let {!it.connected || !it.transmitStateKnown}==true

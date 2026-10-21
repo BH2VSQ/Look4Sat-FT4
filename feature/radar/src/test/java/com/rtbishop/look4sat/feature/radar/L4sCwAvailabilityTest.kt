@@ -19,9 +19,37 @@ class L4sCwAvailabilityTest {
     }
     private val capabilities = RemoteRadioCapabilities(10,92,10,45,1500,18000000,1300000000,15,9,
         true,true,true,true,false,false)
-    private val ready = RadioControlSubState(isL4sModel=true, isReady=true,
+    private val ready = RadioControlSubState(catEnabled=true, isL4sModel=true, isReady=true,
         txPanel=RadioPanelState("TX",mode="CW"),
         remoteRadio=RemoteRadioState(connected=true,capabilities=capabilities,txEnabled=true))
+
+    @Test fun disabledCatHidesRemoteControlsEvenWithStaleConnectedState() {
+        val control = ready.copy(catEnabled=false)
+        assertFalse(control.remoteControlsVisible)
+        assertFalse(control.voicePttVisible)
+        assertFalse(control.stopRemoteTxVisible)
+        assertFalse(control.canSendL4sCw())
+    }
+
+    @Test fun modelSelectionAloneDoesNotExposeRemoteTransmitControls() {
+        assertFalse(ready.copy(remoteRadio=null).remoteControlsVisible)
+        assertFalse(ready.copy(remoteRadio=ready.remoteRadio!!.copy(connected=false)).remoteControlsVisible)
+        assertFalse(ready.copy(remoteRadio=ready.remoteRadio!!.copy(capabilities=null)).remoteControlsVisible)
+        assertFalse(RadioControlSubState(catEnabled=true).remoteControlsVisible)
+    }
+
+    @Test fun transmitButtonsFollowNegotiatedCapabilitiesIndependently() {
+        assertTrue(ready.voicePttVisible)
+        assertTrue(ready.stopRemoteTxVisible)
+        val cwOnly = ready.copy(remoteRadio=ready.remoteRadio!!.copy(capabilities=capabilities.copy(voicePtt=false)))
+        assertFalse(cwOnly.voicePttVisible)
+        assertTrue(cwOnly.stopRemoteTxVisible)
+        val settingsOnly = ready.copy(remoteRadio=ready.remoteRadio!!.copy(
+            capabilities=capabilities.copy(voicePtt=false,cwText=false,nativeSettings=true)))
+        assertTrue(settingsOnly.remoteControlsVisible)
+        assertFalse(settingsOnly.voicePttVisible)
+        assertFalse(settingsOnly.stopRemoteTxVisible)
+    }
 
     @Test fun transmissionNeedsConnectedReadyCwRadioAndConfirmedPttOff() {
         assertTrue(ready.canSendL4sCw())
