@@ -63,9 +63,9 @@ data class QsoRecord(
     val country: String = "",
     val cqZone: Int? = null,
     val region: String = "",
+    val comment: String = "",
     /** IOTA group of the opposite station (not MY_IOTA). */
-    val iota: String = "",
-    val comment: String = ""
+    val iota: String = ""
 )
 
 /** Complete counterpart grid label, including legacy records with no primary grid. */
