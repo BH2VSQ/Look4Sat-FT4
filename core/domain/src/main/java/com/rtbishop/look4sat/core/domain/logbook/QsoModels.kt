@@ -65,7 +65,13 @@ data class QsoRecord(
     val region: String = "",
     val comment: String = "",
     /** IOTA group of the opposite station (not MY_IOTA). */
-    val iota: String = ""
+    val iota: String = "",
+    /** Complete opposite-station locators from ADIF, preserving 4/6/8-character
+     * precision and every VUCC_GRIDS entry. The 4-char theirVuccGrids remains
+     * the logbook/VUCC display index and must not replace this source data. */
+    val theirFullGrids: List<String> = emptyList(),
+    /** Complete own-station locators from MY_GRIDSQUARE/MY_VUCC_GRIDS. */
+    val myFullGrids: List<String> = emptyList()
 )
 
 /** Complete counterpart grid label, including legacy records with no primary grid. */
