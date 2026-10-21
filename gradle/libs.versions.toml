@@ -1,5 +1,4 @@
 [versions]
-# One-time trigger for release v4.4.8-ba7opf.16 after fixing the resource test
 #noinspection UnusedVersionCatalogEntry
 appVersionCode = "605"
 #noinspection UnusedVersionCatalogEntry
