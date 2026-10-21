@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -75,31 +76,33 @@ internal fun ReferenceFrequencyControls(control: RadioControlSubState, onAction:
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = enabled, role = Role.Button,
             onClickLabel = title, onClick = { showEditor = true })
     ) {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(title, maxLines = 1, softWrap = false,
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                Text(
-                    stringResource(R.string.rc_panel_reference_pair,
-                        control.referenceRxHz?.let(::referenceFrequencyText) ?: "—",
-                        control.txBaseFrequencyHz?.let(::referenceFrequencyText) ?: "—"),
-                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    maxLines = 1, softWrap = false,
-                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace
-                )
-                Icon(painterResource(R.drawable.ic_edit), contentDescription = null, modifier = Modifier.size(20.dp),
-                    tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.size(20.dp))
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                FlowRow(modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    itemVerticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.rc_panel_reference_compact), maxLines = 1, softWrap = false,
+                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        stringResource(R.string.rc_panel_reference_pair,
+                            control.referenceRxHz?.let(::compactReferenceFrequencyText) ?: "—",
+                            control.txBaseFrequencyHz?.let(::compactReferenceFrequencyText) ?: "—"),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        maxLines = 1, softWrap = false,
+                        style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace
+                    )
+                }
                 if (control.calculatorLinked) Text(stringResource(R.string.rc_panel_linked),
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                control.remoteRadio?.takeIf { it.capabilities?.satelliteProfiles == true }?.let { remote ->
-                    Text(stringResource(if (control.referenceDirty || remote.profileStore?.dirty == true || !remote.nativeProfileValid)
-                        R.string.rc_panel_unsaved else R.string.rc_panel_saved), style = MaterialTheme.typography.labelSmall)
-                }
                 if (control.referenceRxHz == null) Text(stringResource(R.string.rc_panel_waiting),
                     style = MaterialTheme.typography.labelSmall)
             }
+            Icon(painterResource(R.drawable.ic_edit), contentDescription = null, modifier = Modifier.size(20.dp),
+                tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     if (showEditor) {

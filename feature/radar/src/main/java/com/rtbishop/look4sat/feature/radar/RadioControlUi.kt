@@ -7,11 +7,15 @@ package com.rtbishop.look4sat.feature.radar
 
 import com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.Locale
 
 internal enum class ReferenceTarget { RX, TX }
 
 internal fun referenceFrequencyText(hz: Long): String = BigDecimal.valueOf(hz, 6).toPlainString()
+
+internal fun compactReferenceFrequencyText(hz: Long): String =
+    BigDecimal.valueOf(hz, 6).setScale(3, RoundingMode.HALF_UP).toPlainString()
 
 internal fun parseReferenceFrequency(text: String, isL4s: Boolean): Long? = runCatching {
     text.toBigDecimal().movePointRight(6).longValueExact()

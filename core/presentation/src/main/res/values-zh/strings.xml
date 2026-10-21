@@ -13,6 +13,9 @@
     <string name="nav_map">地图</string>
     <string name="nav_prefs">设置</string>
     <string name="nav_more">更多</string>
+    <string name="nav_amsat_short">@string/nav_amsat</string>
+    <string name="nav_pass_schedule_short">@string/pass_schedule_title</string>
+    <string name="nav_grid_finder_short">@string/gridfinder_title</string>
 
     <!-- Satellites screen -->
     <string name="sat_type_hint">类型：%s</string>

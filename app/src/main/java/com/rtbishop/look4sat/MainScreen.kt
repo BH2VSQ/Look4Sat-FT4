@@ -77,6 +77,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelStoreOwner
@@ -368,7 +370,15 @@ fun MainScreen(
                     }
                     item(
                         icon = { Icon(painterResource(screen.iconResId), stringResource(screen.titleResId)) },
-                        label = { Text(stringResource(screen.titleResId)) },
+                        label = {
+                            Text(
+                                text = stringResource(bottomBarLabelRes(screen)),
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                        },
                         selected = isSelected,
                         onClick = {
                             if (screen is Screen.More) {
@@ -523,6 +533,13 @@ fun MainScreen(
     }
 }
 
+
+private fun bottomBarLabelRes(screen: Screen): Int = when (screen) {
+    Screen.AMSAT -> R.string.nav_amsat_short
+    Screen.PassSchedule -> R.string.nav_pass_schedule_short
+    Screen.GridFinder -> R.string.nav_grid_finder_short
+    else -> screen.titleResId
+}
 
 private fun bottomBarScreen(value: String): Screen = when (BottomBarTool.normalize(value)) {
     BottomBarTool.MAP -> Screen.Map

@@ -14,6 +14,9 @@
     <string name="nav_map">Map</string>
     <string name="nav_prefs">Settings</string>
     <string name="nav_more">More</string>
+    <string name="nav_amsat_short">AMSAT</string>
+    <string name="nav_pass_schedule_short">Schedule</string>
+    <string name="nav_grid_finder_short">Grid</string>
 
     <!-- Satellites screen -->
     <string name="sat_type_hint">Type: %s</string>

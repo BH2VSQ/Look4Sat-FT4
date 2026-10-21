@@ -14,6 +14,16 @@ class RadioControlUiTest {
         assertEquals("9999.999999", referenceFrequencyText(9_999_999_999L))
     }
 
+    @Test fun compactFrequenciesUseThreeDecimalsWithoutChangingEditorPrecision() {
+        assertEquals("145.950", compactReferenceFrequencyText(145_950_000L))
+        assertEquals("435.850", compactReferenceFrequencyText(435_850_010L))
+        assertEquals("10460.000", compactReferenceFrequencyText(10_460_000_000L))
+        assertEquals("435.850", compactReferenceFrequencyText(435_849_500L))
+        assertEquals("436.000", compactReferenceFrequencyText(435_999_999L))
+        assertEquals("435.849500", referenceFrequencyText(435_849_500L))
+        assertEquals(435_849_500L, parseReferenceFrequency(referenceFrequencyText(435_849_500L), false))
+    }
+
     @Test fun txShortcutDoesNotChangeRxOrTheOriginalDraft() {
         val draft = ReferenceFrequencyDraft("435.850000", "145.950000")
         val adjusted = draft.adjusted(ReferenceTarget.TX, 1_000L, false)
