@@ -1,10 +1,9 @@
 <resources>
     <string name="rc_ftx1_usb_hint">USB CAT-1（增強連接埠）· MAIN 韌體 ≥ 1.08</string>
     <string name="rc_panel_reference">基準頻率</string>
+    <string name="rc_panel_reference_compact">基準頻率</string>
     <string name="rc_panel_independent">獨立</string>
     <string name="rc_panel_linked">聯動</string>
-    <string name="rc_panel_saved">已儲存</string>
-    <string name="rc_panel_unsaved">未儲存</string>
     <string name="rc_panel_waiting">等待頻率同步</string>
     <string name="rc_panel_rx">RX</string>
     <string name="rc_panel_tx">TX</string>
