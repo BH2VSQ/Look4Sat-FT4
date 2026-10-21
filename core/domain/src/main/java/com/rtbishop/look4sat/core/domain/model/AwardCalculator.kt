@@ -35,19 +35,20 @@ data class AwardProgress(
     val target: Int
 )
 
-enum class AwardType { DXCC, VUCC, WAPC, WAJA, WAZ, WAS }
+enum class AwardType { DXCC, VUCC, WAPC, WAJA, WAIPA, WAZ, WAS }
 
 object AwardTargets {
     const val DXCC = 100
     const val VUCC = 100
     const val WAPC = 34
     const val WAJA = 47
+    const val WAIPA = 37
     const val WAZ = 40
     const val WAS = 50
 }
 
 /**
- * Derives six-award progress from the confirmed QSO store.
+ * Derives seven-award progress from the confirmed QSO store.
  *
  * Award rules (ADIF / award-program semantics):
  *  - VUCC: distinct 4-char gridsquares.
@@ -56,6 +57,7 @@ object AwardTargets {
  *  - WAPC: distinct Chinese provinces (31 mainland STATE codes) plus the
  *    Hong Kong / Macao / Taiwan entities (counted as their own provinces).
  *  - WAJA: distinct Japanese prefectures (STATE code "01".."47").
+ *  - WAIPA: 37 Indonesian provinces (IIHG codes; app counts confirmed satellite QSOs).
  *  - WAZ: distinct CQ zones.
  *  - WAS: distinct US states (STATE abbreviations).
  *
@@ -76,6 +78,7 @@ object AwardCalculator {
             calculateDxcc(all),
             calculateWapc(all),
             calculateWaja(all),
+            calculateWaipa(all),
             calculateWaz(all),
             calculateWas(all)
         )
@@ -99,6 +102,7 @@ object AwardCalculator {
             q.state?.trim()?.takeIf { it.length == 2 && it.all(Char::isDigit) }
         } else null
 
+        AwardType.WAIPA -> waipaKey(q)
         AwardType.WAZ -> q.cqz?.takeIf { it in 1..40 }?.toString()
         AwardType.WAS -> if (entityOf(q) == Entity.USA) {
             q.state?.trim()?.uppercase()?.takeIf { it in US_STATES }
@@ -147,6 +151,21 @@ object AwardCalculator {
         return AwardProgress(AwardType.WAJA, keys, keys.size, AwardTargets.WAJA)
     }
 
+    private fun calculateWaipa(all: List<GridQso>): AwardProgress {
+        val keys = all.mapNotNull { awardKey(AwardType.WAIPA, it) }.toSet()
+        return AwardProgress(AwardType.WAIPA, keys, keys.size, AwardTargets.WAIPA)
+    }
+
+    /** STATE must be present; a callsign prefix alone cannot locate a province. */
+    private fun waipaKey(q: GridQso): String? {
+        if (entityOf(q) != Entity.INDONESIA) return null
+        val state = q.state?.trim()?.uppercase()?.removePrefix("ID-") ?: return null
+        // The official 37-province list has no Southwest Papua: its newer ISO
+        // code PD maps to West Papua (PB), which also contains its map geometry.
+        val code = if (state == "PD") "PB" else state
+        return code.takeIf { it in ID_PROVINCES }
+    }
+
     private fun calculateWaz(all: List<GridQso>): AwardProgress {
         val keys = all.mapNotNull { awardKey(AwardType.WAZ, it) }.toSet()
         return AwardProgress(AwardType.WAZ, keys, keys.size, AwardTargets.WAZ)
@@ -157,7 +176,7 @@ object AwardCalculator {
         return AwardProgress(AwardType.WAS, keys, keys.size, AwardTargets.WAS)
     }
 
-    private enum class Entity { CHINA, HONG_KONG, MACAO, TAIWAN, JAPAN, USA, OTHER }
+    private enum class Entity { CHINA, HONG_KONG, MACAO, TAIWAN, JAPAN, INDONESIA, USA, OTHER }
 
     private fun entityOf(q: GridQso): Entity = when (q.dxcc) {
         318 -> Entity.CHINA
@@ -165,6 +184,7 @@ object AwardCalculator {
         152 -> Entity.MACAO
         386 -> Entity.TAIWAN
         339 -> Entity.JAPAN
+        327 -> Entity.INDONESIA
         291 -> Entity.USA
         else -> prefixEntity(q.call)
     }
@@ -178,6 +198,7 @@ object AwardCalculator {
             c.startsWith("XX9") -> Entity.MACAO
             TW_PREFIXES.any { c.startsWith(it) } -> Entity.TAIWAN
             JP_PREFIXES.any { c.startsWith(it) } -> Entity.JAPAN
+            ID_PREFIXES.any { c.startsWith(it) } -> Entity.INDONESIA
             US_PREFIXES.any { c.startsWith(it) } -> Entity.USA
             else -> Entity.OTHER
         }
@@ -191,6 +212,7 @@ object AwardCalculator {
             Entity.MACAO -> 152
             Entity.TAIWAN -> 386
             Entity.JAPAN -> 339
+            Entity.INDONESIA -> 327
             Entity.USA -> 291
             else -> null
         }
@@ -200,6 +222,15 @@ object AwardCalculator {
     private val TW_PREFIXES = listOf("BM", "BV", "BU", "BW", "BX", "BN", "BO", "BT", "BZ")
     private val JP_PREFIXES =
         listOf("7J", "7K", "7L", "7M", "7N") + ('A'..'Z').map { "J$it" }
+    // Prefixes identify the Indonesian DXCC entity, not the province.
+    private val ID_PREFIXES =
+        listOf("YB", "YC", "YD", "YE", "YF", "YG", "YH") +
+            ('A'..'I').map { "7$it" } + ('A'..'I').map { "8$it" }
+    private val ID_PROVINCES = setOf(
+        "AC", "BA", "BB", "BE", "BT", "GO", "JA", "JB", "JI", "JK", "JT", "KB", "KI", "KR",
+        "KS", "KT", "KU", "LA", "MA", "MU", "NB", "NT", "PA", "PB", "PP", "PS", "PT", "RI",
+        "SA", "SB", "SG", "SN", "SR", "SS", "ST", "SU", "YO"
+    )
     private val US_PREFIXES =
         listOf("AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "AJ", "AK", "AL", "K", "N", "W")
 
