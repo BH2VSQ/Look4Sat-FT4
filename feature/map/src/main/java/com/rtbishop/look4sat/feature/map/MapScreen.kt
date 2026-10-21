@@ -484,8 +484,15 @@ private fun MapScreen(
             .flatMap { it.worked.asSequence() }
             .toSet()
     }
-    val awardProgress: List<AwardProgress> = remember(uiState.workedGridQsos, workedGrids, selectedStationIds) {
-        val base = AwardCalculator.calculate(uiState.workedGridQsos)
+    // The same cached WAIPA boundary polygons drive map fill and award
+    // geolocation. Resolves saved QSOs locally, without a new LoTW/Wavelog sync.
+    val waipaGridResolver = remember(mapView.context) {
+        WaipaGridResolver(AwardBoundaryData.load(mapView.context, AwardBoundaryData.AwardAsset.WAIPA))
+    }
+    val awardProgress: List<AwardProgress> = remember(
+        uiState.workedGridQsos, workedGrids, selectedStationIds, waipaGridResolver
+    ) {
+        val base = AwardCalculator.calculate(uiState.workedGridQsos, waipaGridResolver)
         if (selectedStationIds.isEmpty()) base
         else base.map { p ->
             if (p.type == AwardType.VUCC) p.copy(workedKeys = workedGrids, count = workedGrids.size) else p
@@ -811,8 +818,10 @@ private fun MapScreen(
     // is the GLOBAL one (all 台址) — the non-VUCC awards count and fill the
     // map globally, so their detail lists use the same scope.
     selectedRegion?.let { (type, region) ->
-        val regionQsos = remember(uiState.workedGridQsos, type, region) {
-            AwardCalculator.regionQsos(uiState.workedGridQsos, type, region.code)
+        val regionQsos = remember(uiState.workedGridQsos, type, region, waipaGridResolver) {
+            AwardCalculator.regionQsos(
+                uiState.workedGridQsos, type, region.code, waipaGridResolver
+            )
         }
         RegionQsoDialog(
             type = type,
