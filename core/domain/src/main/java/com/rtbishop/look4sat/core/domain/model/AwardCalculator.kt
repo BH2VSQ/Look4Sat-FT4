@@ -42,7 +42,7 @@ object AwardTargets {
     const val VUCC = 100
     const val WAPC = 34
     const val WAJA = 47
-    const val WAIPA = 37
+    const val WAIPA = 38
     const val WAZ = 40
     const val WAS = 50
 }
@@ -57,7 +57,7 @@ object AwardTargets {
  *  - WAPC: distinct Chinese provinces (31 mainland STATE codes) plus the
  *    Hong Kong / Macao / Taiwan entities (counted as their own provinces).
  *  - WAJA: distinct Japanese prefectures (STATE code "01".."47").
- *  - WAIPA: 37 Indonesian provinces (IIHG codes; app counts confirmed satellite QSOs).
+ *  - WAIPA: 38 Indonesian provinces (app counts confirmed satellite QSOs).
  *  - WAZ: distinct CQ zones.
  *  - WAS: distinct US states (STATE abbreviations).
  *
@@ -160,10 +160,8 @@ object AwardCalculator {
     private fun waipaKey(q: GridQso): String? {
         if (entityOf(q) != Entity.INDONESIA) return null
         val state = q.state?.trim()?.uppercase()?.removePrefix("ID-") ?: return null
-        // The official 37-province list has no Southwest Papua: its newer ISO
-        // code PD maps to West Papua (PB), which also contains its map geometry.
-        val code = if (state == "PD") "PB" else state
-        return code.takeIf { it in ID_PROVINCES }
+        // PD (Southwest Papua) and PB (West Papua) are distinct provinces.
+        return state.takeIf { it in ID_PROVINCES }
     }
 
     private fun calculateWaz(all: List<GridQso>): AwardProgress {
@@ -228,7 +226,7 @@ object AwardCalculator {
             ('A'..'I').map { "7$it" } + ('A'..'I').map { "8$it" }
     private val ID_PROVINCES = setOf(
         "AC", "BA", "BB", "BE", "BT", "GO", "JA", "JB", "JI", "JK", "JT", "KB", "KI", "KR",
-        "KS", "KT", "KU", "LA", "MA", "MU", "NB", "NT", "PA", "PB", "PP", "PS", "PT", "RI",
+        "KS", "KT", "KU", "LA", "MA", "MU", "NB", "NT", "PA", "PB", "PD", "PP", "PS", "PT", "RI",
         "SA", "SB", "SG", "SN", "SR", "SS", "ST", "SU", "YO"
     )
     private val US_PREFIXES =
