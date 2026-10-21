@@ -54,7 +54,7 @@ jobs:
         working-directory: source
         env:
           BUILD_RUN_NUMBER: ${{ github.run_number }}
-          BUILD_MODE: ${{ inputs.mode }}
+          BUILD_MODE: ${{ inputs.mode || 'release' }}
         run: |
           set -euo pipefail
           VERSION="$(sed -nE 's/^appVersionName *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
@@ -104,7 +104,7 @@ jobs:
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
 
       - name: Run unit tests before official Release
-        if: ${{ inputs.mode == 'release' }}
+        if: ${{ inputs.mode == 'release' || github.event_name == 'push' }}
         working-directory: source
         run: |
           set -euo pipefail
@@ -200,7 +200,7 @@ jobs:
           echo "Published prerelease $TAG"
 
       - name: Publish the official Release
-        if: ${{ inputs.mode == 'release' }}
+        if: ${{ inputs.mode == 'release' || github.event_name == 'push' }}
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
