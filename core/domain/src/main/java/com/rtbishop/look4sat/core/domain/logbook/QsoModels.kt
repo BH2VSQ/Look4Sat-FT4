@@ -71,7 +71,9 @@ data class QsoRecord(
      * the logbook/VUCC display index and must not replace this source data. */
     val theirFullGrids: List<String> = emptyList(),
     /** Complete own-station locators from MY_GRIDSQUARE/MY_VUCC_GRIDS. */
-    val myFullGrids: List<String> = emptyList()
+    val myFullGrids: List<String> = emptyList(),
+    /** IOTA reference for the user's own station location (ADIF MY_IOTA). */
+    val myIota: String = ""
 )
 
 /** Complete counterpart grid label, including legacy records with no primary grid. */
