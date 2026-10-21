@@ -11,15 +11,9 @@ name: Build Look4Sat APK
 # Test builds and official releases share the same versionCode sequence. Test APKs add ".test.<run_number>"
 # to versionName; official release tags and versionName still use the version catalog.
 # Changes to the version catalog happen only in the runner's checkout, NOT in Git.
-# Local Gradle builds keep using the catalog unchanged. Normally runs are manual only; temporary release trigger for v4.4.8-ba7opf.16.
+# Local Gradle builds keep using the catalog unchanged. Runs are manual only.
 
 on:
-  # Temporary trigger for the official v4.4.8-ba7opf.16 release after the test fix.
-  push:
-    branches:
-      - main
-    paths:
-      - "gradle/libs.versions.toml"
   workflow_dispatch:
     inputs:
       mode:
@@ -54,7 +48,7 @@ jobs:
         working-directory: source
         env:
           BUILD_RUN_NUMBER: ${{ github.run_number }}
-          BUILD_MODE: ${{ inputs.mode || 'release' }}
+          BUILD_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           VERSION="$(sed -nE 's/^appVersionName *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
@@ -104,7 +98,7 @@ jobs:
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
 
       - name: Run unit tests before official Release
-        if: ${{ inputs.mode == 'release' || github.event_name == 'push' }}
+        if: ${{ inputs.mode == 'release' }}
         working-directory: source
         run: |
           set -euo pipefail
@@ -200,7 +194,7 @@ jobs:
           echo "Published prerelease $TAG"
 
       - name: Publish the official Release
-        if: ${{ inputs.mode == 'release' || github.event_name == 'push' }}
+        if: ${{ inputs.mode == 'release' }}
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
