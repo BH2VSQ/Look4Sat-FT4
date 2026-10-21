@@ -334,6 +334,7 @@ fun RadarPassMapScreenDestination(
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val viewModel: MapViewModel = viewModel(factory = MapViewModel.factory(container, pass))
+    LaunchedEffect(pass) { viewModel.switchPassWindow(pass) }
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val mutualData by container.mutualPassData.collectAsStateWithLifecycle()
     val otherStationPosition = remember(
@@ -675,9 +676,22 @@ private fun MapScreen(
                     if (!uiState.isGridMode) {
                         uiState.stationPosition?.let { setStationPosition(it, view, uiState.isLightUi) }
                         setOtherStationPosition(otherStationPosition, otherStationGrid, view)
-                        uiState.track?.let { setSatelliteTrack(it, view) }
-                        uiState.footprint?.let { setFootprint(it, view) }
-                        uiState.positions?.let { setPositions(it, view) { item -> onAction(MapAction.SelectItem(item)) } }
+                        if (passWindow != null) {
+                            // Clear the previous pass immediately while the replacement
+                            // track/position prediction runs on the same MapView.
+                            setSatelliteTrack(uiState.track.orEmpty(), view)
+                            val footprint = uiState.footprint
+                            if (footprint != null) setFootprint(footprint, view)
+                            else (view.overlays.getOrNull(OVERLAY_FOOTPRINT) as? FolderOverlay)
+                                ?.items?.clear()
+                            setPositions(uiState.positions.orEmpty(), view) {
+                                item -> onAction(MapAction.SelectItem(item))
+                            }
+                        } else {
+                            uiState.track?.let { setSatelliteTrack(it, view) }
+                            uiState.footprint?.let { setFootprint(it, view) }
+                            uiState.positions?.let { setPositions(it, view) { item -> onAction(MapAction.SelectItem(item)) } }
+                        }
                         setTerminator(uiState.sunLatDeg, uiState.sunLonDeg, view)
                         setSubSolarPoint(uiState.sunLatDeg, uiState.sunLonDeg, view, uiState.isLightUi)
                         setMoonPosition(uiState.moonLatDeg, uiState.moonLonDeg, view, uiState.isLightUi)
@@ -699,6 +713,12 @@ private fun MapScreen(
                     }
                     scrubInProgress = uiState.isScrubbing
                     view.invalidate()
+                }
+                if (passWindow != null && uiState.mapData == null) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.align(Alignment.Center),
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
                 // Satellite mode: the time slider replaces the old info cards. Grid mode keeps
                 // its own overlay set untouched.
