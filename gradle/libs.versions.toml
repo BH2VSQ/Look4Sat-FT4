@@ -1,4 +1,5 @@
 [versions]
+# One-time release trigger for v4.4.8-ba7opf.16 (pinned source commit)
 #noinspection UnusedVersionCatalogEntry
 appVersionCode = "605"
 #noinspection UnusedVersionCatalogEntry
