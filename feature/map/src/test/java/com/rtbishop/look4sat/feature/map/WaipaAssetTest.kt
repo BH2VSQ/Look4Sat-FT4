@@ -24,7 +24,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** The 37 administrative regions match IIHG's WAIPA code list. */
+/** All 38 current Indonesian provinces have separate drawable map regions. */
 class WaipaAssetTest {
     private fun regions(): List<JSONObject> {
         val relative = "src/main/assets/awards/waipa.json"
@@ -59,19 +59,19 @@ class WaipaAssetTest {
     }
 
     @Test
-    fun `all 37 IIHG province codes have unique drawable and named regions`() {
+    fun `all 38 Indonesian province codes have unique drawable and named regions`() {
         val list = regions()
         val codes = list.map { it.getString("code") }
         val official = setOf(
             "AC", "BA", "BB", "BE", "BT", "GO", "JA", "JB", "JI", "JK",
             "JT", "KB", "KI", "KR", "KS", "KT", "KU", "LA", "MA", "MU",
-            "NB", "NT", "PA", "PB", "PP", "PS", "PT", "RI", "SA", "SB",
+            "NB", "NT", "PA", "PB", "PD", "PP", "PS", "PT", "RI", "SA", "SB",
             "SG", "SN", "SR", "SS", "ST", "SU", "YO"
         )
-        assertEquals(37, list.size)
+        assertEquals(38, list.size)
         assertEquals(official, codes.toSet())
-        assertEquals(37, codes.distinct().size)
-        assertFalse(codes.contains("PD")) // southwest Papua is merged into PB
+        assertEquals(38, codes.distinct().size)
+        assertTrue(codes.contains("PD")) // Southwest Papua is its own province
         for (region in list) {
             assertTrue(region.getString("name").isNotBlank())
             assertTrue(region.getString("name_en").isNotBlank())
@@ -101,6 +101,9 @@ class WaipaAssetTest {
         check("BA", 115.211, -8.650)   // Denpasar
         check("YO", 110.369, -7.800)   // Yogyakarta
         check("PB", 134.083, -0.860)   // Manokwari (West Papua)
-        check("PB", 131.252, -0.876)   // Sorong (Southwest Papua; counted as PB)
+        check("PD", 131.252, -0.876)   // Sorong (Southwest Papua)
+        assertFalse("Sorong must not count as West Papua", AwardHitTest.contains(
+            polygon(byCode.getValue("PB")), -0.876, 131.252
+        ))
     }
 }
