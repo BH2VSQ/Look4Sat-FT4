@@ -23,8 +23,11 @@ using this location precedence:
 3. Opponent's `IOTA` group only if the entire group belongs to one modern
    province, as documented by `WaipaIotaLookup`. It is not the operator's
    `MY_IOTA`. Groups covering multiple provinces are deliberately omitted.
-4. Older four-character-only map caches: count geography only when the
-   **entire coarse locator** consistently falls within one province.
+4. Older four-character-only map caches: intersect the locator rectangle with
+   all 38 province polygons; assign a province only if **all mapped Indonesian
+   land within the square** belongs to exactly one province. A square may
+   contain sea (PI59 contains Southwest Papua land only), but overlapping
+   multiple provinces remains ambiguous (OJ82 includes KI and KU).
 5. As a last resort, use **unambiguous non-portable IIHG callsign allocations**
    (`WaipaCallsignLookup`). IIHG's shared ranges, ambiguous prefix blocks,
    portable calls and callsigns without a matching allocation never receive
