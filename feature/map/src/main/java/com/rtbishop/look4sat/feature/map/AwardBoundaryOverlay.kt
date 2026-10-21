@@ -88,6 +88,7 @@ object AwardBoundaryData {
     enum class AwardAsset(val fileName: String) {
         WAPC("wapc.json"),
         WAJA("waja.json"),
+        WAIPA("waipa.json"),
         WAZ("waz.json"),
         WAS("was.json"),
         DXCC("dxcc.json")
