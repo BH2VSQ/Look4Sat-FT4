@@ -69,11 +69,12 @@ class WaipaGridResolverTest {
     }
 
     @Test
-    fun `four-character squares only count when one province covers the whole square`() {
+    fun `four-character grids count only when all mapped land belongs to one province`() {
         val lookup = resolver()
         assertNull(lookup("OI71")) // touches Bali + East Java + sea
-        assertNull(lookup("PI59")) // Sorong is only a small part of 2x1 degree square
-        assertNull(lookup("PI79"))
+        assertEquals("PD", lookup("PI59")) // Sorong/Raja Ampat: only Southwest Papua land
+        assertNull(lookup("PI79")) // spans Papua and West Papua
+        assertNull(lookup("OJ82")) // spans East and North Kalimantan
         assertNull(lookup("XXXX"))
         assertNull(lookup("OI71O"))
         assertNull(lookup("OI71ZZ"))
