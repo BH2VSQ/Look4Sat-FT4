@@ -11,9 +11,15 @@ name: Build Look4Sat APK
 # Test builds and official releases share the same versionCode sequence. Test APKs add ".test.<run_number>"
 # to versionName; official release tags and versionName still use the version catalog.
 # Changes to the version catalog happen only in the runner's checkout, NOT in Git.
-# Local Gradle builds keep using the catalog unchanged. Runs are manual only.
+# Local Gradle builds keep using the catalog unchanged. Normally runs are manual only; temporary release trigger for v4.4.8-ba7opf.16.
 
 on:
+  # Temporary trigger for the official v4.4.8-ba7opf.16 release after the test fix.
+  push:
+    branches:
+      - main
+    paths:
+      - "gradle/libs.versions.toml"
   workflow_dispatch:
     inputs:
       mode:
