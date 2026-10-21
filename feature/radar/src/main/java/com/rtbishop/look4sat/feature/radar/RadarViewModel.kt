@@ -99,7 +99,10 @@ class RadarViewModel(
             shouldShowSweep = settingsRepo.otherSettings.value.stateOfSweep,
             shouldUseCompass = settingsRepo.otherSettings.value.stateOfSensors,
             sstv = SstvSubState(selectedMode = settingsRepo.otherSettings.value.sstvMode),
-            radioControl = RadioControlSubState(cwPresets=settingsRepo.getRemoteCwPresets()),
+            radioControl = RadioControlSubState(
+                catEnabled = settingsRepo.radioControlSettings.value.enabled,
+                catTransport = settingsRepo.radioControlSettings.value.catTransport,
+                cwPresets = settingsRepo.getRemoteCwPresets()),
             radioTransport = settingsRepo.radioControlSettings.value.catTransport,
             rotatorEnabled = settingsRepo.rotatorSettings.value.enabled,
             rotatorPosition = if (settingsRepo.rotatorSettings.value.enabled) {
@@ -151,7 +154,8 @@ class RadarViewModel(
         viewModelScope.launch {
             settingsRepo.radioControlSettings.collectLatest { settings ->
                 _uiState.update { it.copy(radioTransport = settings.catTransport,
-                    radioControl = it.radioControl.copy(isL4sModel = settings.radioModel in setOf(
+                    radioControl = it.radioControl.copy(catEnabled = settings.enabled,
+                        catTransport = settings.catTransport, isL4sModel = settings.radioModel in setOf(
                         RadioControlSettings.MODEL_QUANSHENG_UVK1, RadioControlSettings.MODEL_QUANSHENG_UVK5V3))) }
             }
         }

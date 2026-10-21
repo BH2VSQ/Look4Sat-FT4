@@ -470,7 +470,13 @@ private fun ExpandedRadioControl(
         HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
         ReferenceFrequencyControls(radioControl, onAction)
         TxToneControl(radio, radioControl, onAction)
-        if (radioControl.isL4sModel || radioControl.remoteRadio?.capabilities?.let { it.cwText || it.voicePtt } == true) {
+        if (!radioControl.catControlsActive) {
+            Text(
+                stringResource(if (!radioControl.catEnabled) R.string.rc_cat_disabled_status else R.string.rc_vox_status),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else if (radioControl.remoteControlsVisible) {
             RemoteRadioControls(radioControl, onAction)
         }
         RadioTrackingButtons(radioControl, onAction)

@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="rc_cat_disabled_status">CAT off</string>
+    <string name="rc_vox_status">VOX mode</string>
     <string name="rc_l4s_hint">L4S firmware required. USB-C OTG carries control only; voice uses the handheld microphone. One half-duplex radio with independent RX/TX frequencies. Turn off USB paddle/handkey mode before connecting. Both frequencies stay fixed throughout TX and resume tracking after TX ends.</string>
     <string name="rc_l4s_firmware">L4S firmware: %1$s</string>
     <string name="rc_l4s_hold">Hold PTT (radio mic)</string>

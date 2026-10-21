@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="rc_cat_disabled_status">CAT 未啟用</string>
+    <string name="rc_vox_status">VOX 模式</string>
     <string name="rc_l4s_hint">需要 L4S 固件。USB-C OTG 只传控制命令，语音使用手台麦克风。单台半双工，独立 RX/TX 频率。连接前关闭 USB 拨片／手键模式。整个发射期间保持两路频率不变，结束后恢复跟踪。</string>
     <string name="rc_l4s_firmware">L4S 固件：%1$s</string>
     <string name="rc_l4s_hold">按住 PTT（手台麦克风）</string>
