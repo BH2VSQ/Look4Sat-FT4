@@ -190,7 +190,7 @@ object AwardCalculator {
         if (entityOf(q) != Entity.INDONESIA) return null
 
         val state = q.state?.trim()?.uppercase()?.removePrefix("ID-")
-        if (state in ID_PROVINCES) return state
+        if (state != null && state in ID_PROVINCES) return state
 
         val fineLocators = q.theirFineGrids.asSequence()
             .map { it.trim().uppercase().take(6) }
@@ -205,7 +205,7 @@ object AwardCalculator {
         // only when *the whole square* resolves to a single province.
         val coarseGrid = workedGrid ?: q.theirGrids.firstOrNull()
         val coarseProvince = coarseGrid?.let(provinceForGrid)
-        if (coarseProvince in ID_PROVINCES) return coarseProvince
+        if (coarseProvince != null && coarseProvince in ID_PROVINCES) return coarseProvince
 
         // IIHG allocation describes a callsign's home province, not its
         // operating position: usable only for non-portable, unambiguous calls.
