@@ -59,6 +59,23 @@ class AdifCodecTest {
     }
 
     @Test
+    fun iotaBelongsToOppositeStationAndSurvivesAdifRoundTrip() {
+        val record = QsoRecord(
+            startUtcMillis = 1_700_000_000_000L,
+            theirCallsign = "YB0ABC",
+            myCallsign = "BA7OPF",
+            theirGrid = "OI33KS",
+            satelliteName = "SO-50",
+            iota = "OC-177"
+        )
+        val text = AdifCodec.encode(listOf(record))
+        assertTrue(text.contains("<IOTA:6>OC-177"))
+        val decoded = AdifCodec.decode(text).single()
+        assertEquals("OC-177", decoded.iota)
+        assertEquals("OI33KS", decoded.theirGrid)
+    }
+
+    @Test
     fun decode_lotwStyleReportFields() {
         // LoTW report subset: lowercase eor, alphabetical fields. The un-prefixed
         // grid fields belong to the OPPOSITE station, MY_* fields to the operator.
