@@ -54,6 +54,7 @@ fun GridQso.toConfirmedRecord(accountCallsign: String): QsoRecord = QsoRecord(
     cqZone = cqz,
     region = state.orEmpty(),
     iota = iota.orEmpty(),
+    myIota = myIota.orEmpty(),
     theirFullGrids = completeGrids(theirGrids, theirFineGrids),
     myFullGrids = completeGrids(myGrids.ifEmpty { listOfNotNull(myGrid).toSet() }, myFineGrids)
 )
