@@ -14,12 +14,6 @@ name: Build Look4Sat APK
 # Local Gradle builds keep using the catalog unchanged. Runs are manual only.
 
 on:
-  # Temporary one-time trigger to update the already published .16 notes only.
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/publish-release.yml"
   workflow_dispatch:
     inputs:
       mode:
@@ -41,7 +35,6 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -227,45 +220,3 @@ jobs:
           gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "Look4Sat $TAG" \
             --latest --notes "$NOTES"
           echo "Published release $TAG"
-
-  # Temporary release notes edit; never rebuild or republish the APK.
-  update_notes_once:
-    if: ${{ github.event_name == 'push' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Update existing v4.4.8-ba7opf.16 description
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: atsunatsu/Look4Sat
-        run: |
-          set -euo pipefail
-          cat > release-notes.md <<'RELEASE_NOTES_EOF'
-          # Look4Sat-BA7OPF v4.4.8-ba7opf.16
-          
-          ## 中文更新说明
-          
-          本次更新重点改进双站过境匹配（Match）的筛选与结果展示。
-          
-          - **最小仰角独立**：匹配结果只由匹配页两台站各自的最小仰角决定，不再受过境页筛选设置影响。
-          - **滑动筛选卫星**：在匹配结果卡片上向右滑动，仅显示该卫星的匹配记录；向左滑动恢复全部卫星，无需重新计算。
-          - **完整仰角曲线**：两台站的仰角曲线和轨迹不再按最小仰角门槛裁剪，保留共同可见窗口内的完整数据，避免曲线在门槛处突然中断。
-          - **修复当前过境遗漏**：独立计算时保留查询开始时已经进行中的共同过境。
-          - **修复发布前检查**：同步简体与繁体中文回退资源，修复相关单元测试失败。
-          
-          **安装信息：** Android APK，`versionName 4.4.8-ba7opf.16`、`versionCode 619`。沿用现有包名及发布签名证书，可覆盖安装此前的 BA7OPF 版本。
-          
-          ## English Release Notes
-          
-          This release improves the Match page's filtering and satellite-pass visualization.
-          
-          - **Independent elevation filters:** Match results use only the two station-specific minimum-elevation settings, unaffected by the Passes page's filter.
-          - **Swipe to filter:** Swipe right on a match card to show that satellite only; swipe left to restore all satellites without recalculating.
-          - **Unclipped elevation curves:** Both stations' elevation curves and track data are no longer cut off at the minimum-elevation thresholds; the complete mutual-visibility window is retained.
-          - **Active passes:** Mutual passes already in progress when the search starts are no longer skipped.
-          - **Localization/test fix:** Synchronized Simplified Chinese and Traditional Chinese fallback resources to fix the release unit test.
-          
-          **Compatibility:** Android APK, `versionName 4.4.8-ba7opf.16`, `versionCode 619`. Signed with the existing release certificate and compatible with in-place updates of earlier BA7OPF builds.
-          RELEASE_NOTES_EOF
-          gh release edit v4.4.8-ba7opf.16 --notes-file release-notes.md
-          gh release view v4.4.8-ba7opf.16 --json body --jq .body | grep -Fq 'Swipe to filter'
