@@ -224,6 +224,24 @@ class AwardCalculatorTest {
     }
 
     @Test
+    fun `waipa trusts PI59 operating geography over YE9RAS West Papua home allocation`() {
+        val station = qso("YE9RAS", dxcc = 327)
+        // The IIHG prefix/suffix home allocation puts YE9RAS in PB, but the
+        // actual QSO's PI59 operating locator has Indonesian land only in PD.
+        assertEquals("PB", WaipaCallsignLookup.province("YE9RAS"))
+        val provinceForGrid: (String) -> String? = { if (it == "PI59") "PD" else null }
+        assertEquals("PD", AwardCalculator.awardKey(
+            AwardType.WAIPA, station, provinceForGrid, workedGrid = "PI59"
+        ))
+        val store = mapOf("PI59" to listOf(station))
+        assertEquals(setOf("PD"), AwardCalculator.calculate(store, provinceForGrid)
+            .first { it.type == AwardType.WAIPA }.workedKeys)
+        assertEquals(listOf(station), AwardCalculator.regionQsos(
+            store, AwardType.WAIPA, "PD", provinceForGrid
+        ))
+    }
+
+    @Test
     fun `waipa multi-grid QSO does not credit two provinces across a border`() {
         val q = qso("YB7UAA", dxcc = 327)
         val store = mapOf("OK57" to listOf(q), "OI71" to listOf(q))
