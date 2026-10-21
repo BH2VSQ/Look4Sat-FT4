@@ -13,11 +13,40 @@ provinces:
 
 https://iihg.net/portfolio/waipa-award/
 
-The `code` field is compared against confirmed satellite QSOs'
-`STATE` fields, subject to DXCC 327 (Indonesia). This visualization is
-not an official IIHG eligibility check: the original IIHG award has separate
-HF, date and applicant requirements, which are intentionally not applied
-because Look4Sat's WAIPA chip follows its WAJA/WAPC satellite-QSO model.
+Look4Sat awards **confirmed satellite QSOs** for Indonesia (DXCC 327),
+using this location precedence:
+
+1. Valid opponent ADIF `STATE` (two-letter province code) is authoritative.
+2. Opponent's full six-character `GRIDSQUARE` / `VUCC_GRIDS`: resolve its
+   operating location against the **offline 38-province polygons**. A
+   conflicting set of fine-grid provinces is not credited.
+3. Opponent's `IOTA` group only if the entire group belongs to one modern
+   province, as documented by `WaipaIotaLookup`. It is not the operator's
+   `MY_IOTA`. Groups covering multiple provinces are deliberately omitted.
+4. Older four-character-only map caches: count geography only when the
+   **entire coarse locator** consistently falls within one province.
+5. As a last resort, use **unambiguous non-portable IIHG callsign allocations**
+   (`WaipaCallsignLookup`). IIHG's shared ranges, ambiguous prefix blocks,
+   portable calls and callsigns without a matching allocation never receive
+   a guessed province from this source.
+
+The IIHG allocation table and island-group reference list are at:
+https://iihg.net/portfolio/waipa-award/
+https://iihg.net/yb-iota-ref-prefix/
+https://www.iota-world.org/islands-on-the-air/iota-groups-islands
+
+This visualization is not an official IIHG eligibility check: the original
+IIHG award has separate HF, date and applicant requirements, intentionally
+not applied because Look4Sat follows its WAJA/WAPC satellite-QSO model.
+
+**Legacy data:** the existing map store used four-character grid keys and
+discarded the remaining locator precision and IOTA. It can immediately
+calculate known STATE, unambiguous old coarse-grid and callsign matches,
+without re-downloading anything. For exact six-grid and IOTA inference on
+historical QSOs, those fields must arrive in a new successful LoTW/Wavelog
+sync (incremental only includes updated/new records; a full sync can fetch
+older, unchanged ones). Future syncs preserve full six-grid and IOTA values.
+
 
 ## Boundary data attribution
 
