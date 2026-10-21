@@ -69,6 +69,7 @@ object AdifCodec {
             appendOptional("COUNTRY", record.country)
             record.cqZone?.let { append(field("CQZ", it.toString())) }
             appendOptional("STATE", record.region)
+            appendOptional("IOTA", record.iota)
             appendOptional("COMMENT", record.comment)
             appendOptional("APP_LOOK4SAT_TRANSPONDER", record.transponderName)
             record.passAosUtcMillis?.let { append(field("APP_LOOK4SAT_PASS_AOS", it.toString())) }
@@ -127,6 +128,7 @@ object AdifCodec {
             country = values["COUNTRY"].orEmpty(),
             cqZone = values["CQZ"]?.toIntOrNull()?.takeIf { it in 1..40 },
             region = values["STATE"].orEmpty().substringBefore(" // ").trim().uppercase(Locale.US),
+            iota = values["IOTA"].orEmpty().trim().uppercase(Locale.US),
             comment = values["COMMENT"].orEmpty()
         )
     }
