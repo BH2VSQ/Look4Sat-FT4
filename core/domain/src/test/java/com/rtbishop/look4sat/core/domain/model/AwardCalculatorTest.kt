@@ -224,6 +224,24 @@ class AwardCalculatorTest {
     }
 
     @Test
+    fun `waipa multi-grid QSO does not credit two provinces across a border`() {
+        val q = qso("YB7UAA", dxcc = 327)
+        val store = mapOf("OK57" to listOf(q), "OI71" to listOf(q))
+        val province: (String) -> String? = {
+            when (it) { "OK57" -> "KT"; "OI71" -> "BA"; else -> null }
+        }
+        val progress = AwardCalculator.calculate(store, province)
+            .first { it.type == AwardType.WAIPA }
+        assertEquals(0, progress.count)
+        assertTrue(AwardCalculator.regionQsos(store, AwardType.WAIPA, "KT", province).isEmpty())
+        assertTrue(AwardCalculator.regionQsos(store, AwardType.WAIPA, "BA", province).isEmpty())
+        val withIota = q.copy(iota = "OC-177")
+        val iotaStore = mapOf("OK57" to listOf(withIota), "OI71" to listOf(withIota))
+        assertEquals(setOf("JK"), AwardCalculator.calculate(iotaStore, province)
+            .first { it.type == AwardType.WAIPA }.workedKeys)
+    }
+
+    @Test
     fun `waz counts distinct cq zones in range`() {
         val all = listOf(
             qso("BG7XYZ", cqz = 24),
