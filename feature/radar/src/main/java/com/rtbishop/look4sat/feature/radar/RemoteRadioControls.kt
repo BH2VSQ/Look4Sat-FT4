@@ -51,20 +51,20 @@ import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
 import com.rtbishop.look4sat.core.domain.repository.PttState
 import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
 import com.rtbishop.look4sat.core.domain.model.RadioRecordingAction
-import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.presentation.formatFrequency
 
 internal fun RadioControlSubState.canSendL4sCw(): Boolean =
-    remoteRadio?.connected == true && remoteRadio.capabilities?.cwText == true &&
+    catEnabled && remoteRadio?.connected == true && remoteRadio.capabilities?.cwText == true &&
         remoteRadio.txEnabled && remoteRadio.transmitStateKnown && remoteRadio.profileStore?.busy!=true && remoteRadio.handsetMacroStatus?.busy!=true &&
         !remoteRadio.nativeMenuOpen && remoteRadio.txSource == 0 && isReady && txPanel.mode == "CW" &&
         transmitOwner == RadioTransmitOwner.NONE && pttState == PttState.OFF
 
 @Composable
 internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (RadarAction) -> Unit) {
-    val remote = control.remoteRadio ?: RemoteRadioState()
+    if (!control.remoteControlsVisible) return
+    val remote = control.remoteRadio ?: return
     val context = LocalContext.current
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val saveRecording = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
@@ -114,7 +114,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
                 style=MaterialTheme.typography.bodySmall)
         }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (control.voicePttVisible) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp)
@@ -140,7 +140,7 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
             ) { Text(pttLabel, color = if (canVoice || control.transmitOwner == RadioTransmitOwner.VOICE)
                 MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)) }
         }
-        OutlinedButton(onClick = { action(RadarAction.StopRemoteTx) }, modifier = Modifier.fillMaxWidth()) {
+        if (control.stopRemoteTxVisible) OutlinedButton(onClick = { action(RadarAction.StopRemoteTx) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.rc_l4s_stop))
         }
         if (remote.isN76) {
