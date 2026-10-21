@@ -300,7 +300,8 @@ class QsoRepository(
                     theirVuccGrids = previous.theirVuccGrids.ifEmpty { remote.theirVuccGrids },
                     theirFullGrids = (previous.theirFullGrids + remote.theirFullGrids).distinct(),
                     myFullGrids = (previous.myFullGrids + remote.myFullGrids).distinct(),
-                    iota = remote.iota.ifBlank { previous.iota }
+                    iota = remote.iota.ifBlank { previous.iota },
+                    myIota = remote.myIota.ifBlank { previous.myIota }
                 )
                 if (merged != previous) {
                     working[index] = merged
@@ -405,7 +406,8 @@ private fun QsoEntity.toDomain() = QsoRecord(
     comment = comment,
     iota = iota,
     theirFullGrids = theirFullGrids.split(',').filter(String::isNotBlank),
-    myFullGrids = myFullGrids.split(',').filter(String::isNotBlank)
+    myFullGrids = myFullGrids.split(',').filter(String::isNotBlank),
+    myIota = myIota
 )
 
 private fun QsoRecord.toEntity() = QsoEntity(
@@ -447,7 +449,8 @@ private fun QsoRecord.toEntity() = QsoEntity(
     comment = comment,
     iota = iota.trim().uppercase(Locale.US),
     theirFullGrids = theirFullGrids.joinToString(","),
-    myFullGrids = myFullGrids.joinToString(",")
+    myFullGrids = myFullGrids.joinToString(","),
+    myIota = myIota.trim().uppercase(Locale.US)
 )
 
 internal fun stableQsoKey(record: QsoRecord): String = listOf(
