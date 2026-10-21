@@ -111,7 +111,7 @@ object AwardCalculator {
             q.state?.trim()?.takeIf { it.length == 2 && it.all(Char::isDigit) }
         } else null
 
-        AwardType.WAIPA -> waipaKey(q, waipaProvinceForGrid, workedGrid)
+        AwardType.WAIPA -> waipaKey(q, waipaProvinceForGrid, listOfNotNull(workedGrid))
         AwardType.WAZ -> q.cqz?.takeIf { it in 1..40 }?.toString()
         AwardType.WAS -> if (entityOf(q) == Entity.USA) {
             q.state?.trim()?.uppercase()?.takeIf { it in US_STATES }
@@ -133,9 +133,16 @@ object AwardCalculator {
         code: String,
         waipaProvinceForGrid: (String) -> String? = { null }
     ): List<GridQso> =
-        qsosByGrid.flatMap { (grid, qsos) ->
-            qsos.filter { awardKey(type, it, waipaProvinceForGrid, grid) == code }
-        }.distinct().sortedBy { it.epochMs }
+        if (type == AwardType.WAIPA) {
+            resolvedWaipaQsos(qsosByGrid, waipaProvinceForGrid)
+                .filter { (_, province) -> province == code }
+                .map { (qso, _) -> qso }
+                .sortedBy { it.epochMs }
+        } else {
+            qsosByGrid.values.flatten()
+                .filter { awardKey(type, it) == code }
+                .distinct().sortedBy { it.epochMs }
+        }
 
     private fun wapcKey(q: GridQso): String? = when (entityOf(q)) {
         Entity.CHINA -> q.state?.trim()?.uppercase()?.takeIf { it in CN_STATES }
@@ -160,13 +167,27 @@ object AwardCalculator {
         return AwardProgress(AwardType.WAJA, keys, keys.size, AwardTargets.WAJA)
     }
 
+    /**
+     * A contact can appear under multiple four-character grid keys. Resolve
+     * those *together* so one historical multi-grid contact cannot award two
+     * provinces just because its coarse squares straddle a border.
+     */
+    private fun resolvedWaipaQsos(
+        byGrid: Map<String, List<GridQso>>,
+        provinceForGrid: (String) -> String?
+    ): List<Pair<GridQso, String?>> {
+        val gridsByQso = linkedMapOf<GridQso, MutableSet<String>>()
+        byGrid.forEach { (grid, qsos) ->
+            qsos.forEach { q -> gridsByQso.getOrPut(q) { linkedSetOf() }.add(grid) }
+        }
+        return gridsByQso.map { (q, grids) -> q to waipaKey(q, provinceForGrid, grids) }
+    }
+
     private fun calculateWaipa(
         byGrid: Map<String, List<GridQso>>,
         provinceForGrid: (String) -> String?
     ): AwardProgress {
-        val keys = byGrid.asSequence().flatMap { (grid, qsos) ->
-            qsos.asSequence().mapNotNull { waipaKey(it, provinceForGrid, grid) }
-        }.toSet()
+        val keys = resolvedWaipaQsos(byGrid, provinceForGrid).mapNotNull { it.second }.toSet()
         return AwardProgress(AwardType.WAIPA, keys, keys.size, AwardTargets.WAIPA)
     }
 
@@ -182,7 +203,7 @@ object AwardCalculator {
     private fun waipaKey(
         q: GridQso,
         provinceForGrid: (String) -> String?,
-        workedGrid: String? = null
+        workedGrids: Collection<String> = emptyList()
     ): String? {
         // A different explicit DXCC must never receive Indonesian credits,
         // even when the operator has an Indonesian-looking callsign.
@@ -208,9 +229,11 @@ object AwardCalculator {
 
         // The map cache historically retained only 4 characters. Use those
         // only when *the whole square* resolves to a single province.
-        val coarseGrid = workedGrid ?: q.theirGrids.firstOrNull()
-        val coarseProvince = coarseGrid?.let(provinceForGrid)
-        if (coarseProvince != null && coarseProvince in ID_PROVINCES) return coarseProvince
+        val coarseProvinces = (q.theirGrids + workedGrids)
+            .mapNotNull { provinceForGrid(it.trim().uppercase().take(4)) }
+            .filter { it in ID_PROVINCES }.toSet()
+        if (coarseProvinces.size > 1) return null
+        if (coarseProvinces.size == 1) return coarseProvinces.first()
 
         // IIHG allocation describes a callsign's home province, not its
         // operating position: usable only for non-portable, unambiguous calls.
