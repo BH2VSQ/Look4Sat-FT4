@@ -17,7 +17,7 @@ Look4Sat awards **confirmed satellite QSOs** for Indonesia (DXCC 327),
 using this location precedence:
 
 1. Valid opponent ADIF `STATE` (two-letter province code) is authoritative.
-2. Opponent's full six-character `GRIDSQUARE` / `VUCC_GRIDS`: resolve its
+2. Opponent's full six- or eight-character `GRIDSQUARE` / `VUCC_GRIDS`: resolve its
    operating location against the **offline 38-province polygons**. A
    conflicting set of fine-grid provinces is not credited.
 3. Opponent's `IOTA` group only if the entire group belongs to one modern
@@ -39,13 +39,32 @@ This visualization is not an official IIHG eligibility check: the original
 IIHG award has separate HF, date and applicant requirements, intentionally
 not applied because Look4Sat follows its WAJA/WAPC satellite-QSO model.
 
-**Legacy data:** the existing map store used four-character grid keys and
-discarded the remaining locator precision and IOTA. It can immediately
-calculate known STATE, unambiguous old coarse-grid and callsign matches,
-without re-downloading anything. For exact six-grid and IOTA inference on
-historical QSOs, those fields must arrive in a new successful LoTW/Wavelog
-sync (incremental only includes updated/new records; a full sync can fetch
-older, unchanged ones). Future syncs preserve full six-grid and IOTA values.
+**Legacy data:** old map caches indexed QSOs by four-character VUCC grids
+and truncated the source's finer locators. They also omitted the opposite
+station's IOTA. This was an optimization for VUCC-only counting, not a
+statement that six/eight-character Maidenhead positions or IOTA are unneeded.
+The old app cannot reconstruct discarded values from existing caches.
+
+**New lossless data policy (as delivered by the remote service):**
+- Keep original full 4/6/8-character `GRIDSQUARE`, `VUCC_GRIDS`,
+  `MY_GRIDSQUARE` and `MY_VUCC_GRIDS` separately from four-character
+  map/VUCC grouping keys. Never overwrite the source locators with the
+  derived square index.
+- Keep the opposite station's `IOTA` separately from own-station
+  `MY_IOTA`.
+- Retain these values when parsing LoTW/Wavelog, when writing the map's
+  persisted confirmed-QSO cache, when bridging LoTW confirmations into
+  the local QSO logbook, and through QSO edit/merge/import/export.
+- The logbook Room DB migrates additively from schema v5 to v6,
+  preserving existing records without deleting or recreating the database.
+
+A user upgrading from an old version can immediately recalculate known
+STATE, unique coarse-grid or callsign matches without downloading. A fresh
+server sync restores precision for records included in its response.
+Incremental sync cannot recover unchanged historical QSOs: a **single full
+resync** is needed to populate lost fine-grids/IOTA on those records if the
+upstream server still holds them. Subsequent syncs do not lose them again.
+The app never fabricates locators or IOTA that the server did not provide.
 
 
 ## Boundary data attribution
