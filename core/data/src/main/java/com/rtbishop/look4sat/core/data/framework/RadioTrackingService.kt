@@ -837,10 +837,6 @@ class RadioTrackingService(
         else { tuningRevision.incrementAndGet();tuningWake.trySend(Unit) }
     }
 
-    override fun refreshNativeDiagnostics() {
-        appScope.launch { txController?.refreshNativeDiagnostics() }
-    }
-
     override fun syncHandsetCwPresets() {
         if(macroSyncJob?.isActive==true || userFrequencyEditingBlocked()) {
             failTrackingCommand("Radio is busy");return

@@ -941,8 +941,6 @@
     <string name="prefs_bottom_tool_current">目前快速功能：%1$s</string>
     <string name="prefs_bottom_tool_choose">選擇快速功能</string>
     <string name="prefs_bottom_tool_description">選擇顯示在底部第 4 個功能位置的頁面。選擇其他功能後，FT4 會自動移至「更多」選單。</string>
-    <string name="rc_native_diagnostics">電台診斷</string>
-    <string name="rc_native_refresh">重新整理</string>
     <string name="rc_cw_options">CW 參數</string>
     <string name="rc_cw_sync">同步 F1–F8</string>
     <string name="rc_cw_sync_confirm">請在手台按 MENU 確認</string>

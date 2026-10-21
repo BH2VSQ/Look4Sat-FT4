@@ -379,7 +379,6 @@ class RadarViewModel(
             is RadarAction.SetNativeCwOptions -> trackingService.setNativeCwOptions(action.options)
             RadarAction.SyncHandsetCwPresets -> trackingService.syncHandsetCwPresets()
             RadarAction.CancelHandsetCwSync -> trackingService.cancelHandsetCwSync()
-            RadarAction.RefreshNativeDiagnostics -> trackingService.refreshNativeDiagnostics()
             is RadarAction.SaveCwPreset -> {
                 settingsRepo.updateRemoteCwPreset(action.index,action.text)
                 _uiState.update { it.copy(radioControl=it.radioControl.copy(cwPresets=settingsRepo.getRemoteCwPresets())) }

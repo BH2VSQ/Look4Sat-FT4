@@ -989,8 +989,6 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="prefs_bottom_tool_current">Current shortcut: %1$s</string>
     <string name="prefs_bottom_tool_choose">Choose shortcut</string>
     <string name="prefs_bottom_tool_description">Choose the feature shown in the fourth bottom-navigation slot. FT4 moves into More when another feature is selected.</string>
-    <string name="rc_native_diagnostics">Radio diagnostics</string>
-    <string name="rc_native_refresh">Refresh</string>
     <string name="rc_cw_options">CW settings</string>
     <string name="rc_cw_sync">Sync F1–F8</string>
     <string name="rc_cw_sync_confirm">Confirm with MENU on the handset</string>

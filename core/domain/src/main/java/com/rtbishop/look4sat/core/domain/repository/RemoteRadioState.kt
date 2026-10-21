@@ -26,7 +26,6 @@ data class RemoteRadioCapabilities(
     val transactionalProfileStore: Boolean = false,
     val cwOptions: Boolean = false,
     val handsetMacros: Boolean = false,
-    val nativeDiagnostics: Boolean = false,
     val passClock: Boolean = false
 )
 
@@ -44,14 +43,6 @@ data class HandsetMacroStatus(val phase: Int, val error: Int, val generation: Lo
     val slot: Int = 255, val text: String = "") {
     val busy get() = phase in 1..7
     val waitingForConfirmation get() = phase == 2
-}
-
-data class NativeRadioDiagnostics(val stopReason: Int, val lastRejection: Int, val rssi: Int,
-    val requests: Long, val rejected: Long, val aborts: Long, val usbLosses: Long, val replyDrops: Long,
-    val maximumGapMillis: Long, val crcErrors: Long, val lengthErrors: Long) {
-    fun summary() = "stop=$stopReason lastRejection=$lastRejection rssi=$rssi requests=$requests rejected=$rejected " +
-        "aborts=$aborts usbLosses=$usbLosses replyDrops=$replyDrops maxGapMs=$maximumGapMillis " +
-        "crcErrors=$crcErrors lengthErrors=$lengthErrors"
 }
 
 fun radioContextKey(uuid: String): String = java.security.MessageDigest.getInstance("SHA-256")
@@ -129,7 +120,6 @@ data class RemoteRadioState(
     val isN76: Boolean = false,
     val nativeCwOptions: NativeCwOptions? = null,
     val handsetMacroStatus: HandsetMacroStatus? = null,
-    val nativeDiagnostics: NativeRadioDiagnostics? = null
 )
 
 object CwTransmitText {

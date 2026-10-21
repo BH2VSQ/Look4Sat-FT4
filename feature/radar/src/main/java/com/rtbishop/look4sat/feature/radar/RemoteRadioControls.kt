@@ -92,7 +92,6 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         control.pttState == PttState.OFF)
     var showCw by rememberSaveable { mutableStateOf(false) }
     var showNativeOptions by rememberSaveable { mutableStateOf(false) }
-    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     val pttLabel = stringResource(R.string.rc_l4s_hold)
     DisposableEffect(Unit) { onDispose { action(RadarAction.StopRemoteTx) } }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -143,11 +142,6 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
         }
         OutlinedButton(onClick = { action(RadarAction.StopRemoteTx) }, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.rc_l4s_stop))
-        }
-        if(caps?.nativeDiagnostics==true) {
-            OutlinedButton(onClick={showDiagnostics=true;action(RadarAction.RefreshNativeDiagnostics)},modifier=Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.rc_native_diagnostics))
-            }
         }
         if (remote.isN76) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -277,6 +271,4 @@ internal fun RemoteRadioControls(control: RadioControlSubState, onAction: (Radar
     if(showNativeOptions) NativeCwOptionsDialog(remote.nativeCwOptions ?: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions(),
         enabled=!control.frequencyEditingLocked,onDismiss={showNativeOptions=false},
         onApply={action(RadarAction.SetNativeCwOptions(it));showNativeOptions=false})
-    if(showDiagnostics) NativeDiagnosticsDialog(remote.nativeDiagnostics,onDismiss={showDiagnostics=false},
-        onRefresh={action(RadarAction.RefreshNativeDiagnostics)})
 }

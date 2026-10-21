@@ -105,7 +105,6 @@ interface IRadioTrackingService {
     fun setNativeCwOptions(options: NativeCwOptions) = Unit
     fun syncHandsetCwPresets() = Unit
     fun cancelHandsetCwSync() = Unit
-    fun refreshNativeDiagnostics() = Unit
     fun cancelRemoteTransmit() = Unit
     suspend fun refreshRadioProfiles():Boolean=false
     suspend fun requestDeleteRadioProfile(slot:Int):Boolean=false

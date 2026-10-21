@@ -941,8 +941,6 @@
     <string name="prefs_bottom_tool_current">当前快捷功能：%1$s</string>
     <string name="prefs_bottom_tool_choose">选择快捷功能</string>
     <string name="prefs_bottom_tool_description">选择显示在底部第 4 个功能位的页面。选择其他功能后，FT4 会自动移入“更多”菜单。</string>
-    <string name="rc_native_diagnostics">电台诊断</string>
-    <string name="rc_native_refresh">刷新</string>
     <string name="rc_cw_options">CW 参数</string>
     <string name="rc_cw_sync">同步 F1–F8</string>
     <string name="rc_cw_sync_confirm">请在手台按 MENU 确认</string>
