@@ -116,6 +116,7 @@ fun buildWavelogGridData(records: List<QsoRecord>): WavelogGridData {
             country = record.country.ifBlank { null },
             cqz = record.cqZone,
             state = record.region.ifBlank { null },
+            iota = record.iota.ifBlank { null },
             myGrid = myGrids.sorted().firstOrNull(),
             myGrids = myGrids,
             myCallsign = record.myCallsign.ifBlank { null },
