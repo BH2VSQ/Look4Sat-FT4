@@ -45,14 +45,22 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.keepScreenOn
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -81,17 +90,21 @@ import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.MutualPassData
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
+import com.rtbishop.look4sat.core.domain.utility.qthToPosition
 import com.rtbishop.look4sat.core.domain.utility.toDegrees
 import com.rtbishop.look4sat.core.presentation.EmptyListCard
 import com.rtbishop.look4sat.core.presentation.IconCard
 import com.rtbishop.look4sat.core.presentation.NextPassRow
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.RadarViewCompose
+import com.rtbishop.look4sat.core.presentation.SheetDialogTitle
 import com.rtbishop.look4sat.core.presentation.TimerRow
 import com.rtbishop.look4sat.core.presentation.TopBar
 import com.rtbishop.look4sat.core.presentation.formatFrequency
 import com.rtbishop.look4sat.core.presentation.getDefaultPass
 import com.rtbishop.look4sat.core.presentation.layoutPadding
+import com.rtbishop.look4sat.core.presentation.sheetDialogContainerColor
+import com.rtbishop.look4sat.core.presentation.sheetDialogShape
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -187,7 +200,8 @@ fun RadarDestination(
     navigateUp: () -> Unit,
     navigateToMap: () -> Unit,
     onOpenLoTWStation: () -> Unit = {},
-    onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> }
+    onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> },
+    onStartMatch: (String, (Boolean) -> Unit) -> Unit = { _, complete -> complete(false) }
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
@@ -206,12 +220,6 @@ fun RadarDestination(
             container.setMutualPassData(MutualPassData())
         }
         navigateToMap()
-    }
-    val onOpenPassMapAndClearMutual: (Int, Long, Long) -> Unit = { catNum, aos, los ->
-        if (container.mutualPassData.value.endTime > 0L) {
-            container.setMutualPassData(MutualPassData())
-        }
-        onOpenPassMap(catNum, aos, los)
     }
     LaunchedEffect(mutualData.endTime) {
         if (mutualData.endTime <= 0L) return@LaunchedEffect
@@ -273,7 +281,8 @@ fun RadarDestination(
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         },
         onFixGrid = openLoTWStationForGridFix,
-        onOpenPassMap = onOpenPassMapAndClearMutual
+        onOpenPassMap = onOpenPassMap,
+        onStartMatch = onStartMatch
     )
 }
 
@@ -289,7 +298,8 @@ private fun RadarScreen(
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
     onFixGrid: (List<String>) -> Unit,
-    onOpenPassMap: (Int, Long, Long) -> Unit
+    onOpenPassMap: (Int, Long, Long) -> Unit,
+    onStartMatch: (String, (Boolean) -> Unit) -> Unit
 ) {
     val upcomingPass = uiState.currentPass ?: getDefaultPass()
     // 日程功能: 把当前过境写入系统日历(原仓库的 addToCalendar, ic_calendar 按钮)
@@ -325,6 +335,34 @@ private fun RadarScreen(
                 time = it.time
             )
         }
+    val context = LocalContext.current
+    var showMatchDialog by remember { mutableStateOf(false) }
+    var showToolsMenu by remember { mutableStateOf(false) }
+    val closeToolsMenuThen: (() -> Unit) -> Unit = { action ->
+        showToolsMenu = false
+        action()
+    }
+    var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
+    var matchLoading by remember { mutableStateOf(false) }
+    var matchError by remember { mutableStateOf<String?>(null) }
+    // Compose the menu at the top-right list button, rather than opening a
+    // full-width bottom sheet. Both toolbar arrangements use the same popup.
+    val toolsMenu: @Composable () -> Unit = {
+        RadarActionsMenu(
+            expanded = showToolsMenu,
+            onToggle = { showToolsMenu = !showToolsMenu },
+            onDismissRequest = { showToolsMenu = false },
+            hasPass = uiState.currentPass != null,
+            onAddToCalendar = { closeToolsMenuThen(addToCalendar) },
+            onMatch = {
+                closeToolsMenuThen {
+                    showMatchDialog = true
+                    matchError = null
+                }
+            },
+            onMap = { closeToolsMenuThen(openPassMap) }
+        )
+    }
     BoxWithConstraints(
         modifier = Modifier
             .layoutPadding()
@@ -355,8 +393,7 @@ private fun RadarScreen(
                 TopBar {
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
-                    IconCard(action = openPassMap, resId = R.drawable.ic_map)
-                    IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
+                    toolsMenu()
                 }
                 TopBar {
                     NextPassRow(pass = upcomingPass, isUtc = uiState.isUtc)
@@ -372,8 +409,7 @@ private fun RadarScreen(
                     IconCard(action = navigateUp, resId = R.drawable.ic_back)
                     TimerRow(timeString = uiState.currentTime, isTimeAos = uiState.isTimeAos)
                     NextPassRow(pass = upcomingPass, modifier = Modifier.weight(1f), isUtc = uiState.isUtc)
-                    IconCard(action = openPassMap, resId = R.drawable.ic_map)
-                    IconCard(action = addToCalendar, resId = R.drawable.ic_calendar)
+                    toolsMenu()
                 }
             }
             if (isVertical) {
@@ -420,6 +456,162 @@ private fun RadarScreen(
             }
         }
     }
+    if (showMatchDialog) {
+        // Match the existing QSO upload-preview dialogs: a centered AlertDialog,
+        // with the same themed shape, container, title, and action buttons.
+        AlertDialog(
+            onDismissRequest = { if (!matchLoading) showMatchDialog = false },
+            shape = sheetDialogShape(),
+            containerColor = sheetDialogContainerColor(),
+            title = { SheetDialogTitle(stringResource(R.string.radar_match_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = matchGrid,
+                        onValueChange = {
+                            matchGrid = it.uppercase()
+                            matchError = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.radar_match_grid_label)) },
+                        placeholder = { Text(stringResource(R.string.radar_match_grid_hint)) },
+                        singleLine = true,
+                        isError = matchError != null,
+                        supportingText = {
+                            matchError?.let {
+                                Text(it, color = MaterialTheme.colorScheme.error)
+                            }
+                        },
+                        enabled = !matchLoading
+                    )
+                    if (matchLoading) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text(stringResource(R.string.radar_match_searching))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !matchLoading,
+                    onClick = {
+                        val normalized = matchGrid.trim().uppercase()
+                        if (qthToPosition(normalized) == null) {
+                            matchError = context.getString(R.string.radar_match_grid_invalid)
+                        } else {
+                            matchLoading = true
+                            matchError = null
+                            onStartMatch(normalized) { success ->
+                                matchLoading = false
+                                if (success) {
+                                    showMatchDialog = false
+                                } else {
+                                    matchError = context.getString(R.string.radar_match_no_pass)
+                                }
+                            }
+                        }
+                    }
+                ) { Text(stringResource(R.string.btn_accept)) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !matchLoading,
+                    onClick = { showMatchDialog = false }
+                ) { Text(stringResource(R.string.btn_cancel)) }
+            }
+        )
+    }
+}
+
+/** Compact popup anchored to the radar toolbar's upper-right list button. */
+@Composable
+private fun RadarActionsMenu(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onDismissRequest: () -> Unit,
+    hasPass: Boolean,
+    onAddToCalendar: () -> Unit,
+    onMatch: () -> Unit,
+    onMap: () -> Unit
+) {
+    val context = LocalContext.current
+    Box(modifier = Modifier.size(48.dp)) {
+        ElevatedCard(modifier = Modifier.fillMaxSize(), onClick = onToggle) {
+            Box(
+                modifier = Modifier.fillMaxSize()
+                    .semantics { contentDescription = context.getString(R.string.radar_menu_tools) },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_list),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = onDismissRequest,
+            modifier = Modifier.width(220.dp),
+            // Match the app's shared dialogs and cards instead of Material3's
+            // darker default popup surface and different corner radius.
+            shape = sheetDialogShape(),
+            containerColor = sheetDialogContainerColor()
+        ) {
+            Text(
+                text = stringResource(R.string.radar_tools_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            RadarToolMenuItem(
+                iconRes = R.drawable.ic_calendar,
+                label = stringResource(R.string.radar_menu_calendar),
+                enabled = hasPass,
+                onClick = onAddToCalendar
+            )
+            RadarToolMenuItem(
+                iconRes = R.drawable.ic_radio_tower,
+                label = stringResource(R.string.radar_menu_match),
+                onClick = onMatch
+            )
+            RadarToolMenuItem(
+                iconRes = R.drawable.ic_map,
+                label = stringResource(R.string.nav_map),
+                enabled = hasPass,
+                onClick = onMap
+            )
+        }
+    }
+}
+
+@Composable
+private fun RadarToolMenuItem(
+    iconRes: Int,
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    DropdownMenuItem(
+        text = { Text(label, style = MaterialTheme.typography.titleMedium) },
+        leadingIcon = {
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                modifier = Modifier.size(24.dp)
+            )
+        },
+        enabled = enabled,
+        onClick = onClick
+    )
 }
 
 @Composable

@@ -31,7 +31,9 @@ sealed class LoTWResult {
          *  for a full sync. These records are merged into the local logbook. */
         val records: List<com.rtbishop.look4sat.core.domain.logbook.QsoRecord> = emptyList(),
         /** Raw QSO count in the report before local filtering or merging. */
-        val downloaded: Int = records.size
+        val downloaded: Int = records.size,
+        /** Most recent server-side QSL update from APP_LoTW_LASTQSL (if any). */
+        val lastQslCursor: String? = null
     ) : LoTWResult()
 
     /** HTTP 200 but LoTW replied with its login-error page (bad callsign/password). */

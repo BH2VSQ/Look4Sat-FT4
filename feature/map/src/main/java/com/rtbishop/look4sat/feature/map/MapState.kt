@@ -101,3 +101,9 @@ data class MapData(
     val phase: Double,
     val eclipsed: Boolean
 )
+
+/** Reset a dedicated pass timeline to live time during the pass, or to AOS otherwise. */
+internal fun radarPassResetTime(nowMs: Long, aosTime: Long, losTime: Long): Long {
+    require(losTime > aosTime) { "LOS must be later than AOS" }
+    return if (nowMs in aosTime..losTime) nowMs else aosTime
+}

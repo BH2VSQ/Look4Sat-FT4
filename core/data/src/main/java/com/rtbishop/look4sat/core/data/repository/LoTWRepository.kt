@@ -102,6 +102,17 @@ class LoTWRepository : ILoTWRepository {
         else -> LoTWResult.NetworkError(e.message ?: e.javaClass.simpleName)
     }
 
+    /** Latest QSL match/update time in the LoTW report header. */
+    internal fun parseLastQslCursor(body: String): String? {
+        val eoh = body.indexOf("<EOH>", ignoreCase = true)
+        if (eoh < 0) return null
+        val raw = body.substring(0, eoh).lineSequence()
+            .map(String::trim)
+            .firstOrNull { it.startsWith("<APP_LoTW_LASTQSL:", ignoreCase = true) }
+            ?.substringAfter('>')?.trim()
+        return raw?.takeIf { it.matches(Regex("""\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}""")) }
+    }
+
     /** Parse once, then derive both local-logbook records and confirmed satellite grid data. */
     internal fun parseSyncReport(
         body: String,
@@ -153,7 +164,8 @@ class LoTWRepository : ILoTWRepository {
             qsos = gridQsos,
             roamedGrids = roamed,
             records = parsed.records,
-            downloaded = parsed.downloaded
+            downloaded = parsed.downloaded,
+            lastQslCursor = parseLastQslCursor(body)
         )
     }
 

@@ -74,7 +74,11 @@ data class MutualPassData(
     val endTime: Long = 0L,
     val maxElev: Double = 10.0,
     val labelA: String = "你",
-    val labelB: String = "友台"
+    val labelB: String = "友台",
+    /** Maidenhead locator entered for station B; coordinates are its grid centre. */
+    val stationBGrid: String = "",
+    val stationBLatitude: Double? = null,
+    val stationBLongitude: Double? = null
 )
 
 /** Minimal track sample for cross-module sharing (angles in degrees). */

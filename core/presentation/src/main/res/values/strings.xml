@@ -104,6 +104,16 @@
     <string name="radar_size_large_short">L</string>
     <string name="radar_size_small_short">S</string>
     <string name="radar_notify">Notify</string>
+    <string name="radar_tools_title">Radar tools</string>
+    <string name="radar_menu_tools">Open radar tools</string>
+    <string name="radar_menu_calendar">Add to calendar</string>
+    <string name="radar_menu_match">Match</string>
+    <string name="radar_match_title">Match another station</string>
+    <string name="radar_match_grid_label">Other station grid</string>
+    <string name="radar_match_grid_hint">4/6/8-character Maidenhead locator (e.g. OL62)</string>
+    <string name="radar_match_grid_invalid">Enter a valid 4, 6 or 8-character Maidenhead locator.</string>
+    <string name="radar_match_searching">Searching for a common satellite pass…</string>
+    <string name="radar_match_no_pass">No common pass found in the next 24 hours. Check the grid and selected satellites.</string>
     <string name="radar_az_text">Azimuth</string>
     <string name="radar_az_value" translatable="false">%.1f°</string>
     <string name="radar_el_text">Elevation</string>

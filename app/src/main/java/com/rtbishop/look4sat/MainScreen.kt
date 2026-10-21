@@ -101,6 +101,7 @@ import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.LoTWUploadDestination as LoTWUploadRoute
 import com.rtbishop.look4sat.core.presentation.RadarDestination as RadarRoute
 import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
+import com.rtbishop.look4sat.core.presentation.RadarMatchDestination
 import com.rtbishop.look4sat.core.presentation.Screen
 import com.rtbishop.look4sat.core.presentation.hasEnoughHeight
 import com.rtbishop.look4sat.core.presentation.hasEnoughWidth
@@ -123,6 +124,12 @@ import kotlinx.coroutines.delay
 @Composable
 fun NavRoot(deeplink: String? = null) {
     val rootBackStack = rememberNavBackStack(Screen.Passes)
+    val context = LocalContext.current
+    val container = (context.applicationContext as IContainerProvider).getMainContainer()
+    val mutualViewModel: MutualViewModel = viewModel(
+        viewModelStoreOwner = context as ViewModelStoreOwner,
+        factory = MutualViewModel.factory(container)
+    )
     val deeplinkResolver = DeeplinkResolver()
     var openMapRequest by remember { mutableIntStateOf(0) }
     LaunchedEffect(deeplink) {
@@ -136,20 +143,36 @@ fun NavRoot(deeplink: String? = null) {
         while (rootBackStack.size > 1) rootBackStack.removeAt(rootBackStack.size - 1)
         openMapRequest += 1
     }
-    val context = LocalContext.current
-    val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
     val navigateToLoTWStation: () -> Unit = { rootBackStack.add(LoTWUploadRoute) }
+    var requestedMainTab by remember { mutableStateOf<Screen?>(null) }
+    var currentRadarMapPass by remember { mutableStateOf<RadarPassMapDestination?>(null) }
     val navigateToRadarPassMap: (Int, Long, Long) -> Unit = { catNum, aos, los ->
-        if (los > aos) rootBackStack.add(RadarPassMapDestination(catNum, aos, los))
-    }
-    // Replace, don't push: Back must always return directly to the originating radar page
-    // even after browsing dozens of passes in the dedicated map.
-    val switchRadarPassMap: (RadarPassMapDestination) -> Unit = { next ->
-        val current = rootBackStack.lastOrNull()
-        if (current is RadarPassMapDestination && current != next) {
-            rootBackStack.removeLastOrNull()
+        if (los > aos) {
+            val next = RadarPassMapDestination(catNum, aos, los)
+            currentRadarMapPass = next
             rootBackStack.add(next)
+        }
+    }
+    val switchRadarPassMap: (RadarPassMapDestination) -> Unit = { next ->
+        if (rootBackStack.lastOrNull() is RadarPassMapDestination) currentRadarMapPass = next
+    }
+    val startRadarMatch: (String, (Boolean) -> Unit) -> Unit = { grid, onComplete ->
+        mutualViewModel.prepareRadarMatchFromGrid(grid) { selection ->
+            if (selection == null) {
+                onComplete(false)
+            } else {
+                container.setMutualPassData(selection.mutualPassData)
+                container.satelliteRepo.selectPass(selection.catNum, selection.aosTime)
+                if (rootBackStack.lastOrNull() is RadarMatchDestination) rootBackStack.removeLastOrNull()
+                rootBackStack.add(RadarMatchDestination(
+                    stationBGrid = selection.stationBGrid,
+                    catNum = selection.catNum,
+                    aosTime = selection.aosTime,
+                    sessionId = System.currentTimeMillis()
+                ))
+                onComplete(true)
+            }
         }
     }
     // Incoming screen slides in from the right, outgoing drifts left at 1/3 speed (API35+ style)
@@ -182,7 +205,10 @@ fun NavRoot(deeplink: String? = null) {
                         navigateToFt4 = navigateToFt4,
                         navigateToLoTWStation = navigateToLoTWStation,
                         openMapRequest = openMapRequest,
-                        onOpenMapRequestHandled = { openMapRequest = 0 }
+                        onOpenMapRequestHandled = { openMapRequest = 0 },
+                        mutualViewModel = mutualViewModel,
+                        requestedTab = requestedMainTab,
+                        onRequestedTabHandled = { requestedMainTab = null }
                     )
                 }
                 entry<RadarRoute> {
@@ -194,20 +220,42 @@ fun NavRoot(deeplink: String? = null) {
                             navigateUp = navigateBack,
                             navigateToMap = navigateToMap,
                             onOpenLoTWStation = navigateToLoTWStation,
-                            onOpenPassMap = navigateToRadarPassMap
+                            onOpenPassMap = navigateToRadarPassMap,
+                            onStartMatch = startRadarMatch
                         )
                     }
                 }
-                entry<RadarPassMapDestination> { pass ->
+                entry<RadarMatchDestination> {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        RadarPassMapScreenDestination(
-                            pass = pass,
+                        RadarDestination(
                             navigateUp = navigateBack,
-                            onSwitchPass = switchRadarPassMap
+                            navigateToMap = navigateToMap,
+                            onOpenLoTWStation = navigateToLoTWStation,
+                            onOpenPassMap = navigateToRadarPassMap,
+                            onStartMatch = startRadarMatch
                         )
+                    }
+                }
+                entry<RadarPassMapDestination> { pass ->
+                    Look4SatNavigationScaffold(
+                        selectedScreen = Screen.Map,
+                        onSelectScreen = { screen ->
+                            container.setMutualPassData(MutualPassData())
+                            requestedMainTab = screen
+                            while (rootBackStack.size > 1) rootBackStack.removeLastOrNull()
+                        },
+                        navigateToFt4 = navigateToFt4,
+                        allowReselect = true
+                    ) {
+                        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            RadarPassMapScreenDestination(
+                                pass = currentRadarMapPass ?: pass,
+                                onSwitchPass = switchRadarPassMap
+                            )
+                        }
                     }
                 }
                 entry<GridFinderRoute> {
@@ -251,33 +299,17 @@ fun NavRoot(deeplink: String? = null) {
 }
 
 @Composable
-fun MainScreen(
-    navigateToRadar: () -> Unit = {},
-    navigateToFt4: () -> Unit = {},
-    navigateToLoTWStation: () -> Unit = {},
-    openMapRequest: Int = 0,
-    onOpenMapRequestHandled: () -> Unit = {}
+private fun Look4SatNavigationScaffold(
+    selectedScreen: Screen?,
+    onSelectScreen: (Screen) -> Unit,
+    navigateToFt4: () -> Unit,
+    allowReselect: Boolean = false,
+    content: @Composable () -> Unit
 ) {
-    val backStack = rememberNavBackStack(Screen.Passes)
-    val currentKey = backStack.lastOrNull()
-    var showMoreSheet by rememberSaveable { mutableStateOf(false) }
-    val navigateBack: () -> Unit = { backStack.removeLastOrNull() }
-    val navigateToScreen: (Screen) -> Unit = { screen ->
-        while (backStack.size > 1) backStack.removeAt(backStack.size - 1)
-        if (screen !is Screen.Passes) backStack.add(screen)
-    }
-    val navigateToMap: () -> Unit = { navigateToScreen(Screen.Map) }
-    LaunchedEffect(openMapRequest) {
-        if (openMapRequest > 0) {
-            navigateToMap()
-            onOpenMapRequestHandled()
-        }
-    }
-    val fadeTransition = fadeIn(animationSpec = tween(350)) togetherWith fadeOut(animationSpec = tween(350))
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
-    val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
+    var showMoreSheet by rememberSaveable { mutableStateOf(false) }
     val primaryTool = bottomBarScreen(otherSettings.bottomBarTool)
     val navItems = listOf(
         Screen.Satellites,
@@ -298,11 +330,112 @@ fun MainScreen(
         add(Screen.PassSchedule)
         if (primaryTool != Screen.Ft4) add(Screen.Ft4)
     }
-    // Activity-scoped so the mutual query results survive navigation to Radar and back
-    val mutualViewModel: MutualViewModel = viewModel(
-        viewModelStoreOwner = context as ViewModelStoreOwner,
-        factory = MutualViewModel.factory(container)
-    )
+    if (showMoreSheet) {
+        MoreDestinationsSheet(
+            destinations = moreItems,
+            currentScreen = selectedScreen,
+            currentTool = otherSettings.bottomBarTool,
+            onDismiss = { showMoreSheet = false },
+            onSaveBottomTool = { tool ->
+                container.settingsRepo.updateOtherSettings {
+                    it.copy(bottomBarTool = BottomBarTool.normalize(tool))
+                }
+            },
+            onDestinationSelected = { screen ->
+                showMoreSheet = false
+                if (screen is Screen.Ft4) {
+                    navigateToFt4()
+                } else if (selectedScreen != screen || allowReselect) {
+                    onSelectScreen(screen)
+                }
+            }
+        )
+    }
+    NavigationSuiteScaffold(
+        navigationSuiteItems = {
+            navItems.forEach { screen ->
+                val isSelected = when {
+                    selectedScreen == screen -> true
+                    screen is Screen.More && selectedScreen in moreItems -> true
+                    screen is Screen.More && showMoreSheet -> true
+                    else -> false
+                }
+                item(
+                    icon = { Icon(painterResource(screen.iconResId), stringResource(screen.titleResId)) },
+                    label = {
+                        Text(
+                            text = stringResource(bottomBarLabelRes(screen)),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center
+                        )
+                    },
+                    selected = isSelected,
+                    onClick = {
+                        if (screen is Screen.More) {
+                            showMoreSheet = true
+                            return@item
+                        }
+                        if (isSelected && !allowReselect) return@item
+                        if (screen is Screen.Ft4) {
+                            navigateToFt4()
+                            return@item
+                        }
+                        onSelectScreen(screen)
+                    }
+                )
+            }
+        },
+        navigationSuiteColors = NavigationSuiteDefaults.colors(
+            navigationRailContainerColor = MaterialTheme.colorScheme.surfaceContainer
+        ),
+        layoutType = when {
+            !hasEnoughHeight() && hasEnoughWidth() -> NavigationSuiteType.NavigationRail
+            !hasEnoughWidth() -> NavigationSuiteType.ShortNavigationBarCompact
+            else -> NavigationSuiteType.ShortNavigationBarMedium
+        }
+    ) {
+        content()
+    }
+}
+
+@Composable
+fun MainScreen(
+    navigateToRadar: () -> Unit = {},
+    navigateToFt4: () -> Unit = {},
+    navigateToLoTWStation: () -> Unit = {},
+    openMapRequest: Int = 0,
+    onOpenMapRequestHandled: () -> Unit = {},
+    mutualViewModel: MutualViewModel,
+    requestedTab: Screen? = null,
+    onRequestedTabHandled: () -> Unit = {}
+) {
+    val backStack = rememberNavBackStack(Screen.Passes)
+    val currentKey = backStack.lastOrNull()
+    val navigateBack: () -> Unit = { backStack.removeLastOrNull() }
+    val navigateToScreen: (Screen) -> Unit = { screen ->
+        while (backStack.size > 1) backStack.removeAt(backStack.size - 1)
+        if (screen !is Screen.Passes) backStack.add(screen)
+    }
+    val navigateToMap: () -> Unit = { navigateToScreen(Screen.Map) }
+    LaunchedEffect(openMapRequest) {
+        if (openMapRequest > 0) {
+            navigateToMap()
+            onOpenMapRequestHandled()
+        }
+    }
+    LaunchedEffect(requestedTab) {
+        requestedTab?.let {
+            navigateToScreen(it)
+            onRequestedTabHandled()
+        }
+    }
+    val fadeTransition = fadeIn(animationSpec = tween(350)) togetherWith fadeOut(animationSpec = tween(350))
+    val context = LocalContext.current
+    val container = (context.applicationContext as IContainerProvider).getMainContainer()
+    val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
+    val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
     // Activity-scoped so the map's award filter survives page switches;
     // resets to VUCC only on cold start (fresh process).
     val mapFilterViewModel: MapFilterViewModel = viewModel(
@@ -338,71 +471,10 @@ fun MainScreen(
             high = otherSettings.highElevation
         )
     ) {
-        if (showMoreSheet) {
-            MoreDestinationsSheet(
-                destinations = moreItems,
-                currentScreen = currentKey as? Screen,
-                currentTool = otherSettings.bottomBarTool,
-                onDismiss = { showMoreSheet = false },
-                onSaveBottomTool = { tool ->
-                    container.settingsRepo.updateOtherSettings {
-                        it.copy(bottomBarTool = BottomBarTool.normalize(tool))
-                    }
-                },
-                onDestinationSelected = { screen ->
-                    showMoreSheet = false
-                    if (screen is Screen.Ft4) {
-                        navigateToFt4()
-                    } else if (currentKey != screen) {
-                        navigateToScreen(screen)
-                    }
-                }
-            )
-        }
-        NavigationSuiteScaffold(
-            navigationSuiteItems = {
-                navItems.forEach { screen ->
-                    val isSelected = when {
-                        currentKey == screen -> true
-                        screen is Screen.More && currentKey is Screen && currentKey in moreItems -> true
-                        screen is Screen.More && showMoreSheet -> true
-                        else -> false
-                    }
-                    item(
-                        icon = { Icon(painterResource(screen.iconResId), stringResource(screen.titleResId)) },
-                        label = {
-                            Text(
-                                text = stringResource(bottomBarLabelRes(screen)),
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center
-                            )
-                        },
-                        selected = isSelected,
-                        onClick = {
-                            if (screen is Screen.More) {
-                                showMoreSheet = true
-                                return@item
-                            }
-                            if (isSelected) return@item
-                            if (screen is Screen.Ft4) {
-                                navigateToFt4()
-                                return@item
-                            }
-                            navigateToScreen(screen)
-                        }
-                    )
-                }
-            },
-            navigationSuiteColors = NavigationSuiteDefaults.colors(
-                navigationRailContainerColor = MaterialTheme.colorScheme.surfaceContainer
-            ),
-            layoutType = when {
-                !hasEnoughHeight() && hasEnoughWidth() -> NavigationSuiteType.NavigationRail
-                !hasEnoughWidth() -> NavigationSuiteType.ShortNavigationBarCompact
-                else -> NavigationSuiteType.ShortNavigationBarMedium
-            }
+        Look4SatNavigationScaffold(
+            selectedScreen = currentKey as? Screen,
+            onSelectScreen = navigateToScreen,
+            navigateToFt4 = navigateToFt4
         ) {
             Column {
                 NavDisplay(

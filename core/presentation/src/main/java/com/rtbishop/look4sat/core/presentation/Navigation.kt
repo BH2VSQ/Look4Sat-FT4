@@ -62,6 +62,15 @@ data object RadarDestination : NavKey
 
 @Serializable
 data object LogbookDestination : NavKey
+/** Radar page opened with a selected common pass and an opposite station. */
+@Serializable
+data class RadarMatchDestination(
+    val stationBGrid: String,
+    val catNum: Int,
+    val aosTime: Long,
+    /** Unique entry key so rematching the same grid/pass creates a fresh radar ViewModel. */
+    val sessionId: Long
+) : NavKey
 
 /** Dedicated map with the AOS–LOS bounds of the pass opened from radar. */
 @Serializable

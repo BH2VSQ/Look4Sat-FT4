@@ -51,3 +51,9 @@ data class TrackSample(
     val azimuthB: Double,
     val elevationB: Double
 )
+
+/** Earliest common pass that has not ended yet (currently active or upcoming). */
+internal fun nextUpcomingMutualPass(passes: List<MutualPass>, nowMs: Long): MutualPass? =
+    passes.asSequence()
+        .filter { it.endTime > nowMs }
+        .minByOrNull { it.startTime }

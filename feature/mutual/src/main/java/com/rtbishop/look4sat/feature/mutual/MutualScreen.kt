@@ -380,7 +380,12 @@ private fun MutualContent(
                 endTime = pass.endTime,
                 maxElev = maxOf(pass.maxElevationA, pass.maxElevationB, 10.0),
                 labelA = stringResource(R.string.mutual_label_you),
-                labelB = stringResource(R.string.mutual_label_opposite)
+                labelB = stringResource(R.string.mutual_label_opposite),
+                stationBGrid = state.stationBGrid.trim().uppercase(),
+                stationBLatitude = com.rtbishop.look4sat.core.domain.utility.qthToPosition(state.stationBGrid)?.latitude
+                    ?: state.stationBLat.toDoubleOrNull(),
+                stationBLongitude = com.rtbishop.look4sat.core.domain.utility.qthToPosition(state.stationBGrid)?.longitude
+                    ?: state.stationBLon.toDoubleOrNull()
             )
             MutualPassCard(
                 pass = pass,
