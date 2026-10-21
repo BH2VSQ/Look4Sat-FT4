@@ -834,6 +834,64 @@ class RadioTrackingServiceTest {
         fixture.close()
     }
 
+    @Test fun voxCanBeSavedAndUsedWithoutValidHiddenRadioConfiguration() = runTest {
+        for (model in RadioControlSettings.SUPPORTED_RADIOS + "old-unknown-model") {
+            val tx = FakeRadioController()
+            val rx = FakeRadioController()
+            val fixture = Fixture(backgroundScope, tx, rx, radioModel = model)
+            val before = fixture.settings.radioControlSettings.value.copy(
+                txRadioAddress = "invalid endpoint", rxRadioAddress = "invalid endpoint",
+                civAddress = 999, baudRate = -1, l4sDopplerStepHz = -1, l4sCorrectionEditStepHz = 0)
+            fixture.settings.radioControlSettings.value = before
+            assertTrue(model, fixture.service.applyRadioControlSettings(before.copy(catTransport = RadioControlSettings.TRANSPORT_VOX)))
+            assertEquals(before.copy(catTransport = RadioControlSettings.TRANSPORT_VOX), fixture.settings.radioControlSettings.value)
+            fixture.service.connectRadios()
+            assertNull(model, fixture.service.state.value.errorMessage)
+            val lease = fixture.service.beginTransmit(fixture.request(120))
+            assertTrue(lease.usesVox)
+            fixture.service.confirmTransmitReady(lease)
+            fixture.service.endTransmit(lease)
+            assertTrue(model, tx.operations.isEmpty())
+            assertTrue(model, rx.operations.isEmpty())
+            fixture.close()
+        }
+    }
+
+    @Test fun savingVoxDoesNotQueryDisconnectedL4sOrRequireItsMenuToClose() = runTest {
+        val remote = remoteFixtureState()
+        val tx = FakeRadioController(remote = remote)
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_QUANSHENG_UVK1, splitMode = true)
+        fixture.service.connectRadios()
+        runCurrent()
+        remote.value = remote.value.copy(connected = false, transmitStateKnown = false, nativeMenuOpen = true)
+        runCurrent()
+        val commandCount = tx.operations.size
+        val settings = fixture.settings.radioControlSettings.value.copy(catTransport = RadioControlSettings.TRANSPORT_VOX)
+        assertTrue(fixture.service.applyRadioControlSettings(settings))
+        assertEquals(settings, fixture.settings.radioControlSettings.value)
+        assertTrue(tx.operations.drop(commandCount).all { it == "disconnect" })
+        assertFalse(fixture.service.state.value.isActive)
+        fixture.close()
+    }
+
+    @Test fun changingToVoxDoesNotInterruptAnActualTransmission() = runTest {
+        val tx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController())
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        val lease = fixture.service.beginTransmit(fixture.request(121))
+        fixture.service.confirmTransmitReady(lease)
+        val before = fixture.settings.radioControlSettings.value
+        val commandCount = tx.operations.size
+        assertFalse(fixture.service.applyRadioControlSettings(before.copy(catTransport = RadioControlSettings.TRANSPORT_VOX)))
+        assertEquals(before, fixture.settings.radioControlSettings.value)
+        assertEquals(commandCount, tx.operations.size)
+        fixture.service.endTransmit(lease)
+        fixture.close()
+    }
+
     @Test
     fun voxLeaseDoesNotRequireRadioOrTrackingAndNeverSendsPtt() = runTest {
         val tx = FakeRadioController()

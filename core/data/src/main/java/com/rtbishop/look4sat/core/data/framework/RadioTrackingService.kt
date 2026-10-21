@@ -181,8 +181,16 @@ class RadioTrackingService(
     override suspend fun applyRadioControlSettings(settings:RadioControlSettings):Boolean=connectionMutex.withLock connection@ {
         var reconnectRequired=false
         val accepted=transmitMutex.withLock edit@ {
-            if(userFrequencyEditingBlocked())return@edit false
-            if(!authorizeFrequencyEdit(settings.l4sCorrectionEditStepHz))return@edit false
+            if (settings.catTransport == RadioControlSettings.TRANSPORT_VOX) {
+                val current = _state.value
+                val remote = txController?.remoteState?.value ?: current.remoteRadio
+                if (hasTransmitClaim || manualJob?.isActive == true ||
+                    current.pttState in setOf(PttState.ARMING, PttState.ON) ||
+                    current.catTransmitting || remote?.txSource?.let { it != 0 } == true) return@edit false
+            } else {
+                if(userFrequencyEditingBlocked())return@edit false
+                if(!authorizeFrequencyEdit(settings.l4sCorrectionEditStepHz))return@edit false
+            }
             val old=settingsRepo.radioControlSettings.value
             reconnectRequired=old.radioModel!=settings.radioModel || old.catTransport!=settings.catTransport ||
                 old.txRadioAddress!=settings.txRadioAddress || old.rxRadioAddress!=settings.rxRadioAddress ||
@@ -235,6 +243,14 @@ class RadioTrackingService(
             catTransmitting=false, catTransmitStateKnown=true) }
 
         val rcSettings = settingsRepo.radioControlSettings.value
+        if (rcSettings.catTransport == RadioControlSettings.TRANSPORT_VOX) {
+            _state.update { it.copy(errorMessage = null, lastCommandError = null,
+                txFrequencyHz = null, rxFrequencyHz = null, txMode = null, rxMode = null,
+                splitMode = false, satelliteMode = false, pttState = PttState.OFF,
+                transmitOwner = RadioTransmitOwner.NONE) }
+            diagnose("connect/vox", "VOX selected; no CAT transport opened")
+            return
+        }
         val txAddr     = rcSettings.txRadioAddress
         val rxAddr     = rcSettings.rxRadioAddress
         val profile    = radioProfile(rcSettings.radioModel, rcSettings.civAddress)
@@ -291,12 +307,6 @@ class RadioTrackingService(
                 remoteRadio = null,
                 transmitOwner = RadioTransmitOwner.NONE
             )
-        }
-
-        if (rcSettings.catTransport == RadioControlSettings.TRANSPORT_VOX) {
-            Log.i(tag, "VOX transport selected; CAT radios are not connected")
-            diagnose("connect/vox", "CAT bypassed for VOX")
-            return
         }
 
         if (rcSettings.catTransport == RadioControlSettings.TRANSPORT_TCP) {

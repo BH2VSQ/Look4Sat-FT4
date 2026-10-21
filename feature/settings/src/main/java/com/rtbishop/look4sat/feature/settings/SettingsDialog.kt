@@ -1401,6 +1401,11 @@ fun RadioControlDialog(
     }
 
     val onAccept = accept@{
+        if (isVox) {
+            onSave(voxControlSettings(initialSettings, enabled.value))
+            onDismiss()
+            return@accept
+        }
         txAddressError.value = false
         rxAddressError.value = false
         civAddressError.value = false
@@ -1501,10 +1506,7 @@ fun RadioControlDialog(
 
             Text(stringResource(R.string.rc_cat_transport), fontWeight = FontWeight.Medium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                RadioControlSettings.SUPPORTED_TRANSPORTS.filter {
-                    if (isN76) it == RadioControlSettings.TRANSPORT_BLUETOOTH
-                    else !(isL4s || isFtx1) || it == RadioControlSettings.TRANSPORT_USB
-                }.forEach { transport ->
+                radioControlTransports(radioModel.value).forEach { transport ->
                     FilterChip(
                         selected = catTransport.value == transport,
                         onClick = {
@@ -1525,7 +1527,7 @@ fun RadioControlDialog(
                             selectingFor.value = ""
                         },
                         label = { Text(transport, fontSize = 12.sp) },
-                        enabled = enabled.value
+                        enabled = enabled.value || transport == RadioControlSettings.TRANSPORT_VOX
                     )
                 }
             }
