@@ -63,5 +63,6 @@ val MIGRATION_QSO_5_6 = object : Migration(5, 6) {
         db.execSQL("ALTER TABLE qso_records ADD COLUMN iota TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE qso_records ADD COLUMN theirFullGrids TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE qso_records ADD COLUMN myFullGrids TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE qso_records ADD COLUMN myIota TEXT NOT NULL DEFAULT ''")
     }
 }
