@@ -18,6 +18,8 @@
  */
 package com.rtbishop.look4sat.core.data.repository
 
+import com.rtbishop.look4sat.core.domain.logbook.toConfirmedRecord
+
 import com.rtbishop.look4sat.core.domain.repository.LoTWResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -165,6 +167,25 @@ class LoTWRepositoryTest {
         val multi = repo.parseConfirmedGridQsos(report(other))!!.getValue("OI71").single()
         assertEquals(listOf("OI71OI", "OI72AK"), multi.theirFineGrids)
         assertEquals("OC-022", multi.iota)
+    }
+
+
+    @Test
+    fun parseQsosKeepsOriginalEightCharLocatorsAndIotaInLogbookBridge() {
+        val adi = "<CALL:6>YB9ABC\n<IOTA:6>OC-022\n<PROP_MODE:3>SAT\n" +
+            "<GRIDSQUARE:8>OI71OI42\n<VUCC_GRIDS:15>PI59PC55,PI79AD\n" +
+            "<MY_GRIDSQUARE:8>OL62TI99\n<MY_VUCC_GRIDS:6>OL61AT\n<EOR>\n"
+        val grid = repo.parseConfirmedGridQsos(report(adi))!!.getValue("OI71").single()
+        assertEquals(listOf("OI71", "PI59", "PI79"), grid.theirGrids)
+        assertEquals(listOf("OI71OI42", "PI59PC55", "PI79AD"), grid.theirFineGrids)
+        assertEquals(setOf("OL62", "OL61"), grid.myGrids)
+        assertEquals(listOf("OL62TI99", "OL61AT"), grid.myFineGrids)
+        assertEquals("OC-022", grid.iota)
+        val log = grid.toConfirmedRecord("BA7OPF")
+        assertEquals("OI71OI42", log.theirGrid)
+        assertEquals("OC-022", log.iota)
+        assertEquals(listOf("OI71OI42", "PI59PC55", "PI79AD"), log.theirFullGrids)
+        assertEquals(listOf("OL62TI99", "OL61AT"), log.myFullGrids)
     }
 
     @Test
