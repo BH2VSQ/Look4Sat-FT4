@@ -122,6 +122,7 @@ fun buildWavelogGridData(records: List<QsoRecord>): WavelogGridData {
             myGrid = myGrids.sorted().firstOrNull(),
             myGrids = myGrids,
             myFineGrids = myLocators.filter { it.length >= 6 }.distinct(),
+            myIota = record.myIota.ifBlank { null },
             myCallsign = record.myCallsign.ifBlank { null },
             theirGrids = theirGrids,
             theirFineGrids = theirFineGrids
