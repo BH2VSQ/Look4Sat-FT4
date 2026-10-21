@@ -57,6 +57,17 @@ class WaipaGridResolverTest {
         assertEquals("AC", lookup("NJ75PN")) // Banda Aceh coast
     }
 
+
+    @Test
+    fun `eight-character locators are resolved at full precision`() {
+        val lookup = resolver()
+        assertEquals("BA", lookup("OI71OI42"))
+        assertEquals("PD", lookup("PI59PC55"))
+        assertEquals("PB", lookup("PI79AD55"))
+        assertNull(lookup("PI59PCZZ"))
+        assertNull(lookup("OI71OI4"))
+    }
+
     @Test
     fun `four-character squares only count when one province covers the whole square`() {
         val lookup = resolver()
