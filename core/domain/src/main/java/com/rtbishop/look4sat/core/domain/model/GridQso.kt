@@ -78,7 +78,11 @@ data class GridQso(
      *  the contact spans several squares; up to four in one QSO). The logbook
      *  shows the set in the QSL slot of a confirmed row; [myGrids] is the
      *  same thing for the user's own side. */
-    val theirGrids: List<String> = emptyList()
+    val theirGrids: List<String> = emptyList(),
+    /** Exact six-character opposite-station grid locators, kept separately
+     * from the existing 4-character VUCC keys. Older cached QSOs lack these;
+     * WAIPA then tries an unambiguous 4-grid or IIHG callsign fallback. */
+    val theirFineGrids: List<String> = emptyList()
 ) {
     /** Short uplink/downlink band label ("U/V", "V/A"), or "" when unknown. */
     val bandLabel: String
