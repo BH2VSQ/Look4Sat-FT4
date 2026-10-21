@@ -112,6 +112,53 @@ class AwardCalculatorTest {
         assertTrue(progress.workedKeys.containsAll(setOf("10", "47")))
     }
 
+
+    @Test
+    fun `waipa counts confirmed Indonesian provinces without duplicates`() {
+        val all = listOf(
+            qso("YB0AAA", dxcc = 327, state = "JK"),
+            qso("YB9ABC", dxcc = 327, state = "ba"),  // lowercase Bali
+            qso("YB9AAA", dxcc = 327, state = " ID-PB "), // ISO-prefixed West Papua
+            qso("YB9BBB", dxcc = 327, state = "PD"),  // Southwest Papua merges into PB
+            qso("YD6BBB", dxcc = 327, state = "AC"),
+            qso("YB0AAA", dxcc = 327, state = "JK"), // same province
+            qso("BG7XYZ", dxcc = 318, state = "JK"), // other DXCC, matching text
+            qso("YB1AAA", dxcc = 327, state = null),
+            qso("YB1BBB", dxcc = 327, state = "XX")
+        )
+        val progress = AwardCalculator.calculate(byGrid(*all.toTypedArray()))
+            .first { it.type == AwardType.WAIPA }
+        assertEquals(37, progress.target)
+        assertEquals(setOf("JK", "BA", "PB", "AC"), progress.workedKeys)
+        assertEquals(4, progress.count)
+    }
+
+    @Test
+    fun `waipa matches Indonesian entity when DXCC is missing but requires STATE`() {
+        assertEquals("YO", AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YB2ABC", state = "YO")))
+        assertEquals("KU", AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("7A7ABC", state = "KU")))
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YD8ABC", state = null)))
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("JH0ABC", dxcc = 339, state = "BA")))
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YB9ABC", dxcc = 291, state = "BA")))
+    }
+
+    @Test
+    fun `waipa region QSO dialog matches worked province and dedupes grids`() {
+        val bali = qso("YB9AAA", dxcc = 327, state = "BA")
+        val java = qso("YB2AAA", dxcc = 327, state = "JT")
+        val store = mapOf(
+            "OI71" to listOf(bali, java),
+            "OI72" to listOf(bali)
+        )
+        assertEquals(listOf(bali), AwardCalculator.regionQsos(store, AwardType.WAIPA, "BA"))
+        assertEquals(emptyList<GridQso>(), AwardCalculator.regionQsos(store, AwardType.WAIPA, "PB"))
+    }
+
     @Test
     fun `waz counts distinct cq zones in range`() {
         val all = listOf(
@@ -142,13 +189,14 @@ class AwardCalculatorTest {
     }
 
     @Test
-    fun `all six awards present with correct targets`() {
+    fun `all seven awards present with correct targets`() {
         val progress = AwardCalculator.calculate(emptyMap())
-        assertEquals(6, progress.size)
+        assertEquals(7, progress.size)
         assertEquals(100, progress.first { it.type == AwardType.DXCC }.target)
         assertEquals(100, progress.first { it.type == AwardType.VUCC }.target)
         assertEquals(34, progress.first { it.type == AwardType.WAPC }.target)
         assertEquals(47, progress.first { it.type == AwardType.WAJA }.target)
+        assertEquals(37, progress.first { it.type == AwardType.WAIPA }.target)
         assertEquals(40, progress.first { it.type == AwardType.WAZ }.target)
         assertEquals(50, progress.first { it.type == AwardType.WAS }.target)
     }
