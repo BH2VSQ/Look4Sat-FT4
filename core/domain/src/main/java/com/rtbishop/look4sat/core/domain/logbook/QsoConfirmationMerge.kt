@@ -190,6 +190,7 @@ fun QsoRecord.withConfirmation(confirmed: QsoRecord): QsoRecord = copy(
     theirFullGrids = (theirFullGrids + confirmed.theirFullGrids).distinct(),
     myFullGrids = (myFullGrids + confirmed.myFullGrids).distinct(),
     iota = confirmed.iota.ifBlank { iota },
+    myIota = confirmed.myIota.ifBlank { myIota },
     myGrid = myGrid.ifBlank { confirmed.myGrid },
     sentReport = sentReport.ifBlank { confirmed.sentReport },
     receivedReport = receivedReport.ifBlank { confirmed.receivedReport },
