@@ -216,6 +216,11 @@ class SettingsRepo(
                             (0 until arr.length()).mapNotNull { index ->
                                 arr.optString(index).takeIf { it.isNotBlank() }
                             }
+                        }.orEmpty(),
+                        myFineGrids = o.optJSONArray("mgf")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { index ->
+                                arr.optString(index).takeIf { it.isNotBlank() }
+                            }
                         }.orEmpty()
                     )
                 }
@@ -250,6 +255,7 @@ class SettingsRepo(
                         .put("mc", q.myCallsign ?: "")
                         .put("sk", q.stationKey ?: "")
                         .put("tg6", org.json.JSONArray(q.theirFineGrids))
+                        .put("mgf", org.json.JSONArray(q.myFineGrids))
                 )
             }
             root.put(grid, array)
