@@ -300,6 +300,7 @@ class LoTWRepository : ILoTWRepository {
                 myGrid = myGrids.firstOrNull(),
                 myGrids = myGrids,
                 myFineGrids = fineMyGridsInRecord.distinct(),
+                myIota = myIota,
                 myCallsign = myCallsign,
                 stationKey = stationKey,
                 // Copy, never the live buffer — resetRecord() clears it.
