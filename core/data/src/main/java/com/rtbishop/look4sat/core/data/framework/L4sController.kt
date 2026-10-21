@@ -91,7 +91,6 @@ class L4sController(
                         }
                         if(isConnected && caps.cwOptions && polls%5==0) request(L4sProtocol.CW_OPTIONS,byteArrayOf(0))
                         if(isConnected && caps.handsetMacros) request(L4sProtocol.MACROS,byteArrayOf(0,-1))
-                        if(isConnected && caps.nativeDiagnostics && polls%15==0) request(L4sProtocol.DIAGNOSTICS)
                     }
                 } catch(cancelled: CancellationException) { throw cancelled }
                 catch(error: Exception) {
@@ -162,18 +161,14 @@ class L4sController(
                 if(response!=null) {
                     if(command!=L4sProtocol.KEEPALIVE) diagnose("l4s/reply","cmd=$label seq=$seq result=${response.result} rxBytes=$receivedBytes")
                     if(command!=L4sProtocol.HELLO) {
-                        if(command in setOf(L4sProtocol.CW_OPTIONS,L4sProtocol.MACROS,L4sProtocol.DIAGNOSTICS) && response.result<=1) {
+                        if(command in setOf(L4sProtocol.CW_OPTIONS,L4sProtocol.MACROS) && response.result<=1) {
                             val valid=when(command) {
                                 L4sProtocol.CW_OPTIONS -> L4sProtocol.cwOptions(response.data)?.also { options ->
                                     state.update {it.copy(nativeCwOptions=options,nativeCwWpm=options.wpm)}
                                 }!=null
-                                L4sProtocol.MACROS -> L4sProtocol.macroStatus(response.data)?.also { status ->
+                                else -> L4sProtocol.macroStatus(response.data)?.also { status ->
                                     if(state.value.handsetMacroStatus?.generation?.let {it!=status.generation}==true || status.busy) {armed=false;requestedPair=null}
                                     state.update {it.copy(handsetMacroStatus=status)}
-                                }!=null
-                                else -> L4sProtocol.diagnostics(response.data)?.also { counters ->
-                                    state.update {it.copy(nativeDiagnostics=counters)}
-                                    diagnose("l4s/native-diagnostics",counters.summary())
                                 }!=null
                             }
                             if(!valid) {state.update {it.copy(error="Malformed L4S extended reply")};return@withLock null}
@@ -290,9 +285,6 @@ class L4sController(
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.QUEUED,
                 com.rtbishop.look4sat.core.domain.repository.CwTransmitState.SENDING))) return@withContext null
         request(L4sProtocol.MACROS,data)?.takeIf {it.result<=1}?.data
-    }
-    override suspend fun refreshNativeDiagnostics(): Boolean = withContext(dispatcher) {
-        isConnected && state.value.capabilities?.nativeDiagnostics==true && ok(request(L4sProtocol.DIAGNOSTICS))
     }
     private fun nativeEditingBlocked() = state.value.let { !it.transmitStateKnown || it.txSource!=0 || it.nativeMenuOpen ||
         it.profileStore?.busy==true || it.handsetMacroStatus?.busy==true || it.cwState in setOf(

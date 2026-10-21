@@ -635,8 +635,6 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="rc_n76_stop_playback">Stop playback</string>
     <string name="rc_n76_stop_recording">Stop recording</string>
     <string name="rc_n76_tx_tone">TX CTCSS</string>
-    <string name="rc_native_diagnostics">Radio diagnostics</string>
-    <string name="rc_native_refresh">Refresh</string>
     <string name="rc_no_paired_devices">No available CAT device was found.</string>
     <string name="rc_paired_devices">Available CAT devices:</string>
     <string name="rc_rx_radio">RX Radio (Downlink)</string>

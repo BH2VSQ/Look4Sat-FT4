@@ -29,15 +29,6 @@ class L4sExtensionsTest {
         assertNull(L4sProtocol.cwOptions(bytes+0))
     }
 
-    @Test fun diagnosticCountersAreUnsignedAndLengthIsStrict() {
-        val p=ByteArray(36);p[0]=1;p[1]=11;p[2]=4;p[3]=6
-        for(index in 0..7)L4sProtocol.put32(p,4+index*4,0xfffffff0L+index)
-        val value=checkNotNull(L4sProtocol.diagnostics(p))
-        assertEquals(0xfffffff0L,value.requests);assertEquals(0xfffffff7L,value.lengthErrors)
-        assertTrue(value.summary().contains("crcErrors="));assertEquals(6,value.rssi)
-        assertNull(L4sProtocol.diagnostics(p.copyOf(35)))
-    }
-
     @Test fun handsetMacroParserHandlesEightSlotsAndBusyStatusWithoutInventingPresets() {
         for(slot in 0..7) {
             val text="F${slot+1} "+"A".repeat(89)

@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,7 +19,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.rtbishop.look4sat.core.domain.repository.NativeCwOptions
-import com.rtbishop.look4sat.core.domain.repository.NativeRadioDiagnostics
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
 import kotlin.math.roundToInt
@@ -53,15 +51,4 @@ private fun CwOptionSlider(label: String, value: Int, range: IntRange, step: Int
     Slider(value=value.toFloat(),valueRange=range.first.toFloat()..range.last.toFloat(),
         steps=((range.last-range.first)/step-1).coerceAtLeast(0),enabled=enabled,
         onValueChange={onChange((range.first+((it-range.first)/step).roundToInt()*step).coerceIn(range.first,range.last))})
-}
-
-@Composable
-internal fun NativeDiagnosticsDialog(value: NativeRadioDiagnostics?,onDismiss: () -> Unit,onRefresh: () -> Unit) {
-    SharedDialog(title=stringResource(R.string.rc_native_diagnostics),onDismissRequest=onDismiss,onCancel=onDismiss) { padding ->
-        Column(Modifier.fillMaxWidth().heightIn(max=(LocalConfiguration.current.screenHeightDp*0.6f).dp)
-            .verticalScroll(rememberScrollState()).padding(padding),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Text(value?.summary()?.replace(" ","\n") ?: "—")
-            OutlinedButton(onClick=onRefresh,modifier=Modifier.fillMaxWidth()) {Text(stringResource(R.string.rc_native_refresh))}
-        }
-    }
 }

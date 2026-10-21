@@ -213,7 +213,6 @@ class SerialRadioController(
     override suspend fun setNativeCwOptions(options: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions) =
         execute { delegate.setNativeCwOptions(options) }
     override suspend fun handsetMacroCommand(data: ByteArray) = execute { delegate.handsetMacroCommand(data) }
-    override suspend fun refreshNativeDiagnostics() = execute { delegate.refreshNativeDiagnostics() }
     override val isConnected: Boolean get() = delegate.isConnected
     override val supportsPttReadback get() = delegate.supportsPttReadback
     override suspend fun readPttState() = execute(operation = delegate::readPttState)

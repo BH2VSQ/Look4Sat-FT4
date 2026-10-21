@@ -137,7 +137,6 @@ sealed interface RadarAction {
     data class SetNativeCwOptions(val options: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions) : RadarAction
     data object SyncHandsetCwPresets : RadarAction
     data object CancelHandsetCwSync : RadarAction
-    data object RefreshNativeDiagnostics : RadarAction
     data object StopRemoteTx : RadarAction
     data class RadioMonitor(val enabled: Boolean) : RadarAction
     data class Recording(val action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) : RadarAction
