@@ -126,8 +126,8 @@ class AwardCalculatorTest {
             qso("YD6BBB", dxcc = 327, state = "AC"),
             qso("YB0AAA", dxcc = 327, state = "JK"), // same province
             qso("BG7XYZ", dxcc = 318, state = "JK"), // other DXCC, matching text
-            qso("YB1AAA", dxcc = 327, state = null),
-            qso("YB1BBB", dxcc = 327, state = "XX")
+            qso("YB7UAA", dxcc = 327, state = null), // ambiguous KI/KU home prefix
+            qso("YB9UAA", dxcc = 327, state = "XX") // ambiguous Papua prefixes
         )
         val progress = AwardCalculator.calculate(byGrid(*all.toTypedArray()))
             .first { it.type == AwardType.WAIPA }
@@ -145,7 +145,7 @@ class AwardCalculatorTest {
         assertEquals("PD", AwardCalculator.awardKey(AwardType.WAIPA,
             qso("YB9XYZ", dxcc = 327, state = "ID-PD")))
         assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
-            qso("YD8ABC", state = null)))
+            qso("YB9UAA", state = null)))
         assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
             qso("JH0ABC", dxcc = 339, state = "BA")))
         assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
