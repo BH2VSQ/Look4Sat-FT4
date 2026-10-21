@@ -87,7 +87,9 @@ data class GridQso(
     val iota: String? = null,
     /** Full-precision MY_GRIDSQUARE / MY_VUCC_GRIDS locators, independent of
      * the 4-char station selection/grid overlay used for VUCC. */
-    val myFineGrids: List<String> = emptyList()
+    val myFineGrids: List<String> = emptyList(),
+    /** Own station's IOTA reference from MY_IOTA, independent of opponent IOTA. */
+    val myIota: String? = null
 ) {
     /** Short uplink/downlink band label ("U/V", "V/A"), or "" when unknown. */
     val bandLabel: String
