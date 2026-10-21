@@ -412,13 +412,14 @@ class QsoRepositoryTest {
             theirGrid = "OI71OI42", myGrid = "OL62TI99",
             theirFullGrids = listOf("OI71OI42", "PI59PC55"),
             myFullGrids = listOf("OL62TI99", "OL61AT"),
-            iota = "OC-022"
+            iota = "OC-022", myIota = "AS-129"
         )
         repository.save(q)
         val stored = dao.getAll().single()
         assertEquals("OI71OI42,PI59PC55", stored.theirFullGrids)
         assertEquals("OL62TI99,OL61AT", stored.myFullGrids)
         assertEquals("OC-022", stored.iota)
+        assertEquals("AS-129", stored.myIota)
         repository.mergeWavelog(listOf(q.copy(
             wavelogStation = "3", theirFullGrids = listOf("PI79AD55")
         )))
@@ -426,6 +427,7 @@ class QsoRepositoryTest {
         assertEquals("OI71OI42,PI59PC55,PI79AD55", merged.theirFullGrids)
         assertEquals("OL62TI99,OL61AT", merged.myFullGrids)
         assertEquals("OC-022", merged.iota)
+        assertEquals("AS-129", merged.myIota)
     }
 
     /** A record as the log page creates it: tracker name, repeater pair, uplink band. */
