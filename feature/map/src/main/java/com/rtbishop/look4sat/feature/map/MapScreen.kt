@@ -434,7 +434,7 @@ private fun MapScreen(
     // Tapped worked grid -> centered QSO dialog. Local UI state: the map is the
     // only consumer and it resets when leaving the page.
     var selectedGrid by remember { mutableStateOf<String?>(null) }
-    // Tapped award region (DXCC/WAPC/WAJA/WAZ/WAS) -> its QSO detail dialog,
+    // Tapped award region (DXCC/WAPC/WAJA/WAIPA/WAZ/WAS) -> its QSO detail dialog,
     // paired with the award type it was tapped under. Local UI state like the
     // grid selection above: the map is the only consumer.
     var selectedRegion by remember { mutableStateOf<Pair<AwardType, AwardRegion>?>(null) }
@@ -484,8 +484,15 @@ private fun MapScreen(
             .flatMap { it.worked.asSequence() }
             .toSet()
     }
-    val awardProgress: List<AwardProgress> = remember(uiState.workedGridQsos, workedGrids, selectedStationIds) {
-        val base = AwardCalculator.calculate(uiState.workedGridQsos)
+    // The same cached WAIPA boundary polygons drive map fill and award
+    // geolocation. Resolves saved QSOs locally, without a new LoTW/Wavelog sync.
+    val waipaGridResolver = remember(mapView.context) {
+        WaipaGridResolver(AwardBoundaryData.load(mapView.context, AwardBoundaryData.AwardAsset.WAIPA))
+    }
+    val awardProgress: List<AwardProgress> = remember(
+        uiState.workedGridQsos, workedGrids, selectedStationIds, waipaGridResolver
+    ) {
+        val base = AwardCalculator.calculate(uiState.workedGridQsos, waipaGridResolver)
         if (selectedStationIds.isEmpty()) base
         else base.map { p ->
             if (p.type == AwardType.VUCC) p.copy(workedKeys = workedGrids, count = workedGrids.size) else p
@@ -509,7 +516,7 @@ private fun MapScreen(
         val receiver = object : org.osmdroid.events.MapEventsReceiver {
             override fun singleTapConfirmedHelper(p: GeoPoint?): Boolean {
                 if (!isGridMode || p == null) return false
-                // Award views (DXCC/WAPC/WAJA/WAZ/WAS): the tap resolves to the
+                // Award views (DXCC/WAPC/WAJA/WAIPA/WAZ/WAS): the tap resolves to the
                 // boundary region under the finger and opens its QSO detail
                 // dialog. No zoom gate here — unlike the grid path below — so
                 // tiny islands stay reachable while zoomed out (Tianditu tiles
@@ -596,7 +603,7 @@ private fun MapScreen(
             TopBar { NextPassRow(pass = uiState.orbitalPass, isUtc = uiState.isUtc) }
         } else if (isGridMode) {
             // Grid mode: replace the satellite-selection top bar with the
-            // award filter chips (All / DXCC / VUCC / WAPC / WAJA / WAZ / WAS).
+            // award filter chips (All / DXCC / VUCC / WAPC / WAJA / WAIPA / WAZ / WAS).
             AwardChipsRow(
                 progress = awardProgress,
                 selected = selectedAward,
@@ -811,8 +818,10 @@ private fun MapScreen(
     // is the GLOBAL one (all 台址) — the non-VUCC awards count and fill the
     // map globally, so their detail lists use the same scope.
     selectedRegion?.let { (type, region) ->
-        val regionQsos = remember(uiState.workedGridQsos, type, region) {
-            AwardCalculator.regionQsos(uiState.workedGridQsos, type, region.code)
+        val regionQsos = remember(uiState.workedGridQsos, type, region, waipaGridResolver) {
+            AwardCalculator.regionQsos(
+                uiState.workedGridQsos, type, region.code, waipaGridResolver
+            )
         }
         RegionQsoDialog(
             type = type,
@@ -980,7 +989,7 @@ private fun WorkedGridQsoDialog(
 
 /**
  * Centered dialog listing the confirmed satellite QSOs counted for a tapped
- * award region (DXCC/WAPC/WAJA/WAZ/WAS). Read-only variant of the worked-grid
+ * award region (DXCC/WAPC/WAJA/WAIPA/WAZ/WAS). Read-only variant of the worked-grid
  * dialog: the header shows the region name + code, and the same expandable
  * callsign rows. Match / station marks are grid-scoped and stay hidden.
  * Dismissed by tapping outside. An unworked region opens with an empty list.
@@ -1940,6 +1949,7 @@ private fun setAwardMode(award: AwardType, workedCodes: Set<String>, mapView: Ma
     val asset = when (award) {
         AwardType.WAPC -> AwardBoundaryData.AwardAsset.WAPC
         AwardType.WAJA -> AwardBoundaryData.AwardAsset.WAJA
+        AwardType.WAIPA -> AwardBoundaryData.AwardAsset.WAIPA
         AwardType.WAZ -> AwardBoundaryData.AwardAsset.WAZ
         AwardType.WAS -> AwardBoundaryData.AwardAsset.WAS
         AwardType.DXCC -> AwardBoundaryData.AwardAsset.DXCC

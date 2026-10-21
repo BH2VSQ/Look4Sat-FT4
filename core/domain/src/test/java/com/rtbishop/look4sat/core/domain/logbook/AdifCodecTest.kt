@@ -59,6 +59,46 @@ class AdifCodecTest {
     }
 
     @Test
+    fun iotaBelongsToOppositeStationAndSurvivesAdifRoundTrip() {
+        val record = QsoRecord(
+            startUtcMillis = 1_700_000_000_000L,
+            theirCallsign = "YB0ABC",
+            myCallsign = "BA7OPF",
+            theirGrid = "OI33KS",
+            satelliteName = "SO-50",
+            iota = "OC-177"
+        )
+        val text = AdifCodec.encode(listOf(record))
+        assertTrue(text.contains("<IOTA:6>OC-177"))
+        val decoded = AdifCodec.decode(text).single()
+        assertEquals("OC-177", decoded.iota)
+        assertEquals("OI33KS", decoded.theirGrid)
+    }
+
+
+    @Test
+    fun preservesEightCharGridsAndIotaWithoutChangingVuccIndex() {
+        val raw = mapOf(
+            "CALL" to "YB9ABC", "QSO_DATE" to "20261021", "TIME_ON" to "1030",
+            "GRIDSQUARE" to "OI71OI42", "VUCC_GRIDS" to "OI71OI42,PI59PC55,PI79AD",
+            "MY_GRIDSQUARE" to "OL62TI99", "MY_VUCC_GRIDS" to "OL62TI99,OL61AT",
+            "IOTA" to "OC-022", "MY_IOTA" to "AS-129", "PROP_MODE" to "SAT"
+        )
+        val q = AdifCodec.decodeRecords(listOf(raw)).single()
+        assertEquals(listOf("OI71", "PI59", "PI79"), q.theirVuccGrids)
+        assertEquals(listOf("OI71OI42", "PI59PC55", "PI79AD"), q.theirFullGrids)
+        assertEquals(listOf("OL62TI99", "OL61AT"), q.myFullGrids)
+        assertEquals("OC-022", q.iota)
+        assertEquals("AS-129", q.myIota)
+        val back = AdifCodec.decode(AdifCodec.encode(listOf(q))).single()
+        assertEquals(q.theirFullGrids, back.theirFullGrids)
+        assertEquals(q.myFullGrids, back.myFullGrids)
+        assertEquals(q.iota, back.iota)
+        assertEquals(q.myIota, back.myIota)
+        assertEquals(q.theirVuccGrids, back.theirVuccGrids)
+    }
+
+    @Test
     fun decode_lotwStyleReportFields() {
         // LoTW report subset: lowercase eor, alphabetical fields. The un-prefixed
         // grid fields belong to the OPPOSITE station, MY_* fields to the operator.

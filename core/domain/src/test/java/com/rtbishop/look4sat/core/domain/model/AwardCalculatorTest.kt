@@ -28,10 +28,13 @@ class AwardCalculatorTest {
         dxcc: Int? = null,
         cqz: Int? = null,
         state: String? = null,
-        grid: String = "OL62"
+        grid: String = "OL62",
+        fineGrids: List<String> = emptyList(),
+        iota: String? = null
     ) = GridQso(
         call = call, epochMs = 0L, satName = "SO-50", mode = "FM",
-        bandUp = "70CM", bandDown = "2M", dxcc = dxcc, cqz = cqz, state = state
+        bandUp = "70CM", bandDown = "2M", dxcc = dxcc, cqz = cqz, state = state,
+        theirFineGrids = fineGrids, iota = iota
     )
 
     private fun byGrid(vararg qsos: GridQso) =
@@ -112,6 +115,150 @@ class AwardCalculatorTest {
         assertTrue(progress.workedKeys.containsAll(setOf("10", "47")))
     }
 
+
+    @Test
+    fun `waipa counts confirmed Indonesian provinces without duplicates`() {
+        val all = listOf(
+            qso("YB0AAA", dxcc = 327, state = "JK"),
+            qso("YB9ABC", dxcc = 327, state = "ba"),  // lowercase Bali
+            qso("YB9AAA", dxcc = 327, state = " ID-PB "), // ISO-prefixed West Papua
+            qso("YB9BBB", dxcc = 327, state = "PD"),  // Southwest Papua is distinct from PB
+            qso("YD6BBB", dxcc = 327, state = "AC"),
+            qso("YB0AAA", dxcc = 327, state = "JK"), // same province
+            qso("BG7XYZ", dxcc = 318, state = "JK"), // other DXCC, matching text
+            qso("YB7UAA", dxcc = 327, state = null), // ambiguous KI/KU home prefix
+            qso("YB9UAA", dxcc = 327, state = "XX") // ambiguous Papua prefixes
+        )
+        val progress = AwardCalculator.calculate(byGrid(*all.toTypedArray()))
+            .first { it.type == AwardType.WAIPA }
+        assertEquals(38, progress.target)
+        assertEquals(setOf("JK", "BA", "PB", "PD", "AC"), progress.workedKeys)
+        assertEquals(5, progress.count)
+    }
+
+    @Test
+    fun `waipa matches Indonesian entity and rejects foreign explicit DXCC`() {
+        assertEquals("YO", AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YB2ABC", state = "YO")))
+        assertEquals("KU", AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("7A7ABC", state = "KU")))
+        assertEquals("PD", AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YB9XYZ", dxcc = 327, state = "ID-PD")))
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YB9UAA", state = null)))
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("JH0ABC", dxcc = 339, state = "BA")))
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YB9ABC", dxcc = 291, state = "BA")))
+    }
+
+    @Test
+    fun `waipa region QSO dialog matches worked province and dedupes grids`() {
+        val bali = qso("YB9AAA", dxcc = 327, state = "BA")
+        val java = qso("YB2AAA", dxcc = 327, state = "JT")
+        val store = mapOf(
+            "OI71" to listOf(bali, java),
+            "OI72" to listOf(bali)
+        )
+        assertEquals(listOf(bali), AwardCalculator.regionQsos(store, AwardType.WAIPA, "BA"))
+        assertEquals(emptyList<GridQso>(), AwardCalculator.regionQsos(store, AwardType.WAIPA, "PB"))
+    }
+
+    @Test
+    fun `waipa identifies province from 6-digit grid before home callsign and IOTA`() {
+        val locations = mapOf("PI59PC" to "PD", "OI71OI" to "BA")
+        val resolver: (String) -> String? = { locations[it] }
+        val rover = qso("YB0ABC", dxcc = 327, fineGrids = listOf("PI59PC"), iota = "OC-022")
+        assertEquals("PD", AwardCalculator.awardKey(AwardType.WAIPA, rover, resolver))
+        val worked = mapOf("PI59" to listOf(rover))
+        assertEquals(setOf("PD"), AwardCalculator.calculate(worked, resolver)
+            .first { it.type == AwardType.WAIPA }.workedKeys)
+        assertEquals(listOf(rover),
+            AwardCalculator.regionQsos(worked, AwardType.WAIPA, "PD", resolver))
+        assertTrue(AwardCalculator.regionQsos(worked, AwardType.WAIPA, "BA", resolver).isEmpty())
+    }
+
+    @Test
+    fun `waipa uses explicit STATE before geographic and IOTA hints`() {
+        val q = qso("YB0ABC", dxcc = 327, state = "ID-JK",
+            fineGrids = listOf("PI59PC"), iota = "OC-022")
+        assertEquals("JK", AwardCalculator.awardKey(AwardType.WAIPA, q, { "PD" }))
+    }
+
+    @Test
+    fun `waipa uses IOTA for small islands without usable STATE or grid`() {
+        val island = qso("YB7XYZ", dxcc = 327, iota = " oc-177 ")
+        assertEquals("JK", AwardCalculator.awardKey(AwardType.WAIPA, island))
+        assertEquals("JI", WaipaIotaLookup.province("oc-197"))
+        assertEquals("KR", WaipaIotaLookup.province("OC-108"))
+        assertEquals("AC", WaipaIotaLookup.province("OC-270"))
+        assertEquals(null, WaipaIotaLookup.province("OC-021")) // multi-province Java
+        assertEquals(null, WaipaIotaLookup.province("OC-034")) // multi-province Papua
+        assertEquals(null, WaipaIotaLookup.province("OC-088")) // multi-province Borneo
+        assertEquals(null, WaipaIotaLookup.province("OC-999"))
+    }
+
+    @Test
+    fun `waipa does not credit conflicting fine-grid provinces or foreign entity`() {
+        val resolver: (String) -> String? = {
+            when (it) { "PI59PC" -> "PD"; "PI79AD" -> "PB"; else -> null }
+        }
+        val conflict = qso("YB9XYZ", dxcc = 327,
+            fineGrids = listOf("PI59PC", "PI79AD"), iota = "OC-022")
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA, conflict, resolver))
+        val notIndonesian = qso("YB0ABC", dxcc = 291, iota = "OC-177")
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA, notIndonesian, resolver))
+    }
+
+    @Test
+    fun `waipa uses unique coarse grid and unambiguous IIHG home prefix as fallback`() {
+        val coarse = qso("YB0ABC", dxcc = 327)
+        assertEquals("KT", AwardCalculator.awardKey(
+            AwardType.WAIPA, coarse, { if (it == "OK57") "KT" else null }, "OK57"
+        ))
+        assertEquals("JK", AwardCalculator.awardKey(AwardType.WAIPA, coarse))
+        assertEquals(null, WaipaCallsignLookup.province("YB7UAA")) // KI/KU overlap
+        assertEquals(null, WaipaCallsignLookup.province("YB9UAA")) // four Papua regions
+        assertEquals(null, WaipaCallsignLookup.province("YB0ABC/P"))
+        assertEquals(null, WaipaCallsignLookup.province("7A7ABC"))
+    }
+
+    @Test
+    fun `waipa trusts PI59 operating geography over YE9RAS West Papua home allocation`() {
+        val station = qso("YE9RAS", dxcc = 327)
+        // The IIHG prefix/suffix home allocation puts YE9RAS in PB, but the
+        // actual QSO's PI59 operating locator has Indonesian land only in PD.
+        assertEquals("PB", WaipaCallsignLookup.province("YE9RAS"))
+        val provinceForGrid: (String) -> String? = { if (it == "PI59") "PD" else null }
+        assertEquals("PD", AwardCalculator.awardKey(
+            AwardType.WAIPA, station, provinceForGrid, workedGrid = "PI59"
+        ))
+        val store = mapOf("PI59" to listOf(station))
+        assertEquals(setOf("PD"), AwardCalculator.calculate(store, provinceForGrid)
+            .first { it.type == AwardType.WAIPA }.workedKeys)
+        assertEquals(listOf(station), AwardCalculator.regionQsos(
+            store, AwardType.WAIPA, "PD", provinceForGrid
+        ))
+    }
+
+    @Test
+    fun `waipa multi-grid QSO does not credit two provinces across a border`() {
+        val q = qso("YB7UAA", dxcc = 327)
+        val store = mapOf("OK57" to listOf(q), "OI71" to listOf(q))
+        val province: (String) -> String? = {
+            when (it) { "OK57" -> "KT"; "OI71" -> "BA"; else -> null }
+        }
+        val progress = AwardCalculator.calculate(store, province)
+            .first { it.type == AwardType.WAIPA }
+        assertEquals(0, progress.count)
+        assertTrue(AwardCalculator.regionQsos(store, AwardType.WAIPA, "KT", province).isEmpty())
+        assertTrue(AwardCalculator.regionQsos(store, AwardType.WAIPA, "BA", province).isEmpty())
+        val withIota = q.copy(iota = "OC-177")
+        val iotaStore = mapOf("OK57" to listOf(withIota), "OI71" to listOf(withIota))
+        assertEquals(setOf("JK"), AwardCalculator.calculate(iotaStore, province)
+            .first { it.type == AwardType.WAIPA }.workedKeys)
+    }
+
     @Test
     fun `waz counts distinct cq zones in range`() {
         val all = listOf(
@@ -142,13 +289,14 @@ class AwardCalculatorTest {
     }
 
     @Test
-    fun `all six awards present with correct targets`() {
+    fun `all seven awards present with correct targets`() {
         val progress = AwardCalculator.calculate(emptyMap())
-        assertEquals(6, progress.size)
+        assertEquals(7, progress.size)
         assertEquals(100, progress.first { it.type == AwardType.DXCC }.target)
         assertEquals(100, progress.first { it.type == AwardType.VUCC }.target)
         assertEquals(34, progress.first { it.type == AwardType.WAPC }.target)
         assertEquals(47, progress.first { it.type == AwardType.WAJA }.target)
+        assertEquals(38, progress.first { it.type == AwardType.WAIPA }.target)
         assertEquals(40, progress.first { it.type == AwardType.WAZ }.target)
         assertEquals(50, progress.first { it.type == AwardType.WAS }.target)
     }

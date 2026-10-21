@@ -160,6 +160,35 @@ class WavelogSyncTest {
     }
 
     @Test
+    fun wavelogConfirmedGridCarriesFineLocatorAndIotaForWaipa() {
+        val rec = record(start = 2_000L, theirGrid = "PI59PC")
+            .copy(theirCallsign = "YB9XYZ", dxcc = 327, iota = "OC-177")
+        val data = buildWavelogGridData(listOf(rec))
+        val qso = data.gridQsos.getValue("PI59").single()
+        assertEquals(listOf("PI59PC"), qso.theirFineGrids)
+        assertEquals("OC-177", qso.iota)
+        assertEquals(327, qso.dxcc)
+    }
+
+
+    @Test
+    fun wavelogMapRetainsFullLocatorsAndIotaIndependentlyOfVuccKeys() {
+        val imported = record(start = 1_000L, theirGrid = "OI71OI42")
+            .copy(
+                theirFullGrids = listOf("OI71OI42", "PI59PC55", "PI79AD"),
+                myFullGrids = listOf("OL62TI99", "OL61AT"),
+                theirVuccGrids = listOf("OI71", "PI59", "PI79"),
+                iota = "OC-022"
+            )
+        val data = buildWavelogGridData(listOf(imported))
+        val q = data.gridQsos.getValue("OI71").single()
+        assertEquals(setOf("OI71", "PI59", "PI79"), data.grids)
+        assertEquals(listOf("OI71OI42", "PI59PC55", "PI79AD"), q.theirFineGrids)
+        assertEquals(listOf("OL62TI99", "OL61AT"), q.myFineGrids)
+        assertEquals("OC-022", q.iota)
+    }
+
+    @Test
     fun gridDataSkipsUnconfirmedContactsButKeepsTheRoamedGrid() {
         val data = buildWavelogGridData(
             listOf(

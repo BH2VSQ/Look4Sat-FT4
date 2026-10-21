@@ -78,7 +78,18 @@ data class GridQso(
      *  the contact spans several squares; up to four in one QSO). The logbook
      *  shows the set in the QSL slot of a confirmed row; [myGrids] is the
      *  same thing for the user's own side. */
-    val theirGrids: List<String> = emptyList()
+    val theirGrids: List<String> = emptyList(),
+    /** Opposite-station locators with all available precision (6/8 chars),
+     * never truncated for persistence. Four-character VUCC grouping remains
+     * in theirGrids and the map keys. */
+    val theirFineGrids: List<String> = emptyList(),
+    /** IOTA reference of the other station, e.g. OC-177, when reported. */
+    val iota: String? = null,
+    /** Full-precision MY_GRIDSQUARE / MY_VUCC_GRIDS locators, independent of
+     * the 4-char station selection/grid overlay used for VUCC. */
+    val myFineGrids: List<String> = emptyList(),
+    /** Own station's IOTA reference from MY_IOTA, independent of opponent IOTA. */
+    val myIota: String? = null
 ) {
     /** Short uplink/downlink band label ("U/V", "V/A"), or "" when unknown. */
     val bandLabel: String

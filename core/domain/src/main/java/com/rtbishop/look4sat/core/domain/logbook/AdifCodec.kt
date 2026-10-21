@@ -45,14 +45,17 @@ object AdifCodec {
             // The OPPOSITE station's multi-grid set (2+ grids: a grid line or corner).
             // A single grid is carried by GRIDSQUARE; one value inside the VUCC field
             // makes Wavelog flag the record in its QSO view.
-            if (record.theirVuccGrids.size > 1) {
-                appendOptional("VUCC_GRIDS", record.theirVuccGrids.joinToString(","))
+            // Prefer complete original locators when available, not VUCC's 4-char index.
+            val theirExportGrids = record.theirFullGrids.ifEmpty { record.theirVuccGrids }
+            if (theirExportGrids.size > 1) {
+                appendOptional("VUCC_GRIDS", theirExportGrids.joinToString(","))
             }
             appendOptional("MY_GRIDSQUARE", record.myGrid)
             // The grid set this qso went out under (own operated grids, stamped at
             // upload). ADIF's MY_VUCC_GRIDS is its home — not VUCC_GRIDS, which belongs
             // to the opposite station and drives Wavelog's grid/distance/QRB display.
-            appendOptional("MY_VUCC_GRIDS", record.vuccGrids.joinToString(","))
+            appendOptional("MY_VUCC_GRIDS",
+                record.myFullGrids.ifEmpty { record.vuccGrids }.joinToString(","))
             appendOptional("RST_SENT", record.sentReport)
             appendOptional("RST_RCVD", record.receivedReport)
             record.txFrequencyHz?.let { append(field("FREQ", hzToMhz(it))) }
@@ -69,6 +72,8 @@ object AdifCodec {
             appendOptional("COUNTRY", record.country)
             record.cqZone?.let { append(field("CQZ", it.toString())) }
             appendOptional("STATE", record.region)
+            appendOptional("IOTA", record.iota)
+            appendOptional("MY_IOTA", record.myIota)
             appendOptional("COMMENT", record.comment)
             appendOptional("APP_LOOK4SAT_TRANSPONDER", record.transponderName)
             record.passAosUtcMillis?.let { append(field("APP_LOOK4SAT_PASS_AOS", it.toString())) }
@@ -100,7 +105,9 @@ object AdifCodec {
             myCallsign = values["STATION_CALLSIGN"].orEmpty().uppercase(Locale.US),
             theirGrid = theirGrid,
             theirVuccGrids = theirVuccGrids,
+            theirFullGrids = decodeFullGridSet(values["GRIDSQUARE"], values["VUCC_GRIDS"]),
             myGrid = values["MY_GRIDSQUARE"].orEmpty().uppercase(Locale.US),
+            myFullGrids = decodeFullGridSet(values["MY_GRIDSQUARE"], values["MY_VUCC_GRIDS"]),
             vuccGrids = decodeGridSet(values["MY_GRIDSQUARE"], values["MY_VUCC_GRIDS"]),
             sentReport = values["RST_SENT"].orEmpty(),
             receivedReport = values["RST_RCVD"].orEmpty(),
@@ -127,6 +134,8 @@ object AdifCodec {
             country = values["COUNTRY"].orEmpty(),
             cqZone = values["CQZ"]?.toIntOrNull()?.takeIf { it in 1..40 },
             region = values["STATE"].orEmpty().substringBefore(" // ").trim().uppercase(Locale.US),
+            iota = values["IOTA"].orEmpty().trim().uppercase(Locale.US),
+            myIota = values["MY_IOTA"].orEmpty().trim().uppercase(Locale.US),
             comment = values["COMMENT"].orEmpty()
         )
     }
@@ -167,7 +176,11 @@ object AdifCodec {
         .filter { it.matches(gridPattern) }
         .distinct()
 
-    /** Merge the primary locator into a multi-grid field's complete VUCC square set. */
+    /** Keep each source grid at original 4/6/8-character precision. */
+    private fun decodeFullGridSet(primary: String?, multi: String?): List<String> =
+        (decodeGrids(primary) + decodeGrids(multi)).distinct()
+
+    /** Derive the legacy 4-char VUCC index without changing source locators. */
     private fun decodeGridSet(primary: String?, multi: String?): List<String> {
         // Single-grid records keep the legacy empty list and full locator precision.
         if (multi.isNullOrBlank()) return emptyList()
