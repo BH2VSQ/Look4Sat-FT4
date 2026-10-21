@@ -148,20 +148,20 @@ class LoTWRepositoryTest {
 
     @Test
     fun parseQsosKeepsFineGridAndOppositeIotaForWaipa() {
-        val sat = "<CALL:6>YB0ABC\\n" +
-            "<IOTA:6>OC-177\\n" +
-            "<GRIDSQUARE:6>OI33KS\\n" +
-            "<PROP_MODE:3>SAT\\n" +
-            "<DXCC:3>327\\n" +
-            "<EOR>\\n"
+        val sat = "<CALL:6>YB0ABC\n" +
+            "<IOTA:6>OC-177\n" +
+            "<GRIDSQUARE:6>OI33KS\n" +
+            "<PROP_MODE:3>SAT\n" +
+            "<DXCC:3>327\n" +
+            "<EOR>\n"
         val qso = repo.parseConfirmedGridQsos(report(sat))!!.getValue("OI33").single()
         assertEquals(listOf("OI33KS"), qso.theirFineGrids)
         assertEquals("OC-177", qso.iota)
         assertEquals(327, qso.dxcc)
-        val other = "<CALL:6>YB9XYZ\\n" +
-            "<IOTA:6>OC-022\\n" +
-            "<VUCC_GRIDS:13>OI71oi,OI72ak\\n" +
-            "<PROP_MODE:3>SAT\\n<EOR>\\n"
+        val other = "<CALL:6>YB9XYZ\n" +
+            "<IOTA:6>OC-022\n" +
+            "<VUCC_GRIDS:13>OI71oi,OI72ak\n" +
+            "<PROP_MODE:3>SAT\n<EOR>\n"
         val multi = repo.parseConfirmedGridQsos(report(other))!!.getValue("OI71").single()
         assertEquals(listOf("OI71OI", "OI72AK"), multi.theirFineGrids)
         assertEquals("OC-022", multi.iota)
