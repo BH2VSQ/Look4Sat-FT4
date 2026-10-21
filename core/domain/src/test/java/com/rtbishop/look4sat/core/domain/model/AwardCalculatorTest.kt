@@ -28,10 +28,13 @@ class AwardCalculatorTest {
         dxcc: Int? = null,
         cqz: Int? = null,
         state: String? = null,
-        grid: String = "OL62"
+        grid: String = "OL62",
+        fineGrids: List<String> = emptyList(),
+        iota: String? = null
     ) = GridQso(
         call = call, epochMs = 0L, satName = "SO-50", mode = "FM",
-        bandUp = "70CM", bandDown = "2M", dxcc = dxcc, cqz = cqz, state = state
+        bandUp = "70CM", bandDown = "2M", dxcc = dxcc, cqz = cqz, state = state,
+        theirFineGrids = fineGrids, iota = iota
     )
 
     private fun byGrid(vararg qsos: GridQso) =
@@ -134,7 +137,7 @@ class AwardCalculatorTest {
     }
 
     @Test
-    fun `waipa matches Indonesian entity when DXCC is missing but requires STATE`() {
+    fun `waipa matches Indonesian entity and rejects foreign explicit DXCC`() {
         assertEquals("YO", AwardCalculator.awardKey(AwardType.WAIPA,
             qso("YB2ABC", state = "YO")))
         assertEquals("KU", AwardCalculator.awardKey(AwardType.WAIPA,
@@ -159,6 +162,65 @@ class AwardCalculatorTest {
         )
         assertEquals(listOf(bali), AwardCalculator.regionQsos(store, AwardType.WAIPA, "BA"))
         assertEquals(emptyList<GridQso>(), AwardCalculator.regionQsos(store, AwardType.WAIPA, "PB"))
+    }
+
+    @Test
+    fun `waipa identifies province from 6-digit grid before home callsign and IOTA`() {
+        val locations = mapOf("PI59PC" to "PD", "OI71OI" to "BA")
+        val resolver: (String) -> String? = { locations[it] }
+        val rover = qso("YB0ABC", dxcc = 327, fineGrids = listOf("PI59PC"), iota = "OC-022")
+        assertEquals("PD", AwardCalculator.awardKey(AwardType.WAIPA, rover, resolver))
+        val worked = mapOf("PI59" to listOf(rover))
+        assertEquals(setOf("PD"), AwardCalculator.calculate(worked, resolver)
+            .first { it.type == AwardType.WAIPA }.workedKeys)
+        assertEquals(listOf(rover),
+            AwardCalculator.regionQsos(worked, AwardType.WAIPA, "PD", resolver))
+        assertTrue(AwardCalculator.regionQsos(worked, AwardType.WAIPA, "BA", resolver).isEmpty())
+    }
+
+    @Test
+    fun `waipa uses explicit STATE before geographic and IOTA hints`() {
+        val q = qso("YB0ABC", dxcc = 327, state = "ID-JK",
+            fineGrids = listOf("PI59PC"), iota = "OC-022")
+        assertEquals("JK", AwardCalculator.awardKey(AwardType.WAIPA, q, { "PD" }))
+    }
+
+    @Test
+    fun `waipa uses IOTA for small islands without usable STATE or grid`() {
+        val island = qso("YB7XYZ", dxcc = 327, iota = " oc-177 ")
+        assertEquals("JK", AwardCalculator.awardKey(AwardType.WAIPA, island))
+        assertEquals("JI", WaipaIotaLookup.province("oc-197"))
+        assertEquals("KR", WaipaIotaLookup.province("OC-108"))
+        assertEquals("AC", WaipaIotaLookup.province("OC-270"))
+        assertEquals(null, WaipaIotaLookup.province("OC-021")) // multi-province Java
+        assertEquals(null, WaipaIotaLookup.province("OC-034")) // multi-province Papua
+        assertEquals(null, WaipaIotaLookup.province("OC-088")) // multi-province Borneo
+        assertEquals(null, WaipaIotaLookup.province("OC-999"))
+    }
+
+    @Test
+    fun `waipa does not credit conflicting fine-grid provinces or foreign entity`() {
+        val resolver: (String) -> String? = {
+            when (it) { "PI59PC" -> "PD"; "PI79AD" -> "PB"; else -> null }
+        }
+        val conflict = qso("YB9XYZ", dxcc = 327,
+            fineGrids = listOf("PI59PC", "PI79AD"), iota = "OC-022")
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA, conflict, resolver))
+        val notIndonesian = qso("YB0ABC", dxcc = 291, iota = "OC-177")
+        assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA, notIndonesian, resolver))
+    }
+
+    @Test
+    fun `waipa uses unique coarse grid and unambiguous IIHG home prefix as fallback`() {
+        val coarse = qso("YB0ABC", dxcc = 327)
+        assertEquals("KT", AwardCalculator.awardKey(
+            AwardType.WAIPA, coarse, { if (it == "OK57") "KT" else null }, "OK57"
+        ))
+        assertEquals("JK", AwardCalculator.awardKey(AwardType.WAIPA, coarse))
+        assertEquals(null, WaipaCallsignLookup.province("YB7UAA")) // KI/KU overlap
+        assertEquals(null, WaipaCallsignLookup.province("YB9UAA")) // four Papua regions
+        assertEquals(null, WaipaCallsignLookup.province("YB0ABC/P"))
+        assertEquals(null, WaipaCallsignLookup.province("7A7ABC"))
     }
 
     @Test
