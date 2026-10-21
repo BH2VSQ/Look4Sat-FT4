@@ -201,6 +201,11 @@ object AwardCalculator {
             if (provinces.size == 1) return provinces.first()
         }
 
+        // IOTA island-group information can locate an island that is absent
+        // from simplified map polygons, or disambiguate a large 4-char grid.
+        // Shared-across-provinces IOTA groups deliberately have no mapping.
+        WaipaIotaLookup.province(q.iota)?.let { return it }
+
         // The map cache historically retained only 4 characters. Use those
         // only when *the whole square* resolves to a single province.
         val coarseGrid = workedGrid ?: q.theirGrids.firstOrNull()
