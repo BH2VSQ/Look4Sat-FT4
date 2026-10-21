@@ -276,6 +276,7 @@ class LoTWRepository : ILoTWRepository {
         var myIota: String? = null
         var myCountry: String? = null
         val gridsInRecord = mutableListOf<String>()
+        val fineGridsInRecord = mutableListOf<String>()
 
         fun emitRecord() {
             if (propMode != "SAT" || gridsInRecord.isEmpty()) return
@@ -298,7 +299,8 @@ class LoTWRepository : ILoTWRepository {
                 myCallsign = myCallsign,
                 stationKey = stationKey,
                 // Copy, never the live buffer — resetRecord() clears it.
-                theirGrids = gridsInRecord.distinct().toList()
+                theirGrids = gridsInRecord.distinct().toList(),
+                theirFineGrids = fineGridsInRecord.distinct().toList()
             )
             for (grid in gridsInRecord) {
                 result.getOrPut(grid) { mutableListOf() }.add(qso)
@@ -313,6 +315,7 @@ class LoTWRepository : ILoTWRepository {
             myCallsign = null; myDxcc = null; myState = null
             myCq = null; myItu = null; myIota = null; myCountry = null
             gridsInRecord.clear()
+            fineGridsInRecord.clear()
         }
 
         for (raw in body.lineSequence()) {
@@ -389,7 +392,12 @@ class LoTWRepository : ILoTWRepository {
                     // several squares; split and keep every 4-char field.
                     adifValue(line).split(',').forEach { grid ->
                         val field = grid.trim().uppercase()
-                        if (field.length >= 4) gridsInRecord.add(field.take(4))
+                        if (field.length >= 4) {
+                            gridsInRecord.add(field.take(4))
+                            // Retain exact 6-char position for WAIPA boundaries;
+                            // VUCC and the map store remain 4-char grouped.
+                            if (field.length >= 6) fineGridsInRecord.add(field.take(6))
+                        }
                     }
                 }
             }
