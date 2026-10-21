@@ -263,6 +263,7 @@ class LoTWRepository : ILoTWRepository {
         var country: String? = null
         var cqz: Int? = null
         var state: String? = null
+        var iota: String? = null
         // Own-station (台址) fields: MY_GRIDSQUARE + MY_VUCC_GRIDS give the
         // full grid set of the station location; the remaining MY_* fields
         // together identify the station location (one callsign can own
@@ -294,6 +295,7 @@ class LoTWRepository : ILoTWRepository {
                 call = call, epochMs = epochMs, satName = satName,
                 mode = mode, bandUp = bandUp, bandDown = bandDown,
                 dxcc = dxcc, country = country, cqz = cqz, state = state,
+                iota = iota,
                 myGrid = myGrids.firstOrNull(),
                 myGrids = myGrids,
                 myCallsign = myCallsign,
@@ -310,7 +312,7 @@ class LoTWRepository : ILoTWRepository {
         fun resetRecord() {
             propMode = null; call = ""; qsoDate = ""; timeOn = ""
             satName = ""; mode = ""; bandUp = ""; bandDown = ""
-            dxcc = null; country = null; cqz = null; state = null
+            dxcc = null; country = null; cqz = null; state = null; iota = null
             myGrids = mutableSetOf()
             myCallsign = null; myDxcc = null; myState = null
             myCq = null; myItu = null; myIota = null; myCountry = null
@@ -349,6 +351,8 @@ class LoTWRepository : ILoTWRepository {
                     cqz = adifValue(line).toIntOrNull()
                 line.startsWith("<STATE:") ->
                     state = adifValue(line).trim().ifBlank { null }?.let { normalizeState(it) }
+                line.startsWith("<IOTA:") ->
+                    iota = adifValue(line).trim().uppercase().ifBlank { null }
                 line.startsWith("<MY_GRIDSQUARE:") -> {
                     // Own-station grid (must not be confused with GRIDSQUARE —
                     // the opposite station's grid). Recorded per QSO so awards
