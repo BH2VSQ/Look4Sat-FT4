@@ -57,5 +57,6 @@ data class QsoEntity(
     @ColumnInfo(defaultValue = "''") val comment: String = "",
     @ColumnInfo(defaultValue = "''") val iota: String = "",
     @ColumnInfo(defaultValue = "''") val theirFullGrids: String = "",
-    @ColumnInfo(defaultValue = "''") val myFullGrids: String = ""
+    @ColumnInfo(defaultValue = "''") val myFullGrids: String = "",
+    @ColumnInfo(defaultValue = "''") val myIota: String = ""
 )
