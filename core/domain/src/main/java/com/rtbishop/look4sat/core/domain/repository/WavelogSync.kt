@@ -92,10 +92,12 @@ fun buildWavelogGridData(records: List<QsoRecord>): WavelogGridData {
     records.forEach { record ->
         val isSatellite = record.satelliteName.isNotBlank() || record.propagationMode.equals("SAT", true)
         if (!isSatellite) return@forEach
-        val theirGrids = (listOf(record.theirGrid) + record.theirVuccGrids)
-            .map { it.trim().uppercase(Locale.US).take(4) }
-            .filter(::isValidGrid4)
-            .distinct()
+        val theirLocators = (listOf(record.theirGrid) + record.theirVuccGrids)
+            .map { it.trim().uppercase(Locale.US) }
+            .filter { it.length >= 4 && isValidGrid4(it.take(4)) }
+        val theirGrids = theirLocators.map { it.take(4) }.distinct()
+        val theirFineGrids = theirLocators.filter { it.length >= 6 }
+            .map { it.take(6) }.distinct()
         if (theirGrids.isEmpty()) return@forEach
         val myGrids = (listOf(record.myGrid) + record.vuccGrids)
             .map { it.trim().uppercase(Locale.US).take(4) }
@@ -117,7 +119,8 @@ fun buildWavelogGridData(records: List<QsoRecord>): WavelogGridData {
             myGrid = myGrids.sorted().firstOrNull(),
             myGrids = myGrids,
             myCallsign = record.myCallsign.ifBlank { null },
-            theirGrids = theirGrids
+            theirGrids = theirGrids,
+            theirFineGrids = theirFineGrids
         )
         theirGrids.forEach { grid ->
             grids += grid
