@@ -405,6 +405,29 @@ class QsoRepositoryTest {
         assertEquals(1, dao.getAll().size)
     }
 
+
+    @Test
+    fun savingAndMergingDoesNotLoseFullGridsOrIota() = runBlocking {
+        val q = loggedInApp("SO-50", lotwUploaded = false).copy(
+            theirGrid = "OI71OI42", myGrid = "OL62TI99",
+            theirFullGrids = listOf("OI71OI42", "PI59PC55"),
+            myFullGrids = listOf("OL62TI99", "OL61AT"),
+            iota = "OC-022"
+        )
+        repository.save(q)
+        val stored = dao.getAll().single()
+        assertEquals("OI71OI42,PI59PC55", stored.theirFullGrids)
+        assertEquals("OL62TI99,OL61AT", stored.myFullGrids)
+        assertEquals("OC-022", stored.iota)
+        repository.mergeWavelog(listOf(q.copy(
+            wavelogStation = "3", theirFullGrids = listOf("PI79AD55")
+        )))
+        val merged = dao.getAll().single()
+        assertEquals("OI71OI42,PI59PC55,PI79AD55", merged.theirFullGrids)
+        assertEquals("OL62TI99,OL61AT", merged.myFullGrids)
+        assertEquals("OC-022", merged.iota)
+    }
+
     /** A record as the log page creates it: tracker name, repeater pair, uplink band. */
     private fun loggedInApp(satelliteName: String, lotwUploaded: Boolean) = QsoRecord(
         startUtcMillis = qsoStart,
