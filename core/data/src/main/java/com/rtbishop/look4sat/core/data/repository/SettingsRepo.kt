@@ -197,6 +197,7 @@ class SettingsRepo(
                         cqz = o.optInt("cq", 0).takeIf { it > 0 },
                         state = o.optString("st").ifBlank { null },
                         iota = o.optString("io").ifBlank { null },
+                        myIota = o.optString("mio").ifBlank { null },
                         // Own-grid field: absent in pre-myGrid data -> null.
                         myGrid = o.optString("mg").ifBlank { null },
                         // Multi-grid 台址 fields (v4.4.7-ba7opf.16+): "mgs" is
@@ -250,6 +251,7 @@ class SettingsRepo(
                         .put("cq", q.cqz ?: 0)
                         .put("st", q.state ?: "")
                         .put("io", q.iota ?: "")
+                        .put("mio", q.myIota ?: "")
                         .put("mg", q.myGrid ?: "")
                         .put("mgs", org.json.JSONArray(q.myGrids.sorted()))
                         .put("mc", q.myCallsign ?: "")
