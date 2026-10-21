@@ -119,7 +119,7 @@ class AwardCalculatorTest {
             qso("YB0AAA", dxcc = 327, state = "JK"),
             qso("YB9ABC", dxcc = 327, state = "ba"),  // lowercase Bali
             qso("YB9AAA", dxcc = 327, state = " ID-PB "), // ISO-prefixed West Papua
-            qso("YB9BBB", dxcc = 327, state = "PD"),  // Southwest Papua merges into PB
+            qso("YB9BBB", dxcc = 327, state = "PD"),  // Southwest Papua is distinct from PB
             qso("YD6BBB", dxcc = 327, state = "AC"),
             qso("YB0AAA", dxcc = 327, state = "JK"), // same province
             qso("BG7XYZ", dxcc = 318, state = "JK"), // other DXCC, matching text
@@ -128,9 +128,9 @@ class AwardCalculatorTest {
         )
         val progress = AwardCalculator.calculate(byGrid(*all.toTypedArray()))
             .first { it.type == AwardType.WAIPA }
-        assertEquals(37, progress.target)
-        assertEquals(setOf("JK", "BA", "PB", "AC"), progress.workedKeys)
-        assertEquals(4, progress.count)
+        assertEquals(38, progress.target)
+        assertEquals(setOf("JK", "BA", "PB", "PD", "AC"), progress.workedKeys)
+        assertEquals(5, progress.count)
     }
 
     @Test
@@ -139,6 +139,8 @@ class AwardCalculatorTest {
             qso("YB2ABC", state = "YO")))
         assertEquals("KU", AwardCalculator.awardKey(AwardType.WAIPA,
             qso("7A7ABC", state = "KU")))
+        assertEquals("PD", AwardCalculator.awardKey(AwardType.WAIPA,
+            qso("YB9XYZ", dxcc = 327, state = "ID-PD")))
         assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
             qso("YD8ABC", state = null)))
         assertEquals(null, AwardCalculator.awardKey(AwardType.WAIPA,
@@ -196,7 +198,7 @@ class AwardCalculatorTest {
         assertEquals(100, progress.first { it.type == AwardType.VUCC }.target)
         assertEquals(34, progress.first { it.type == AwardType.WAPC }.target)
         assertEquals(47, progress.first { it.type == AwardType.WAJA }.target)
-        assertEquals(37, progress.first { it.type == AwardType.WAIPA }.target)
+        assertEquals(38, progress.first { it.type == AwardType.WAIPA }.target)
         assertEquals(40, progress.first { it.type == AwardType.WAZ }.target)
         assertEquals(50, progress.first { it.type == AwardType.WAS }.target)
     }
