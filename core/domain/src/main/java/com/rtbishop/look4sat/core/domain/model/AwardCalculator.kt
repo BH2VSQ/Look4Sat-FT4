@@ -57,7 +57,8 @@ object AwardTargets {
  *  - WAPC: distinct Chinese provinces (31 mainland STATE codes) plus the
  *    Hong Kong / Macao / Taiwan entities (counted as their own provinces).
  *  - WAJA: distinct Japanese prefectures (STATE code "01".."47").
- *  - WAIPA: 38 Indonesian provinces (app counts confirmed satellite QSOs).
+ *  - WAIPA: 38 provinces. STATE first, 6-grid/unique 4-grid geography next,
+ *    and IIHG prefix/suffix allocation only as a conservative last resort.
  *  - WAZ: distinct CQ zones.
  *  - WAS: distinct US states (STATE abbreviations).
  *
@@ -66,7 +67,10 @@ object AwardTargets {
  */
 object AwardCalculator {
 
-    fun calculate(qsosByGrid: Map<String, List<GridQso>>): List<AwardProgress> {
+    fun calculate(
+        qsosByGrid: Map<String, List<GridQso>>,
+        waipaProvinceForGrid: (String) -> String? = { null }
+    ): List<AwardProgress> {
         val all = qsosByGrid.values.flatten()
         return listOf(
             AwardProgress(
@@ -78,7 +82,7 @@ object AwardCalculator {
             calculateDxcc(all),
             calculateWapc(all),
             calculateWaja(all),
-            calculateWaipa(all),
+            calculateWaipa(qsosByGrid, waipaProvinceForGrid),
             calculateWaz(all),
             calculateWas(all)
         )
@@ -95,14 +99,19 @@ object AwardCalculator {
      * map's region-detail dialogs, so a tapped region lists exactly the QSOs
      * that light it up.
      */
-    fun awardKey(type: AwardType, q: GridQso): String? = when (type) {
+    fun awardKey(
+        type: AwardType,
+        q: GridQso,
+        waipaProvinceForGrid: (String) -> String? = { null },
+        workedGrid: String? = null
+    ): String? = when (type) {
         AwardType.DXCC -> (q.dxcc ?: prefixEntityCode(q.call))?.toString()
         AwardType.WAPC -> wapcKey(q)
         AwardType.WAJA -> if (entityOf(q) == Entity.JAPAN) {
             q.state?.trim()?.takeIf { it.length == 2 && it.all(Char::isDigit) }
         } else null
 
-        AwardType.WAIPA -> waipaKey(q)
+        AwardType.WAIPA -> waipaKey(q, waipaProvinceForGrid, workedGrid)
         AwardType.WAZ -> q.cqz?.takeIf { it in 1..40 }?.toString()
         AwardType.WAS -> if (entityOf(q) == Entity.USA) {
             q.state?.trim()?.uppercase()?.takeIf { it in US_STATES }
@@ -121,12 +130,12 @@ object AwardCalculator {
     fun regionQsos(
         qsosByGrid: Map<String, List<GridQso>>,
         type: AwardType,
-        code: String
+        code: String,
+        waipaProvinceForGrid: (String) -> String? = { null }
     ): List<GridQso> =
-        qsosByGrid.values.flatten()
-            .filter { awardKey(type, it) == code }
-            .distinct()
-            .sortedBy { it.epochMs }
+        qsosByGrid.flatMap { (grid, qsos) ->
+            qsos.filter { awardKey(type, it, waipaProvinceForGrid, grid) == code }
+        }.distinct().sortedBy { it.epochMs }
 
     private fun wapcKey(q: GridQso): String? = when (entityOf(q)) {
         Entity.CHINA -> q.state?.trim()?.uppercase()?.takeIf { it in CN_STATES }
@@ -151,17 +160,56 @@ object AwardCalculator {
         return AwardProgress(AwardType.WAJA, keys, keys.size, AwardTargets.WAJA)
     }
 
-    private fun calculateWaipa(all: List<GridQso>): AwardProgress {
-        val keys = all.mapNotNull { awardKey(AwardType.WAIPA, it) }.toSet()
+    private fun calculateWaipa(
+        byGrid: Map<String, List<GridQso>>,
+        provinceForGrid: (String) -> String?
+    ): AwardProgress {
+        val keys = byGrid.asSequence().flatMap { (grid, qsos) ->
+            qsos.asSequence().mapNotNull { waipaKey(it, provinceForGrid, grid) }
+        }.toSet()
         return AwardProgress(AwardType.WAIPA, keys, keys.size, AwardTargets.WAIPA)
     }
 
-    /** STATE must be present; a callsign prefix alone cannot locate a province. */
-    private fun waipaKey(q: GridQso): String? {
+    /**
+     * One province for a confirmed Indonesian satellite QSO.
+     *
+     * Explicit STATE wins. On LoTW (which often omits Indonesia STATE), use the
+     * transmitted 6-character locator(s), then a conservative 4-character
+     * province lookup for old cached QSOs, then IIHG callsign allocation.
+     * Multiple *different* 6-grid provinces are ambiguous and never credited.
+     * Calling this with no geographic resolver still supports STATE and IIHG.
+     */
+    private fun waipaKey(
+        q: GridQso,
+        provinceForGrid: (String) -> String?,
+        workedGrid: String? = null
+    ): String? {
+        // A different explicit DXCC must never receive Indonesian credits,
+        // even when the operator has an Indonesian-looking callsign.
+        if (q.dxcc != null && q.dxcc != 327) return null
         if (entityOf(q) != Entity.INDONESIA) return null
-        val state = q.state?.trim()?.uppercase()?.removePrefix("ID-") ?: return null
-        // PD (Southwest Papua) and PB (West Papua) are distinct provinces.
-        return state.takeIf { it in ID_PROVINCES }
+
+        val state = q.state?.trim()?.uppercase()?.removePrefix("ID-")
+        if (state in ID_PROVINCES) return state
+
+        val fineLocators = q.theirFineGrids.asSequence()
+            .map { it.trim().uppercase().take(6) }
+            .filter { it.length == 6 }.distinct().toList()
+        if (fineLocators.isNotEmpty()) {
+            val provinces = fineLocators.mapNotNull(provinceForGrid).toSet()
+            if (provinces.size > 1) return null
+            if (provinces.size == 1) return provinces.first()
+        }
+
+        // The map cache historically retained only 4 characters. Use those
+        // only when *the whole square* resolves to a single province.
+        val coarseGrid = workedGrid ?: q.theirGrids.firstOrNull()
+        val coarseProvince = coarseGrid?.let(provinceForGrid)
+        if (coarseProvince in ID_PROVINCES) return coarseProvince
+
+        // IIHG allocation describes a callsign's home province, not its
+        // operating position: usable only for non-portable, unambiguous calls.
+        return WaipaCallsignLookup.province(q.call)
     }
 
     private fun calculateWaz(all: List<GridQso>): AwardProgress {
