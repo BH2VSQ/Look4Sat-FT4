@@ -210,7 +210,12 @@ class SettingsRepo(
                             ?: o.optString("mg").ifBlank { null }?.let { setOf(it) }
                             ?: emptySet(),
                         myCallsign = o.optString("mc").ifBlank { null },
-                        stationKey = o.optString("sk").ifBlank { null }
+                        stationKey = o.optString("sk").ifBlank { null },
+                        theirFineGrids = o.optJSONArray("tg6")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { index ->
+                                arr.optString(index).takeIf { it.isNotBlank() }
+                            }
+                        }.orEmpty()
                     )
                 }
                 if (list.isNotEmpty()) result[grid] = list
@@ -242,6 +247,7 @@ class SettingsRepo(
                         .put("mgs", org.json.JSONArray(q.myGrids.sorted()))
                         .put("mc", q.myCallsign ?: "")
                         .put("sk", q.stationKey ?: "")
+                        .put("tg6", org.json.JSONArray(q.theirFineGrids))
                 )
             }
             root.put(grid, array)
