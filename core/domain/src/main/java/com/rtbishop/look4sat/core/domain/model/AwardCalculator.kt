@@ -214,8 +214,8 @@ object AwardCalculator {
         if (state != null && state in ID_PROVINCES) return state
 
         val fineLocators = q.theirFineGrids.asSequence()
-            .map { it.trim().uppercase().take(6) }
-            .filter { it.length == 6 }.distinct().toList()
+            .map { it.trim().uppercase() }
+            .filter { it.length >= 6 }.distinct().toList()
         if (fineLocators.isNotEmpty()) {
             val provinces = fineLocators.mapNotNull(provinceForGrid).toSet()
             if (provinces.size > 1) return null
