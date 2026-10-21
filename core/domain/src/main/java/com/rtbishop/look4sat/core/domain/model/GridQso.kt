@@ -82,7 +82,9 @@ data class GridQso(
     /** Exact six-character opposite-station grid locators, kept separately
      * from the existing 4-character VUCC keys. Older cached QSOs lack these;
      * WAIPA then tries an unambiguous 4-grid or IIHG callsign fallback. */
-    val theirFineGrids: List<String> = emptyList()
+    val theirFineGrids: List<String> = emptyList(),
+    /** IOTA reference of the other station, e.g. OC-177, when reported. */
+    val iota: String? = null
 ) {
     /** Short uplink/downlink band label ("U/V", "V/A"), or "" when unknown. */
     val bandLabel: String
