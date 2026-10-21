@@ -16,7 +16,7 @@ import java.util.Locale
  * map overlay. A QSO's Maidenhead locator represents its operating position,
  * unlike an Indonesian home callsign prefix.
  *
- * 6-char locators identify a small cell: sample its center and neighbouring
+ * 6/8-char locators identify a small cell: sample its center and neighbouring
  * points, refusing province crossings. For legacy 4-char-only cached QSOs,
  * credit a province only when ALL samples agree; otherwise the award logic
  * can fall back to the conservative IIHG callsign allocation table.
@@ -60,7 +60,7 @@ internal class WaipaGridResolver(regions: List<AwardRegion>) : (String) -> Strin
     }
 
     private fun decode(grid: String): GridCell? {
-        if (grid.length != 4 && grid.length != 6) return null
+        if (grid.length !in setOf(4, 6, 8)) return null
         if (grid[0] !in 'A'..'R' || grid[1] !in 'A'..'R' ||
             grid[2] !in '0'..'9' || grid[3] !in '0'..'9'
         ) return null
@@ -70,7 +70,11 @@ internal class WaipaGridResolver(regions: List<AwardRegion>) : (String) -> Strin
         if (grid[4] !in 'A'..'X' || grid[5] !in 'A'..'X') return null
         lon += (grid[4] - 'A') / 12.0
         lat += (grid[5] - 'A') / 24.0
-        return GridCell(lon, lat, 1.0 / 12.0, 1.0 / 24.0, precise = true)
+        if (grid.length == 6) return GridCell(lon, lat, 1.0 / 12.0, 1.0 / 24.0, precise = true)
+        if (grid[6] !in '0'..'9' || grid[7] !in '0'..'9') return null
+        lon += (grid[6] - '0') / 120.0
+        lat += (grid[7] - '0') / 240.0
+        return GridCell(lon, lat, 1.0 / 120.0, 1.0 / 240.0, precise = true)
     }
 
     private fun province(cell: GridCell): String? {
