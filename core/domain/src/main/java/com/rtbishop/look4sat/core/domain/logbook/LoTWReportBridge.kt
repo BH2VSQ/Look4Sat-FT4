@@ -20,16 +20,24 @@ package com.rtbishop.look4sat.core.domain.logbook
 
 import com.rtbishop.look4sat.core.domain.model.GridQso
 
-/** Bridge a LoTW report QSO (confirmed, download side) into a logbook record
- *  so the logbook can show downloaded confirmations and mark local uploads
- *  as confirmed (matched by [sameConfirmedContact]). */
+/**
+ * Reconstruct the complete Maidenhead set from map-QSO fine locators plus
+ * 4-grid fallback. A 4-char VUCC index alone is not a source-data substitute.
+ */
+private fun completeGrids(coarse: Collection<String>, fine: List<String>): List<String> =
+    (fine + coarse.filter { grid -> fine.none { it.take(4) == grid.take(4) } }).distinct()
+
+/** Bridge a LoTW confirmed QSO into the logbook without losing any full
+ *  opposite/own locators or the IOTA reference. */
+
 fun GridQso.toConfirmedRecord(accountCallsign: String): QsoRecord = QsoRecord(
     startUtcMillis = epochMs,
     theirCallsign = call,
     myCallsign = accountCallsign.trim().uppercase(),
-    theirGrid = theirGrids.firstOrNull().orEmpty(),
+    theirGrid = completeGrids(theirGrids, theirFineGrids).firstOrNull().orEmpty(),
     theirVuccGrids = theirGrids,
-    myGrid = (myGrids.firstOrNull() ?: myGrid).orEmpty(),
+    myGrid = completeGrids(myGrids.ifEmpty { listOfNotNull(myGrid).toSet() }, myFineGrids)
+        .firstOrNull().orEmpty(),
     vuccGrids = myGrids.toList(),
     band = bandUp,
     rxBand = bandDown,
@@ -44,5 +52,8 @@ fun GridQso.toConfirmedRecord(accountCallsign: String): QsoRecord = QsoRecord(
     dxcc = dxcc,
     country = country.orEmpty(),
     cqZone = cqz,
-    region = state.orEmpty()
+    region = state.orEmpty(),
+    iota = iota.orEmpty(),
+    theirFullGrids = completeGrids(theirGrids, theirFineGrids),
+    myFullGrids = completeGrids(myGrids.ifEmpty { listOfNotNull(myGrid).toSet() }, myFineGrids)
 )
