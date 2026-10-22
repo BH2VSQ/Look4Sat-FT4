@@ -85,21 +85,26 @@ class LoTWKeyMaterialTest {
         assertEquals("BA7OPF", material.info.callsign)
     }
 
-    /** A nonempty password must never bypass the PKCS#12 MAC using null. */
+    /** A nonempty input must never bypass the PKCS#12 MAC using null. */
     @Test
-    fun protectedPasswordDoesNotTryNullLoad() {
+    fun nonemptyPasswordDoesNotTryNullLoad() {
         val attemptedNull = mutableListOf<Boolean>()
-        LoTWKeyMaterial.read(
-            bytes = fixture("test_tqsl_empty.p12"),
-            password = charArrayOf(),
-            now = now,
-            platformStore = { data, pass ->
-                attemptedNull += (pass == null)
-                KeyStore.getInstance("PKCS12").apply {
-                    data.inputStream().use { load(it, pass) }
-                }
-            },
-        )
+        val error = assertThrows(LoTWOperationException::class.java) {
+            LoTWKeyMaterial.read(
+                bytes = fixture("test_tqsl_empty.p12"),
+                password = "wrong-password".toCharArray(),
+                now = now,
+                platformStore = { data, pass ->
+                    attemptedNull += (pass == null)
+                    runCatching {
+                        KeyStore.getInstance("PKCS12").apply {
+                            data.inputStream().use { load(it, pass) }
+                        }
+                    }.getOrNull()
+                },
+            )
+        }
+        assertEquals(LoTWProblem.CERTIFICATE_PASSWORD, error.reason)
         assertEquals(listOf(false), attemptedNull)
     }
 
