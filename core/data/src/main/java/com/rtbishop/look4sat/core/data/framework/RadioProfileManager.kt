@@ -37,9 +37,11 @@ internal class RadioProfileManager(
             mutable.update {it.copy(status=status,canCancel=status.busy && status.phase<7 && status.transaction==ownedTransaction && status.kind==ownedKind)}
         }
     }
-    private fun radio():IRadioController=checkNotNull(controller()?.takeIf {
-        it.isConnected && it.remoteState?.value?.capabilities?.transactionalProfileStore==true
-    }) {"Connect an alpha7 L4S radio to manage profiles"}
+    private fun radio():IRadioController {
+        val radio=checkNotNull(controller()?.takeIf {it.isConnected}) {"Connect the radio before managing profiles"}
+        check(radio.remoteState?.value?.capabilities?.transactionalProfileStore==true) {"The connected radio does not support profile management"}
+        return radio
+    }
     private suspend fun status(radio:IRadioController):RadioProfileStoreStatus {
         check(controller()===radio && radio.isConnected){"Radio disconnected; operation cancelled"}
         val data=checkNotNull(radio.profileStoreCommand(byteArrayOf(0))){"Cannot read radio profile status"}

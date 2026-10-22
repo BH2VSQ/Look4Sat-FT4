@@ -858,7 +858,8 @@ class RadioTrackingService(
             var staged=false
             try {
                 check(radio.remoteState?.value?.capabilities?.handsetMacros==true) {"Upgrade the handset firmware to sync CW presets"}
-                HandsetMacroSync.stage(presets,(java.security.SecureRandom().nextInt().toLong() and 0xffffffffL).coerceAtLeast(1)) { data ->
+                HandsetMacroSync.stage(presets,(java.security.SecureRandom().nextInt().toLong() and 0xffffffffL).coerceAtLeast(1),
+                    radio.remoteState?.value?.capabilities?.handsetMacroSlots ?: 8) { data ->
                     transmitMutex.withLock {
                         check(txController===radio && radio.isConnected && !hasTransmitClaim && _state.value.pttState==PttState.OFF &&
                             radio.remoteState?.value?.let {it.transmitStateKnown && it.txSource==0}==true) {"Radio is busy or disconnected"}
@@ -875,11 +876,14 @@ class RadioTrackingService(
                     check(saved?.text==presets[index]) {"CW preset readback failed for F${index+1}"}
                 }
                 staged=false
-                diagnose("l4s/macros","Eight handset CW presets saved and verified")
+                diagnose("l4s/macros","Four handset CW presets saved and verified")
             } catch(cancelled:CancellationException) {throw cancelled}
             catch(error:Exception) {failTrackingCommand(error.message ?: "CW preset synchronization failed")}
             finally {
-                if(staged) withContext(NonCancellable) {if(txController===radio && radio.isConnected)radio.handsetMacroCommand(byteArrayOf(4))}
+                if(staged) withContext(NonCancellable) {
+                    if(txController===radio && radio.isConnected && !HandsetMacroSync.cancel(radio::handsetMacroCommand))
+                        diagnose("l4s/macros/cancel","Preset cleanup failed or timed out",ControlDiagnosticSeverity.WARNING)
+                }
                 tuningRevision.incrementAndGet();tuningWake.trySend(Unit)
             }
         }
@@ -887,7 +891,10 @@ class RadioTrackingService(
 
     override fun cancelHandsetCwSync() {
         macroSyncJob?.cancel()
-        appScope.launch {txController?.handsetMacroCommand(byteArrayOf(4))}
+        appScope.launch {txController?.let { radio ->
+            if (!HandsetMacroSync.cancel(radio::handsetMacroCommand))
+                failTrackingCommand("Could not cancel handset preset synchronization")
+        }}
     }
 
     override fun cancelRemoteTransmit() {

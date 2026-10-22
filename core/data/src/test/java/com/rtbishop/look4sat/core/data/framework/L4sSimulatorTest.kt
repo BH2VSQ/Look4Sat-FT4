@@ -26,6 +26,11 @@ class L4sSimulatorTest {
             assertTrue(radio.connect())
             assertTrue(radio.remoteState.value.capabilities!!.satelliteProfiles)
             assertTrue(radio.remoteState.value.capabilities!!.transactionalProfileStore)
+            assertEquals(4,radio.remoteState.value.capabilities!!.handsetMacroSlots)
+            val profileStatus=checkNotNull(radio.profileStoreCommand(byteArrayOf(0))?.let(L4sProtocol::storeStatus))
+            assertEquals(56,profileStatus.capacity)
+            for(slot in 0..55) assertEquals(88,checkNotNull(radio.profileStoreCommand(byteArrayOf(1,slot.toByte()))).size)
+            assertTrue(radio.remoteState.value.capabilities!!.transactionalProfileStore)
             val store=checkNotNull(radio.profileStoreCommand(byteArrayOf(0)))
             assertEquals(23,store.size);assertFalse(checkNotNull(L4sProtocol.storeStatus(store)).busy)
             assertEquals(88,checkNotNull(radio.profileStoreCommand(byteArrayOf(1,0))).size)
@@ -37,7 +42,8 @@ class L4sSimulatorTest {
             val options=com.rtbishop.look4sat.core.domain.repository.NativeCwOptions(25,70,4,45,3,12)
             assertTrue(radio.setNativeCwOptions(options))
             assertEquals(options.copy(modified=true),radio.remoteState.value.nativeCwOptions)
-            val staged=HandsetMacroSync.stage(List(8){"CQ F${it+1}"},123) {radio.handsetMacroCommand(it)}
+            val staged=HandsetMacroSync.stage(List(4){"CQ F${it+1}"},123,
+                radio.remoteState.value.capabilities!!.handsetMacroSlots) {radio.handsetMacroCommand(it)}
             assertTrue(staged.waitingForConfirmation)
             assertFalse(radio.pttOn())
             assertEquals(FrequencyPairResult.HELD,radio.setTrackingFrequencies(435101000,145901000))

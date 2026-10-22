@@ -10,7 +10,7 @@ internal fun readRemoteCwPresets(preferences: SharedPreferences): List<String> =
     }
 
 internal fun writeRemoteCwPreset(preferences: SharedPreferences,index: Int,text: String) {
-    require(index in 0..7)
+    require(index in CwTransmitPresets.defaults.indices)
     val value=CwTransmitPresets.normalize(text)
     preferences.edit {putString("remoteCwPreset$index",value)}
 }

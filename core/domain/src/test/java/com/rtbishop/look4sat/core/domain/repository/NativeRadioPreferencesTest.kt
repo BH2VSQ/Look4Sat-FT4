@@ -26,8 +26,8 @@ class NativeRadioPreferencesTest {
         assertThrows(IllegalArgumentException::class.java) {l4sTrackingTarget(1,-500,250)}
         assertThrows(IllegalArgumentException::class.java) {l4sTrackingTarget(0xfffffffaL,0,10000)}
     }
-    @Test fun allEightCwPresetsSupportSafeEditingClearingAndNormalization() {
-        assertEquals(8,CwTransmitPresets.defaults.size)
+    @Test fun allFourCwPresetsSupportSafeEditingClearingAndNormalization() {
+        assertEquals(4,CwTransmitPresets.defaults.size)
         CwTransmitPresets.defaults.forEach {assertEquals(it,CwTransmitPresets.normalize(it))}
         assertEquals("CQ DE BA7OPF K",CwTransmitPresets.normalize(" cq  de ba7opf k "))
         assertEquals("",CwTransmitPresets.normalize("  "))
