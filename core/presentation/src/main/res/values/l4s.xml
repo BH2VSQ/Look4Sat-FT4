@@ -6,7 +6,7 @@
     <string name="rc_l4s_firmware">L4S firmware: %1$s</string>
     <string name="rc_l4s_hold">Hold PTT (radio mic)</string>
     <string name="rc_l4s_stop">Stop TX</string>
-    <string name="rc_l4s_cw">CW text</string>
+    <string name="rc_l4s_cw">CW console</string>
     <string name="rc_l4s_frozen">TX/RX Doppler held until transmission ends</string>
     <string name="rc_l4s_linear">Linear transponders use native CW. SSB transmission is not supported.</string>
     <string name="rc_l4s_target">Target TX %1$s · RX %2$s</string>
@@ -32,7 +32,7 @@
     <string name="rc_l4s_step_hint">Default 250 Hz; 10–10000 Hz in multiples of 10. Both frequencies remain held during TX.</string>
     <string name="rc_l4s_bases">Base TX %1$s · RX %2$s</string>
     <string name="rc_l4s_corrections">Correction TX %1$d Hz · RX %2$d Hz · Step %3$d Hz</string>
-    <string name="rc_l4s_presets_hint">Tap F1–F8 to fill the message; hold to edit. Press Send to transmit.</string>
+    <string name="rc_l4s_presets_hint">Tap F1–F4 to fill the message; hold to edit. Press Send to transmit.</string>
     <string name="rc_l4s_edit_preset">Edit F%1$d preset</string>
     <string name="rc_l4s_preset_save_hint">Saved on this phone. Empty text clears this preset; editing never transmits.</string>
 </resources>

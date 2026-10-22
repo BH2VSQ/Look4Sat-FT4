@@ -62,12 +62,13 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.keepScreenOn
@@ -85,7 +86,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
-import com.rtbishop.look4sat.core.domain.audio.IAudioHub
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.MutualPassData
@@ -208,6 +208,13 @@ fun RadarDestination(
     val viewModel: RadarViewModel = viewModel(factory = RadarViewModel.factory(container))
     val logViewModel: LogViewModel = viewModel(factory = LogViewModel.factory(container))
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val cwDecoder = rememberRadarCwDecoder(uiState.cw, container.audioHub, viewModel::onAction) {
+        viewModel.onAction(RadarAction.LeaveCwSession)
+        logViewModel.clearPassDraft()
+    }
+    LaunchedEffect(uiState.currentPass?.catNum, uiState.currentPass?.aosTime) {
+        uiState.currentPass?.let { logViewModel.selectPass(it.catNum, it.aosTime) }
+    }
     val mutualData by container.mutualPassData.collectAsStateWithLifecycle()
     val navigateUpAndClearMutual = {
         if (container.mutualPassData.value.endTime > 0L) {
@@ -268,22 +275,26 @@ fun RadarDestination(
         if (grids.isNotEmpty()) container.setPendingLoTWStationGrid(grids.joinToString(","))
         onOpenLoTWStation()
     }
-    RadarScreen(
-        uiState,
-        viewModel::onAction,
-        navigateUpAndClearMutual,
-        navigateToMapAndClearMutual,
-        mutualData,
-        container.audioHub,
-        connectRadios,
-        logViewModel,
-        requestMicPermission = {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        },
-        onFixGrid = openLoTWStationForGridFix,
-        onOpenPassMap = onOpenPassMap,
-        onStartMatch = onStartMatch
-    )
+    CompositionLocalProvider(LocalRadarCwDecoder provides cwDecoder, LocalCwConsoleVisible provides uiState.cwConsole.visible) {
+        RadarScreen(
+            uiState,
+            viewModel::onAction,
+            navigateUpAndClearMutual,
+            navigateToMapAndClearMutual,
+            mutualData,
+            connectRadios,
+            logViewModel,
+            requestMicPermission = {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            },
+            onFixGrid = openLoTWStationForGridFix,
+            onOpenPassMap = onOpenPassMap,
+            onStartMatch = onStartMatch
+        )
+        if (uiState.cwConsole.visible) CwConsole(uiState, logViewModel, viewModel::onAction,
+            requestMicPermission = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+            onFixGrid = openLoTWStationForGridFix)
+    }
 }
 
 @Composable
@@ -293,7 +304,6 @@ private fun RadarScreen(
     navigateUp: () -> Unit,
     navigateToMap: () -> Unit,
     mutualData: MutualPassData,
-    audioHub: IAudioHub,
     connectRadios: () -> Unit,
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
@@ -419,7 +429,6 @@ private fun RadarScreen(
                         trackB = trackB,
                         trackBPosition = trackBPosition,
                         onAction = onAction,
-                        audioHub = audioHub,
                         connectRadios = connectRadios,
                         logViewModel = logViewModel,
                         requestMicPermission = requestMicPermission,
@@ -431,7 +440,6 @@ private fun RadarScreen(
                     PagerCard(
                         uiState,
                         onAction,
-                        audioHub,
                         connectRadios,
                         logViewModel,
                         requestMicPermission,
@@ -445,7 +453,6 @@ private fun RadarScreen(
                     PagerCard(
                         uiState,
                         onAction,
-                        audioHub,
                         connectRadios,
                         logViewModel,
                         requestMicPermission,
@@ -652,7 +659,6 @@ private fun RadarFillArea(
     trackB: List<OrbitalPos>,
     trackBPosition: OrbitalPos?,
     onAction: (RadarAction) -> Unit,
-    audioHub: IAudioHub,
     connectRadios: () -> Unit,
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
@@ -673,7 +679,6 @@ private fun RadarFillArea(
                 PagerCard(
                     uiState,
                     onAction,
-                    audioHub,
                     connectRadios,
                     logViewModel,
                     requestMicPermission,
@@ -687,7 +692,6 @@ private fun RadarFillArea(
                 CompactPagerOverlay(
                     uiState = uiState,
                     onAction = onAction,
-                    audioHub = audioHub,
                     connectRadios = connectRadios,
                     logViewModel = logViewModel,
                     requestMicPermission = requestMicPermission,
@@ -709,7 +713,6 @@ private fun RadarFillArea(
 private fun CompactPagerOverlay(
     uiState: RadarState,
     onAction: (RadarAction) -> Unit,
-    audioHub: IAudioHub,
     connectRadios: () -> Unit,
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
@@ -752,7 +755,6 @@ private fun CompactPagerOverlay(
         PagerCard(
             uiState = uiState,
             onAction = onAction,
-            audioHub = audioHub,
             connectRadios = connectRadios,
             logViewModel = logViewModel,
             requestMicPermission = requestMicPermission,
@@ -786,7 +788,6 @@ private fun rememberRadarPages(uiState: RadarState): List<RadarPage> {
 private fun PagerCard(
     uiState: RadarState,
     onAction: (RadarAction) -> Unit,
-    audioHub: IAudioHub,
     connectRadios: () -> Unit,
     logViewModel: LogViewModel,
     requestMicPermission: () -> Unit,
@@ -857,13 +858,12 @@ private fun PagerCard(
                         selectedUuid = uiState.transceivers.selectedUuid,
                         orbitalPos = uiState.orbitalPos,
                         cw = uiState.cw,
-                        audioHub = audioHub,
                         calculatorOffsetKHz = uiState.calculatorOffsetKHz,
                         radioControl = uiState.radioControl,
                         onAction = onAction,
                         requestMicPermission = requestMicPermission
                     )
-                    RadarPage.Logs -> LogPage(
+                    RadarPage.Logs -> if (!uiState.cwConsole.visible) LogPage(
                         uiState = uiState,
                         logViewModel = logViewModel,
                         onFixGrid = onFixGrid

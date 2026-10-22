@@ -1,0 +1,297 @@
+package com.rtbishop.look4sat.feature.radar
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.rtbishop.look4sat.core.domain.repository.CwMessageTemplate
+import com.rtbishop.look4sat.core.domain.repository.CwTemplateException
+import com.rtbishop.look4sat.core.domain.repository.CwTemplateValues
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitPresets
+import com.rtbishop.look4sat.core.domain.repository.CwTransmitText
+import com.rtbishop.look4sat.core.domain.repository.NativeCwOptions
+import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
+import com.rtbishop.look4sat.core.presentation.R
+import com.rtbishop.look4sat.core.presentation.RadarViewCompose
+import com.rtbishop.look4sat.core.presentation.SharedDialog
+import com.rtbishop.look4sat.core.domain.utility.toDegrees
+
+@Composable
+internal fun CwConsole(
+    state: RadarState,
+    logViewModel: LogViewModel,
+    onAction: (RadarAction) -> Unit,
+    requestMicPermission: () -> Unit,
+    onFixGrid: (List<String>) -> Unit
+) {
+    val log by logViewModel.uiState.collectAsStateWithLifecycle()
+    val control = state.radioControl
+    val remote = control.remoteRadio
+    val caps = remote?.capabilities
+    val draft = state.cwConsole.draft
+    val minWpm = caps?.minimumWpm ?: 10
+    val maxWpm = (caps?.maximumWpm ?: 45).coerceAtLeast(minWpm)
+    val wpm = (remote?.nativeCwOptions?.wpm ?: remote?.nativeCwWpm ?: 20).coerceIn(minWpm, maxWpm)
+    val available = control.transmitOwner == RadioTransmitOwner.NONE && (remote?.txSource ?: 0) == 0
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val errorLabel: (Throwable) -> String = { failure ->
+        if (failure is CwTemplateException) {
+            val field = when (failure.variable) {
+                "CALL" -> context.getString(R.string.cw_console_their_call)
+                "MYCALL" -> context.getString(R.string.cw_console_my_call)
+                "RST" -> context.getString(R.string.cw_console_report)
+                "GRID" -> context.getString(R.string.cw_console_grid_field)
+                else -> failure.variable
+            }
+            context.getString(if (failure.missing) R.string.cw_console_missing_variable else R.string.cw_console_unknown_variable,
+                if (failure.missing) field else failure.variable)
+        } else failure.message ?: context.getString(R.string.cw_console_invalid_message)
+    }
+    var error by remember { mutableStateOf<String?>(null) }
+    var editingPreset by rememberSaveable { mutableIntStateOf(-1) }
+    var presetText by rememberSaveable { mutableStateOf("") }
+    var presetError by remember { mutableStateOf<String?>(null) }
+    var showOptions by rememberSaveable { mutableStateOf(false) }
+    fun edit(value: CwConsoleDraft) { onAction(RadarAction.SetCwConsoleDraft(value)); error = null }
+    val close = { onAction(RadarAction.CloseCwConsole) }
+    val myCallsign = draft.myCallsign ?: log.ownCallsign
+    // A roaming/multi-grid station may list several grids; use the first grid in spoken CW.
+    val grid = log.stationGrid.split(',', ';', ' ').firstOrNull(String::isNotBlank).orEmpty()
+    val values = CwTemplateValues(log.callsignInput, myCallsign, draft.sentReport, grid)
+
+    Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = close) { Text(stringResource(R.string.cw_console_back)) }
+                    Text(stringResource(R.string.rc_l4s_cw), style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item {
+                        CwConsoleHeader(state, log.callsignInput, myCallsign, draft.sentReport, grid,
+                            onTheirCall = logViewModel::updateCallsign,
+                            onMyCall = { edit(draft.copy(myCallsign = it.uppercase(java.util.Locale.ROOT))) },
+                            onReport = { edit(draft.copy(sentReport = it.filter(Char::isDigit).take(3))) })
+                    }
+                    item {
+                        BoxWithConstraints {
+                            val columns = cwConsolePresetColumns(maxWidth.value, configuration.fontScale)
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                (0 until 4 step columns).forEach { start ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        (start until start + columns).forEach { index ->
+                                            val preset = control.cwPresets.getOrElse(index) { "" }
+                                            Surface(shape = MaterialTheme.shapes.medium,
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                                modifier = Modifier.weight(1f).heightIn(min = 56.dp).combinedClickable(
+                                                    enabled = available, role = Role.Button,
+                                                    onLongClickLabel = stringResource(R.string.rc_l4s_edit_preset, index + 1),
+                                                    onClick = {
+                                                        runCatching { CwMessageTemplate.expand(preset, values) }
+                                                            .onSuccess { edit(draft.copy(message = it)) }
+                                                            .onFailure { error = errorLabel(it) }
+                                                    }, onLongClick = { editingPreset = index; presetText = preset; presetError = null })) {
+                                                Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    Text("F${index + 1}", color = MaterialTheme.colorScheme.primary)
+                                                    Text(preset.ifBlank { "—" }, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                                        style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        OutlinedTextField(value = draft.message, onValueChange = { edit(draft.copy(message = it.take(4096))) },
+                            enabled = available, label = { Text(stringResource(R.string.cw_console_message)) },
+                            singleLine = true, textStyle = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.fillMaxWidth())
+                        remote?.let { Text(stringResource(R.string.rc_l4s_progress, it.cwPosition, it.cwLength, it.cwState.name)) }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                runCatching { CwTransmitText.chunks(draft.message, caps?.maxCwText ?: 1) }
+                                    .onSuccess { onAction(RadarAction.SendCw(draft.message, wpm)) }
+                                    .onFailure { error = errorLabel(it) }
+                            }, enabled = control.canSendL4sCw() && draft.message.isNotBlank(), modifier = Modifier.heightIn(min = 48.dp)) {
+                                Text(stringResource(R.string.rc_l4s_send))
+                            }
+                            OutlinedButton(onClick = { onAction(RadarAction.StopRemoteTx) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                                Text(stringResource(R.string.rc_l4s_stop))
+                            }
+                            if (caps?.cwOptions == true) OutlinedButton(onClick = { showOptions = true },
+                                enabled = !control.frequencyEditingLocked && remote?.nativeCwOptions != null) {
+                                Text(stringResource(R.string.rc_cw_options))
+                            }
+                        }
+                        val message = error ?: remote?.error ?: control.errorMessage
+                        message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        if (message == null && available && !control.canSendL4sCw()) {
+                            val reason = when {
+                                remote?.connected != true -> R.string.cw_console_disconnected
+                                remote?.nativeMenuOpen == true -> R.string.rc_l4s_menu_open
+                                !control.isReady -> R.string.rc_l4s_need_tracking
+                                control.txPanel.mode != "CW" -> R.string.rc_l4s_need_cw_mode
+                                caps?.cwText != true -> R.string.rc_l4s_no_cw
+                                else -> R.string.rc_l4s_busy
+                            }
+                            Text(stringResource(reason), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    item { HorizontalDivider(); Text(stringResource(R.string.radar_cw_decoder), color = MaterialTheme.colorScheme.primary) }
+                    item { SharedCwDecoderPanel(state.cw, onAction, requestMicPermission, logViewModel::updateCallsign) }
+                    item { HorizontalDivider(); Text(stringResource(R.string.radar_tab_logs), color = MaterialTheme.colorScheme.primary) }
+                    item {
+                        LogPage(state, logViewModel, onFixGrid,
+                            modifier = Modifier.fillMaxWidth().height(maxOf(320, configuration.screenHeightDp / 2).dp),
+                            overrides = LogRecordOverrides(myCallsign, draft.sentReport, mode = "CW"), showCallsignInput = false)
+                    }
+                }
+            }
+        }
+        if (editingPreset in 0..3) {
+            val dismiss = { editingPreset = -1; presetError = null }
+            SharedDialog(title = stringResource(R.string.rc_l4s_edit_preset, editingPreset + 1), onDismissRequest = dismiss,
+                onCancel = dismiss, onAccept = {
+                    runCatching { CwTransmitPresets.normalize(presetText) }
+                        .onSuccess { onAction(RadarAction.SaveCwPreset(editingPreset, it)); dismiss() }
+                        .onFailure { presetError = errorLabel(it) }
+                }) { padding ->
+                Column(Modifier.fillMaxWidth().padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = presetText, onValueChange = { presetText = it.take(4096); presetError = null },
+                        modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.rc_l4s_message)) })
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        CwMessageTemplate.variables.forEach { variable ->
+                            TextButton(onClick = { presetText = (presetText + " {$variable}").trim() }) { Text("{$variable}") }
+                        }
+                    }
+                    presetError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+        if (showOptions) NativeCwOptionsDialog(remote?.nativeCwOptions ?: NativeCwOptions(),
+            enabled = !control.frequencyEditingLocked, onDismiss = { showOptions = false },
+            macroStatus = remote?.handsetMacroStatus,
+            onSync = if (caps?.handsetMacros == true) ({
+                val index = control.cwPresets.indexOfFirst(CwMessageTemplate::hasVariables)
+                if (index >= 0) error = context.getString(R.string.cw_console_sync_plain_text, index + 1)
+                else onAction(RadarAction.SyncHandsetCwPresets)
+            }) else null,
+            syncError = error ?: remote?.error ?: control.errorMessage,
+            onCancelSync = { onAction(RadarAction.CancelHandsetCwSync) },
+            onApply = { onAction(RadarAction.SetNativeCwOptions(it)); showOptions = false })
+    }
+}
+
+@Composable
+private fun CwConsoleHeader(
+    state: RadarState, theirCall: String, myCall: String, report: String, grid: String,
+    onTheirCall: (String) -> Unit, onMyCall: (String) -> Unit, onReport: (String) -> Unit
+) {
+    val fontScale = LocalConfiguration.current.fontScale
+    val satellite: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(state.currentPass?.name.orEmpty(), color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleMedium)
+            Text("${if (state.isTimeAos) "AOS" else "LOS"} ${state.currentTime}", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+    val radar: @Composable () -> Unit = {
+        Column(modifier = Modifier.width(128.dp), verticalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally) {
+            state.orbitalPos?.let { position ->
+                Text(stringResource(R.string.cw_console_azimuth, position.azimuth.toDegrees()),
+                    style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth())
+                Text(stringResource(R.string.cw_console_elevation, position.elevation.toDegrees()),
+                    style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth())
+                RadarViewCompose(item = position, items = state.satTrack, azimElev = state.orientationValues,
+                    shouldShowSweep = state.shouldShowSweep, shouldUseCompass = state.shouldUseCompass,
+                    sunPosition = state.sunPosition, moonPosition = state.moonPosition,
+                    modifier = Modifier.padding(top = 4.dp).size(128.dp), compactPassPreview = true)
+            }
+        }
+    }
+    val contacts: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = theirCall, onValueChange = onTheirCall,
+                label = { Text(stringResource(R.string.cw_console_their_call)) }, singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth())
+            val own: @Composable (Modifier) -> Unit = { modifier ->
+                OutlinedTextField(value = myCall, onValueChange = onMyCall,
+                    label = { Text(stringResource(R.string.cw_console_my_call)) }, singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium, modifier = modifier)
+            }
+            val rst: @Composable (Modifier) -> Unit = { modifier ->
+                OutlinedTextField(value = report, onValueChange = onReport,
+                    label = { Text(stringResource(R.string.cw_console_report), style = MaterialTheme.typography.labelSmall) },
+                    singleLine = true, textStyle = MaterialTheme.typography.bodyMedium, modifier = modifier)
+            }
+            BoxWithConstraints {
+                if (maxWidth >= 190.dp && fontScale <= 1.15f) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    own(Modifier.weight(1.5f)); rst(Modifier.weight(1f))
+                } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    own(Modifier.fillMaxWidth()); rst(Modifier.fillMaxWidth())
+                }
+            }
+            if (grid.isNotBlank()) Text(stringResource(R.string.cw_console_grid, grid), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    BoxWithConstraints {
+        if (cwConsoleHeaderStacked(maxWidth.value, fontScale)) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) { satellite() }
+                radar()
+            }
+            contacts()
+        } else Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { satellite(); contacts() }
+            radar()
+        }
+    }
+}

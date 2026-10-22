@@ -50,12 +50,13 @@ internal fun RadioProfilesDialog(manager:RadioProfileManagerState,radio:RadioTra
         }
     }
     LaunchedEffect(export) {export?.let {pendingExport=it;action(SettingsAction.ConsumeRadioProfilesExport);exportLauncher.launch("Look4Sat-L4S-profiles.json")}}
-    val unsupported=radio.remoteRadio?.capabilities?.transactionalProfileStore!=true || radio.remoteRadio?.connected!=true
+    val disconnected=radio.remoteRadio?.connected!=true
+    val unsupported=disconnected || radio.remoteRadio?.capabilities?.transactionalProfileStore!=true
     val busy=manager.loading || manager.status?.busy==true
     SharedDialog(title=stringResource(R.string.rc_l4s_profiles),onDismissRequest=onDismiss,onCancel=onDismiss) {padding->
         Column(modifier=Modifier.fillMaxWidth().heightIn(max=(androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp*0.65f).dp)
             .verticalScroll(rememberScrollState()).padding(padding),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            if(unsupported)Text(stringResource(R.string.rc_l4s_profiles_upgrade),color=MaterialTheme.colorScheme.primary)
+            if(unsupported)Text(stringResource(if(disconnected) R.string.rc_l4s_profiles_connect else R.string.rc_l4s_profiles_upgrade),color=MaterialTheme.colorScheme.primary)
             Text(stringResource(R.string.rc_l4s_profile_capacity,manager.status?.used ?: manager.profiles.size,56))
             if(manager.status?.readOnly==true)Text(stringResource(R.string.rc_l4s_profiles_readonly),color=MaterialTheme.colorScheme.error)
             Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -93,7 +94,7 @@ internal fun RadioProfilesDialog(manager:RadioProfileManagerState,radio:RadioTra
                     Text(stringResource(R.string.rc_l4s_send_for_confirmation))
                 }
             }
-            (ioError ?: manager.error ?: manager.message)?.let {Text(it,color=if(ioError!=null||manager.error!=null)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)}
+            (ioError ?: (manager.error ?: manager.message).takeUnless {unsupported})?.let {Text(it,color=if(ioError!=null||manager.error!=null)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)}
             Text(stringResource(R.string.rc_l4s_export_saved_only),style=MaterialTheme.typography.bodySmall)
         }
     }

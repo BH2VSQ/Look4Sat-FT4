@@ -94,6 +94,7 @@ data class RadarState(
     val radioControl: RadioControlSubState = RadioControlSubState(),
     val sstv: SstvSubState = SstvSubState(),
     val cw: CwSubState = CwSubState(),
+    val cwConsole: CwConsoleState = CwConsoleState(),
     val mutualSamples: List<Pair<Long, Pair<Double, Double>>> = emptyList(),
     val mutualStartTime: Long = 0L,
     val mutualEndTime: Long = 0L,
@@ -130,7 +131,9 @@ data class CwSubState(
     val decodedText: String = "",
     val cwToneFreq: Float = 700f,
     val isExpanded: Boolean = false,
-    val signalStrength: Float = 0f
+    val signalStrength: Float = 0f,
+    val resetGeneration: Int = 0,
+    val error: String? = null
 )
 
 sealed interface RadarAction {
@@ -146,6 +149,12 @@ sealed interface RadarAction {
     data object DisconnectRadios : RadarAction
     data class VoicePtt(val pressed: Boolean) : RadarAction
     data class SendCw(val text: String, val wpm: Int) : RadarAction
+    data object OpenCwConsole : RadarAction
+    data object CloseCwConsole : RadarAction
+    data object LeaveCwSession : RadarAction
+    data class SetCwConsoleDraft(val draft: CwConsoleDraft) : RadarAction
+    data class CwDecodedTextChanged(val text: String) : RadarAction
+    data class CwDecoderFailed(val message: String) : RadarAction
     data class SaveCwPreset(val index: Int, val text: String) : RadarAction
     data class SetNativeCwOptions(val options: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions) : RadarAction
     data object SyncHandsetCwPresets : RadarAction
@@ -170,7 +179,6 @@ sealed interface RadarAction {
     data class CwSetToneFreq(val freq: Float) : RadarAction
     data class CwToggleExpanded(val expanded: Boolean) : RadarAction
     data class CwPermissionResult(val granted: Boolean) : RadarAction
-    data class CwNativeSessionChanged(val active: Boolean) : RadarAction
 
     // Calculator actions
     data class ChangeCalculatorOffset(val offsetKHz: String) : RadarAction

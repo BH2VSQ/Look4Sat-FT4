@@ -17,8 +17,6 @@
  */
 package com.rtbishop.look4sat.feature.radar
 
-import android.app.Activity
-import android.view.LayoutInflater
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -50,7 +48,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -59,22 +56,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -85,9 +80,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.constraintlayout.widget.ConstraintLayout
-import com.rtbishop.look4sat.core.domain.audio.IAudioHub
 import com.rtbishop.look4sat.core.domain.model.SatRadio
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
@@ -95,10 +87,6 @@ import com.rtbishop.look4sat.core.domain.utility.CalculatorTuning
 import com.rtbishop.look4sat.core.domain.utility.CalculatorFrequencyAnchor
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.infiniteMarquee
-import com.rtbishop.look4sat.core.cw.CwNativeCapability
-import com.rtbishop.look4sat.core.cw.MorseExpertAudioBridge
-import com.rtbishop.look4sat.core.cw.R as CwR
-import com.ve3nea.morse_expert.MainActivity
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -165,7 +153,6 @@ fun CalculatorPage(
     selectedUuid: String?,
     orbitalPos: OrbitalPos?,
     cw: CwSubState,
-    audioHub: IAudioHub,
     calculatorOffsetKHz: String = "",
     radioControl: RadioControlSubState = RadioControlSubState(),
     onAction: (RadarAction) -> Unit,
@@ -249,7 +236,6 @@ fun CalculatorPage(
 
         CwDecoderPanel(
             cw = cw,
-            audioHub = audioHub,
             onAction = onAction,
             requestMicPermission = requestMicPermission,
             modifier = Modifier.fillMaxWidth()
@@ -907,200 +893,16 @@ private fun DopplerFrequencyCalculator(
 }
 
 @Composable
-private fun CwDecoderPanel(
-    cw: CwSubState,
-    audioHub: IAudioHub,
-    onAction: (RadarAction) -> Unit,
-    requestMicPermission: () -> Unit = {},
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        // Header row: expand/collapse toggle
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onAction(RadarAction.CwToggleExpanded(!cw.isExpanded)) },
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = stringResource(R.string.radar_cw_decoder),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Icon(
-                painter = painterResource(id = R.drawable.ic_arrow),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .size(20.dp)
-                    .rotate(if (cw.isExpanded) 270f else 90f)
-            )
-        }
-
-        AnimatedVisibility(visible = cw.isExpanded) {
-            if (!CwNativeCapability.isAvailable) {
-                KotlinCwDecoderPanel(cw, onAction, requestMicPermission)
-                return@AnimatedVisibility
-            }
-
-            // Morse Expert engine: mini layout with waterfall + decoded text.
-            val context = LocalContext.current
-            val activity = remember(context) {
-                context as? Activity ?: error("CwDecoderPanel must be hosted in an Activity")
-            }
-            val controller = remember { MainActivity() }
-            val rootView = remember(context) {
-                LayoutInflater.from(context).inflate(CwR.layout.activity_main, null) as ConstraintLayout
-            }
-            var initialized by remember { mutableStateOf(false) }
-            var listening by remember { mutableStateOf(false) }
-
-            LaunchedEffect(listening, initialized) {
-                if (listening && initialized) {
-                    try {
-                        MorseExpertAudioBridge(audioHub, controller).collect()
-                    } finally {
-                        listening = false
-                        onAction(RadarAction.CwNativeSessionChanged(false))
-                    }
-                }
-            }
-
-            // 重要: 不在展开时初始化控制器(避免"一展开就崩溃")。
-            // controller.onCreate/onResume/onPermissionGranted 全部推迟到用户点 Start 才执行。
-            fun startDecoding() {
-                onAction(RadarAction.CwNativeSessionChanged(true))
-                if (!initialized) {
-                    controller.onCreate(activity, rootView)
-                    controller.onPermissionGranted()
-                    controller.onResume()
-                    initialized = true
-                } else {
-                    controller.onResume()
-                }
-                listening = true
-            }
-
-            DisposableEffect(Unit) {
-                onDispose {
-                    if (initialized) {
-                        controller.onPause()
-                        controller.onDestroy()
-                    }
-                    onAction(RadarAction.CwNativeSessionChanged(false))
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (!listening) {
-                        Button(
-                            onClick = {
-                                if (!cw.hasPermission) {
-                                    requestMicPermission()
-                                } else {
-                                    startDecoding()
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(stringResource(R.string.radar_cw_start))
-                        }
-                    } else {
-                        Button(
-                            onClick = {
-                                controller.onPause()
-                                listening = false
-                                onAction(RadarAction.CwNativeSessionChanged(false))
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(stringResource(R.string.radar_cw_stop))
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { if (initialized) controller.clearDecoded() },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.radar_cw_reset))
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp)
-                ) {
-                    AndroidView(
-                        factory = { rootView },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-        }
+private fun CwDecoderPanel(cw: CwSubState, onAction: (RadarAction) -> Unit,
+    requestMicPermission: () -> Unit, modifier: Modifier = Modifier) {
+    if (LocalCwConsoleVisible.current) return
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.radar_cw_decoder), color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.fillMaxWidth().clickable { onAction(RadarAction.CwToggleExpanded(!cw.isExpanded)) })
+        if (cw.isExpanded) SharedCwDecoderPanel(cw, onAction, requestMicPermission)
     }
 }
 
-@Composable
-private fun KotlinCwDecoderPanel(
-    cw: CwSubState,
-    onAction: (RadarAction) -> Unit,
-    requestMicPermission: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = stringResource(R.string.radar_cw_kotlin_fallback),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            if (cw.status == CwStatus.Idle) {
-                Button(
-                    onClick = {
-                        if (cw.hasPermission) onAction(RadarAction.CwStartListening)
-                        else requestMicPermission()
-                    },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(stringResource(R.string.radar_cw_start))
-                }
-            } else {
-                Button(
-                    onClick = { onAction(RadarAction.CwStopListening) },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(stringResource(R.string.radar_cw_stop))
-                }
-            }
-            OutlinedButton(
-                onClick = { onAction(RadarAction.CwReset) },
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(stringResource(R.string.radar_cw_reset))
-            }
-        }
-        Text(
-            text = cw.decodedText.ifBlank { stringResource(R.string.radar_cw_waiting) },
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(96.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainer)
-                .padding(8.dp)
-        )
-    }
-}
 
 @Composable
 private fun FrequencyText(frequency: Long?, modifier: Modifier = Modifier) {

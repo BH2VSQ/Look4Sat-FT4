@@ -6,7 +6,7 @@
     <string name="rc_l4s_firmware">L4S 固件：%1$s</string>
     <string name="rc_l4s_hold">按住 PTT（手台麦克风）</string>
     <string name="rc_l4s_stop">停止发射</string>
-    <string name="rc_l4s_cw">CW 拍发</string>
+    <string name="rc_l4s_cw">CW 控制台</string>
     <string name="rc_l4s_frozen">发射中：TX/RX 多普勒保持，结束后恢复</string>
     <string name="rc_l4s_linear">线性转发器使用原生 CW，不支持 SSB 发射。</string>
     <string name="rc_l4s_target">目标 TX %1$s · RX %2$s</string>
@@ -32,7 +32,7 @@
     <string name="rc_l4s_step_hint">默认 250 Hz；可设 10–10000 Hz，须为 10 的整数倍。发射期间两路频率保持不变。</string>
     <string name="rc_l4s_bases">基准 TX %1$s · RX %2$s</string>
     <string name="rc_l4s_corrections">修正 TX %1$d Hz · RX %2$d Hz · 步进 %3$d Hz</string>
-    <string name="rc_l4s_presets_hint">点击 F1–F8 填入内容，长按编辑；按“发送”才开始拍发。</string>
+    <string name="rc_l4s_presets_hint">点击 F1–F4 填入内容，长按编辑；按“发送”才开始拍发。</string>
     <string name="rc_l4s_edit_preset">编辑 F%1$d 预设</string>
     <string name="rc_l4s_preset_save_hint">保存在本机。清空内容可清除预设；编辑不会发射。</string>
 </resources>

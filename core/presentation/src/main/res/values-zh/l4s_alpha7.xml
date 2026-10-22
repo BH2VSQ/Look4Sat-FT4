@@ -3,7 +3,7 @@
     <string name="rc_l4s_correction_step">固定修正编辑步进（Hz）</string>
     <string name="rc_l4s_edit_locked">发射、手台菜单或保存期间禁止编辑频率。</string>
     <string name="rc_l4s_profiles">卫星档案</string>
-    <string name="rc_l4s_profiles_upgrade">请连接 alpha7 L4S 固件手台以管理档案。</string>
+    <string name="rc_l4s_profiles_upgrade">当前固件不支持卫星档案管理，请升级固件。</string>
     <string name="rc_l4s_profile_capacity">已保存档案：%1$d / %2$d</string>
     <string name="rc_l4s_profiles_readonly">检测到未知存储内容：档案只读，不会自动擦除。</string>
     <string name="rc_l4s_refresh">刷新</string>
@@ -36,4 +36,5 @@
     <string name="rc_l4s_invalid_reference">请输入 18–1300 MHz 范围内的有效基准频率。</string>
     <string name="rc_l4s_doppler_values">多普勒 TX %1$d Hz · RX %2$d Hz</string>
     <string name="rc_l4s_store_failed">档案保存失败，旧快照保留；请等待硬件就绪。</string>
+    <string name="rc_l4s_profiles_connect">请先连接手台。</string>
 </resources>

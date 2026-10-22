@@ -3,7 +3,7 @@
     <string name="rc_l4s_correction_step">Fixed-correction edit step (Hz)</string>
     <string name="rc_l4s_edit_locked">Frequency editing is locked during TX, radio MENU or saving.</string>
     <string name="rc_l4s_profiles">Satellite profiles</string>
-    <string name="rc_l4s_profiles_upgrade">Connect an alpha7 L4S radio to use profile management.</string>
+    <string name="rc_l4s_profiles_upgrade">The connected firmware does not support profile management. Update the firmware.</string>
     <string name="rc_l4s_profile_capacity">Saved profiles: %1$d / %2$d</string>
     <string name="rc_l4s_profiles_readonly">Unknown storage detected; profiles are read-only and will not be erased.</string>
     <string name="rc_l4s_refresh">Refresh</string>
@@ -36,4 +36,5 @@
     <string name="rc_l4s_invalid_reference">Enter an exact reference from 18 to 1300 MHz.</string>
     <string name="rc_l4s_doppler_values">Doppler TX %1$d Hz · RX %2$d Hz</string>
     <string name="rc_l4s_store_failed">Profile save failed. The old snapshot is retained; wait for the hardware to become ready.</string>
+    <string name="rc_l4s_profiles_connect">Connect the radio first.</string>
 </resources>

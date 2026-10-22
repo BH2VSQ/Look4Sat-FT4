@@ -3,7 +3,7 @@
     <string name="rc_l4s_correction_step">固定修正編輯步進（Hz）</string>
     <string name="rc_l4s_edit_locked">發射、手台選單或儲存期間禁止編輯頻率。</string>
     <string name="rc_l4s_profiles">衛星檔案</string>
-    <string name="rc_l4s_profiles_upgrade">請連接 alpha7 L4S 韌體手台以管理檔案。</string>
+    <string name="rc_l4s_profiles_upgrade">目前韌體不支援衛星檔案管理，請升級韌體。</string>
     <string name="rc_l4s_profile_capacity">已儲存檔案：%1$d / %2$d</string>
     <string name="rc_l4s_profiles_readonly">偵測到未知儲存內容：檔案唯讀，不會自動清除。</string>
     <string name="rc_l4s_refresh">重新整理</string>
@@ -36,4 +36,5 @@
     <string name="rc_l4s_invalid_reference">請輸入 18–1300 MHz 範圍內的有效基準頻率。</string>
     <string name="rc_l4s_doppler_values">都卜勒 TX %1$d Hz · RX %2$d Hz</string>
     <string name="rc_l4s_store_failed">檔案儲存失敗，舊快照保留；請等待硬體就緒。</string>
+    <string name="rc_l4s_profiles_connect">請先連接手台。</string>
 </resources>

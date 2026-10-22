@@ -85,6 +85,7 @@ class RadarViewModel(
     private var sstvRecordingJob: Job? = null
     private var cwDecoder: CwDecoder? = null
     private var cwListeningJob: Job? = null
+    private var cwListeningGeneration = 0L
     private var lastRotatorConnectionState: RotatorConnectionState? = null
 
     // Celestial positions change slowly, recompute at most once per minute
@@ -196,7 +197,12 @@ class RadarViewModel(
 
     // Loads transmitters and satellite track for pass, sets initial state, returns full radio list
     private suspend fun loadPassData(pass: OrbitalPass): List<SatRadio> {
-        _uiState.update { it.copy(currentPass = pass) }
+        val previous = _uiState.value.currentPass
+        val changed = previous?.catNum != pass.catNum || previous?.aosTime != pass.aosTime
+        if (changed) stopCwListening()
+        _uiState.update { it.copy(currentPass = pass,
+            cwConsole = if (changed) CwConsoleState() else it.cwConsole,
+            cw = if (changed) it.cw.copy(decodedText = "", resetGeneration = it.cw.resetGeneration + 1) else it.cw) }
         syncRotatorTracking(settingsRepo.rotatorSettings.value.enabled, pass)
         val allRadios = satelliteRepo.getRadiosWithId(pass.catNum)
         val favorites = settingsRepo.getFavoriteTransponders(pass.catNum).toSet()
@@ -380,6 +386,25 @@ class RadarViewModel(
             RadarAction.DisconnectRadios -> viewModelScope.launch { trackingService.disconnectRadios() }
             is RadarAction.VoicePtt -> trackingService.setVoicePtt(action.pressed)
             is RadarAction.SendCw -> trackingService.sendCw(action.text, action.wpm)
+            RadarAction.OpenCwConsole -> _uiState.update { it.copy(cwConsole = it.cwConsole.copy(visible = true)) }
+            RadarAction.CloseCwConsole -> {
+                val control = _uiState.value.radioControl
+                if (control.shouldStopConsoleCw()) trackingService.cancelRemoteTransmit()
+                _uiState.update { it.copy(cwConsole = it.cwConsole.copy(visible = false)) }
+            }
+            RadarAction.LeaveCwSession -> {
+                onAction(RadarAction.CloseCwConsole)
+                stopCwListening()
+                cwDecoder?.resetDecoder()
+                _uiState.update { it.copy(cwConsole = CwConsoleState(),
+                    cw = it.cw.copy(decodedText = "", error = null, resetGeneration = it.cw.resetGeneration + 1)) }
+            }
+            is RadarAction.SetCwConsoleDraft -> _uiState.update { it.copy(cwConsole = it.cwConsole.copy(draft = action.draft)) }
+            is RadarAction.CwDecodedTextChanged -> _uiState.update { it.copy(cw = it.cw.copy(decodedText = action.text)) }
+            is RadarAction.CwDecoderFailed -> {
+                stopCwListening()
+                _uiState.update { it.copy(cw = it.cw.copy(error = action.message)) }
+            }
             is RadarAction.SetNativeCwOptions -> trackingService.setNativeCwOptions(action.options)
             RadarAction.SyncHandsetCwPresets -> trackingService.syncHandsetCwPresets()
             RadarAction.CancelHandsetCwSync -> trackingService.cancelHandsetCwSync()
@@ -428,7 +453,7 @@ class RadarViewModel(
             RadarAction.CwStopListening -> stopCwListening()
             RadarAction.CwReset -> {
                 cwDecoder?.resetDecoder()
-                _uiState.update { it.copy(cw = it.cw.copy(decodedText = "")) }
+                _uiState.update { it.copy(cw = it.cw.copy(decodedText = "", resetGeneration = it.cw.resetGeneration + 1)) }
             }
             is RadarAction.CwSetToneFreq -> {
                 _uiState.update { it.copy(cw = it.cw.copy(cwToneFreq = action.freq)) }
@@ -436,15 +461,6 @@ class RadarViewModel(
             }
             is RadarAction.CwToggleExpanded -> {
                 _uiState.update { it.copy(cw = it.cw.copy(isExpanded = action.expanded)) }
-            }
-            is RadarAction.CwNativeSessionChanged -> {
-                if (action.active) {
-                    stopSstvRecording()
-                    stopCwListening()
-                    _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Listening)) }
-                } else {
-                    _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Idle)) }
-                }
             }
             is RadarAction.ChangeCalculatorOffset -> {
                 // Keyed by the transponder driving the calculator, so the offset saves
@@ -568,6 +584,7 @@ class RadarViewModel(
 
     private fun startSstvRecording() {
         if (sstvRecordingJob?.isActive == true) return
+        stopCwListening()
         _uiState.update { it.copy(sstv = it.sstv.copy(status = SstvStatus.Recording)) }
         sstvRecordingJob = viewModelScope.launch {
             audioHub.audioFlow(AudioConsumer.SSTV)
@@ -602,12 +619,19 @@ class RadarViewModel(
         }
         // Stop SSTV if running (audio capture is shared)
         stopSstvRecording()
+        if (com.rtbishop.look4sat.core.cw.CwNativeCapability.isAvailable) {
+            _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Listening, error = null)) }
+            return
+        }
         cwDecoder?.resetDecoder()
-        _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Listening)) }
+        val generation = ++cwListeningGeneration
+        _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Listening, error = null)) }
         cwListeningJob = viewModelScope.launch {
             audioHub.audioFlow(AudioConsumer.CW)
                 .onCompletion {
-                    _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Idle)) }
+                    if (generation == cwListeningGeneration) {
+                        _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Idle)) }
+                    }
                 }
                 .collect { chunk ->
                     val decoder = initCwDecoder(chunk.sampleRate)
@@ -625,6 +649,7 @@ class RadarViewModel(
     }
 
     private fun stopCwListening() {
+        cwListeningGeneration++
         cwListeningJob?.cancel()
         cwListeningJob = null
         _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Idle)) }
