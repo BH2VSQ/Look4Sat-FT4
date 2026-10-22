@@ -43,19 +43,31 @@ internal data class LoTWKeyMaterial(val key: PrivateKey, val certificate: X509Ce
          * an empty-password backup) — our own PBES2 reader is consulted before reporting a problem,
          * so a valid certificate is not rejected as "not a valid LoTW certificate file".
          *
-         * [platformStore] is a seam that lets tests simulate a platform which accepts the file
-         * without exposing any key entry.
+         * Empty-password PKCS#12 files need two platform attempts on some Android
+         * providers: an empty char array may be rejected during MAC verification,
+         * while loading with null (no MAC check) still recovers the key with the
+         * actual empty password. We verify the key against the certificate below.
+         *
+         * [platformStore] is a seam for simulating both platform attempts in tests.
          */
         internal fun read(
             bytes: ByteArray,
             password: CharArray,
             now: Long,
-            platformStore: (ByteArray, CharArray) -> KeyStore? = { data, pass -> loadPlatformStore(data, pass) },
+            platformStore: (ByteArray, CharArray?) -> KeyStore? = { data, pass -> loadPlatformStore(data, pass) },
         ): LoTWKeyMaterial {
             if (bytes.isEmpty() || bytes.size > MAX_CERTIFICATE_BYTES) fail(LoTWProblem.CERTIFICATE_INVALID)
             val key: PrivateKey
             val cert: X509Certificate
-            val outcome = platformStore(bytes, password)?.let { platformKeyAndCertificate(it, password) }
+            val firstOutcome = platformStore(bytes, password)?.let { platformKeyAndCertificate(it, password) }
+            // Android PKCS12 implementations differ in how they handle an empty password.
+            // A null load password skips the container MAC check but can still expose the
+            // private key encrypted with the actual empty password. Only use this route
+            // for an explicitly blank password, and accept it only with a usable key pair.
+            val outcome = if (password.isEmpty() && firstOutcome !is PlatformOutcome.Ok) {
+                val alternate = platformStore(bytes, null)?.let { platformKeyAndCertificate(it, password) }
+                if (alternate is PlatformOutcome.Ok) alternate else firstOutcome ?: alternate
+            } else firstOutcome
             if (outcome is PlatformOutcome.Ok) {
                 key = outcome.key
                 cert = outcome.certificate
@@ -86,7 +98,7 @@ internal data class LoTWKeyMaterial(val key: PrivateKey, val certificate: X509Ce
         }
 
         /** The platform PKCS12 keystore, or null when it refuses to read the file at all. */
-        private fun loadPlatformStore(bytes: ByteArray, password: CharArray): KeyStore? = try {
+        private fun loadPlatformStore(bytes: ByteArray, password: CharArray?): KeyStore? = try {
             KeyStore.getInstance("PKCS12").apply { bytes.inputStream().use { load(it, password) } }
         } catch (_: Exception) {
             null
@@ -96,11 +108,11 @@ internal data class LoTWKeyMaterial(val key: PrivateKey, val certificate: X509Ce
         private fun platformKeyAndCertificate(store: KeyStore, password: CharArray): PlatformOutcome {
             val aliases = Collections.list(store.aliases()).filter { store.isKeyEntry(it) }
             val alias = aliases.singleOrNull() ?: return PlatformOutcome.Unusable(LoTWProblem.CERTIFICATE_INVALID)
-            val key = try {
-                store.getKey(alias, password) as? PrivateKey
-            } catch (_: Exception) {
-                return PlatformOutcome.Unusable(LoTWProblem.CERTIFICATE_PASSWORD)
-            } ?: return PlatformOutcome.Unusable(LoTWProblem.CERTIFICATE_INVALID)
+            val key = (runCatching { store.getKey(alias, password) as? PrivateKey }.getOrNull()
+                ?: if (password.isEmpty()) {
+                    // Some providers recover empty-password keys only with a null key password.
+                    runCatching { store.getKey(alias, null) as? PrivateKey }.getOrNull()
+                } else null) ?: return PlatformOutcome.Unusable(LoTWProblem.CERTIFICATE_PASSWORD)
             val certificate = store.getCertificate(alias) as? X509Certificate
                 ?: return PlatformOutcome.Unusable(LoTWProblem.CERTIFICATE_INVALID)
             return PlatformOutcome.Ok(key, certificate)
