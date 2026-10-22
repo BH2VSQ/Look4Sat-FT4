@@ -65,6 +65,44 @@ class LoTWKeyMaterialTest {
         assertEquals("BA7OPF", material.info.callsign)
     }
 
+    /** Simulate an Android provider that needs a null load password for a blank-password P12. */
+    @Test
+    fun emptyPasswordRetriesWithNullLoadPassword() {
+        val attemptedNull = mutableListOf<Boolean>()
+        val material = LoTWKeyMaterial.read(
+            bytes = fixture("test_tqsl_empty.p12"),
+            password = charArrayOf(),
+            now = now,
+            platformStore = { data, pass ->
+                attemptedNull += (pass == null)
+                if (pass != null) storeWithoutKeyEntry()
+                else KeyStore.getInstance("PKCS12").apply {
+                    data.inputStream().use { load(it, charArrayOf()) }
+                }
+            },
+        )
+        assertEquals(listOf(false, true), attemptedNull)
+        assertEquals("BA7OPF", material.info.callsign)
+    }
+
+    /** A nonempty password must never bypass the PKCS#12 MAC using null. */
+    @Test
+    fun protectedPasswordDoesNotTryNullLoad() {
+        val attemptedNull = mutableListOf<Boolean>()
+        LoTWKeyMaterial.read(
+            bytes = fixture("test_tqsl_empty.p12"),
+            password = charArrayOf(),
+            now = now,
+            platformStore = { data, pass ->
+                attemptedNull += (pass == null)
+                KeyStore.getInstance("PKCS12").apply {
+                    data.inputStream().use { load(it, pass) }
+                }
+            },
+        )
+        assertEquals(listOf(false), attemptedNull)
+    }
+
     /** A wrong password is still reported as a password problem, not as an invalid file. */
     @Test
     fun reportsWrongPasswordForPbes2Backup() {
