@@ -3,6 +3,8 @@ package com.ve3nea.morse_expert;
 
 import android.content.Context;
 import android.os.Build;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -46,6 +48,22 @@ public class MainActivity {
 
     /** Injected Activity context (replaces the original this Activity capabilities) */
     public android.app.Activity mActivity;
+    private java.util.function.Consumer<String> decodedTextListener;
+    private final TextWatcher decodedTextWatcher = new TextWatcher() {
+        @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+        @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+            if (decodedTextListener != null) decodedTextListener.accept(s.toString());
+        }
+        @Override public void afterTextChanged(Editable s) { }
+    };
+
+    public void setDecodedTextListener(java.util.function.Consumer<String> listener) {
+        decodedTextListener = listener;
+    }
+
+    public void restoreDecodedText(String text) {
+        if (f11035D != null) ((DecodedTextView) f11035D.f11888g).setText(text, TextView.BufferType.EDITABLE);
+    }
 
     public void onCreate(android.app.Activity activity, ConstraintLayout constraintLayout) {
         onCreate(activity, constraintLayout, true);
@@ -78,6 +96,7 @@ public class MainActivity {
                         WaterfallSurfaceView waterfallSurfaceView = (WaterfallSurfaceView) findViewRecursive(inflate, R.id.waterfallView);
                         if (waterfallSurfaceView != null) {
                             this.f11035D = new C1646n(constraintLayout, decodedTextView, scaleView, textView, linearLayout, waterfallSurfaceView);
+                            decodedTextView.addTextChangedListener(decodedTextWatcher);
                             ((WaterfallSurfaceView) this.f11035D.f11892k).setOnTouchListener(this.f11040J);
                             // Originally: permission check then v(); permission flow handled by the Compose page
                             // Originally: ad banner mounting (removed)
@@ -170,6 +189,8 @@ public class MainActivity {
 
     /** Original onDestroy: release audio/decoder (billing cleanup removed) */
     public void onDestroy() {
+        decodedTextListener = null;
+        if (f11035D != null) ((DecodedTextView) f11035D.f11888g).removeTextChangedListener(decodedTextWatcher);
         a aVar = this.f11036E;
         if (aVar != null) {
             aVar.f598i.set(false);

@@ -73,6 +73,10 @@ public class DecodedTextView extends TextView {
             CharSequence text = getText();
             Layout layout = getLayout();
             int lineCount = getLineCount();
+            if (layout == null || lineCount == 0) {
+                append(spannableStringBuilder);
+                return;
+            }
             int length = text.length();
             int lineHeight = getLineHeight();
             int scrollY = getScrollY();

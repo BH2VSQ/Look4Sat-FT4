@@ -1,7 +1,6 @@
 package H2;
 
 import B.RunnableC0001b;
-import D.n;
 import android.content.Context;
 import android.media.MediaScannerConnection;
 import android.os.Handler;
@@ -576,7 +575,7 @@ public final class b {
         }
         waterfallSurfaceView = bVar.f619o;
         if (waterfallSurfaceView != null) {
-            waterfallSurfaceView.queueEvent(new n(waterfallSurfaceView, 1, (float[]) fArr3.clone()));
+            waterfallSurfaceView.submitSpectrum(fArr3);
         }
     }
 }

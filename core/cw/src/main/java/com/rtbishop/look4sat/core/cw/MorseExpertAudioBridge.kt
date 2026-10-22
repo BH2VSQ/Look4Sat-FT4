@@ -10,6 +10,7 @@
 package com.rtbishop.look4sat.core.cw
 
 import com.rtbishop.look4sat.core.domain.audio.AudioConsumer
+import com.rtbishop.look4sat.core.domain.audio.AudioDelivery
 import com.rtbishop.look4sat.core.domain.audio.IAudioHub
 import com.rtbishop.look4sat.core.domain.audio.StreamingAudioResampler
 import com.ve3nea.morse_expert.MainActivity
@@ -18,18 +19,20 @@ import kotlinx.coroutines.withContext
 
 class MorseExpertAudioBridge(
     private val audioHub: IAudioHub,
-    private val controller: MainActivity
+    private val feedAudio: (FloatArray) -> Unit
 ) {
+    constructor(audioHub: IAudioHub, controller: MainActivity) : this(audioHub, controller::feedAudioSamples)
+
     suspend fun collect() {
         withContext(Dispatchers.Default) {
             var sourceRate = 0
             var resampler: StreamingAudioResampler? = null
-            audioHub.audioFlow(AudioConsumer.MORSE_EXPERT).collect { chunk ->
+            audioHub.audioFlow(AudioConsumer.MORSE_EXPERT, AudioDelivery.RELIABLE).collect { chunk ->
                 if (sourceRate != chunk.sampleRate) {
                     sourceRate = chunk.sampleRate
                     resampler = StreamingAudioResampler(sourceRate, MORSE_EXPERT_SAMPLE_RATE)
                 }
-                controller.feedAudioSamples(requireNotNull(resampler).process(chunk.samples))
+                feedAudio(requireNotNull(resampler).process(chunk.samples))
             }
         }
     }

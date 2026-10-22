@@ -18,7 +18,6 @@
 -keep class d1.AbstractC1518b { *; }
 -keep class B0.b { *; }
 -keep class B.RunnableC0001b { *; }
--keep class D.n { *; }
 -keep class E2.g { *; }
 -keep class F2.a { *; }
 -keep class I0.d { *; }
