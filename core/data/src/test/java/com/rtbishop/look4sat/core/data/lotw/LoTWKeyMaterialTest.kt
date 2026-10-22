@@ -77,7 +77,7 @@ class LoTWKeyMaterialTest {
                 attemptedNull += (pass == null)
                 if (pass != null) storeWithoutKeyEntry()
                 else KeyStore.getInstance("PKCS12").apply {
-                    data.inputStream().use { load(it, charArrayOf()) }
+                    data.inputStream().use { load(it, pass) }
                 }
             },
         )
