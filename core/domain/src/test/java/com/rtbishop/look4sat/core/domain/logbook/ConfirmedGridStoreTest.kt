@@ -46,7 +46,7 @@ class ConfirmedGridStoreTest {
             band = "2M", rxBand = "70CM", lotwQslDate = "20260909", country = "Japan", comment = "Portable contact"
         )
         val decoded = AdifCodec.decode(AdifCodec.encode(listOf(record))).single()
-        assertEquals(record, decoded)
+        assertEquals(record.copy(theirFullGrids = listOf("PM74AB"), myFullGrids = listOf("PM74", "PM75")), decoded)
         assertFalse(AdifCodec.encode(listOf(record)).contains("FT4"))
     }
 
@@ -61,5 +61,23 @@ class ConfirmedGridStoreTest {
         assertTrue(merged.lotwConfirmed)
         assertFalse(sameConfirmedContact(local, remote.copy(mode = "FM")))
         assertFalse(sameConfirmedContact(local, remote.copy(myCallsign = "K1XYZ")))
+    }
+
+    @Test fun fullGridAndBothIotaReferencesReachTheCanonicalMapStore() {
+        val record = contact().copy(theirGrid = "PI59AB12", myGrid = "OL62AB34",
+            theirFullGrids = listOf("PI59AB12", "PI59CD56"), myFullGrids = listOf("OL62AB34"),
+            iota = "OC-034", myIota = "AS-137")
+        val detail = confirmedGridStore(listOf(record)).qsosByGrid.getValue("PI59").single()
+        assertEquals(record.theirFullGrids, detail.theirFineGrids)
+        assertEquals(record.myFullGrids, detail.myFineGrids)
+        assertEquals(record.iota, detail.iota)
+        assertEquals(record.myIota, detail.myIota)
+    }
+
+    @Test fun indonesianContactWithoutGridStillCountsForStateBasedWaipa() {
+        val record = contact().copy(theirCallsign = "YB0ABC", dxcc = 327, region = "JK")
+        val store = confirmedGridStore(listOf(record))
+        assertEquals(setOf("JK"), store.awards.first { it.type == AwardType.WAIPA }.workedKeys)
+        assertTrue(store.qsosByGrid.isEmpty())
     }
 }

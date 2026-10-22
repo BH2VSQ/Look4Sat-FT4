@@ -92,13 +92,17 @@ fun buildWavelogGridData(records: List<QsoRecord>): WavelogGridData {
     records.forEach { record ->
         val isSatellite = record.satelliteName.isNotBlank() || record.propagationMode.equals("SAT", true)
         if (!isSatellite) return@forEach
-        val theirGrids = (listOf(record.theirGrid) + record.theirVuccGrids)
-            .map { it.trim().uppercase(Locale.US).take(4) }
-            .filter(::isValidGrid4)
-            .distinct()
+        val theirLocators = record.theirFullGrids.ifEmpty {
+            listOf(record.theirGrid) + record.theirVuccGrids
+        }.map { it.trim().uppercase(Locale.US) }
+            .filter { it.length >= 4 && isValidGrid4(it.take(4)) }
+        val theirGrids = theirLocators.map { it.take(4) }.distinct()
+        val theirFineGrids = theirLocators.filter { it.length >= 6 }.distinct()
         if (theirGrids.isEmpty()) return@forEach
-        val myGrids = (listOf(record.myGrid) + record.vuccGrids)
-            .map { it.trim().uppercase(Locale.US).take(4) }
+        val myLocators = record.myFullGrids.ifEmpty {
+            listOf(record.myGrid) + record.vuccGrids
+        }.map { it.trim().uppercase(Locale.US) }
+        val myGrids = myLocators.map { it.take(4) }
             .filter(::isValidGrid4)
             .toSet()
         roamed += myGrids
@@ -114,10 +118,14 @@ fun buildWavelogGridData(records: List<QsoRecord>): WavelogGridData {
             country = record.country.ifBlank { null },
             cqz = record.cqZone,
             state = record.region.ifBlank { null },
+            iota = record.iota.ifBlank { null },
             myGrid = myGrids.sorted().firstOrNull(),
             myGrids = myGrids,
+            myFineGrids = myLocators.filter { it.length >= 6 }.distinct(),
+            myIota = record.myIota.ifBlank { null },
             myCallsign = record.myCallsign.ifBlank { null },
-            theirGrids = theirGrids
+            theirGrids = theirGrids,
+            theirFineGrids = theirFineGrids
         )
         theirGrids.forEach { grid ->
             grids += grid

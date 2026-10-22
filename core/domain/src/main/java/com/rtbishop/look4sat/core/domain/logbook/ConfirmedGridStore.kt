@@ -34,11 +34,17 @@ fun confirmedGridStore(records: List<QsoRecord>): ConfirmedGridStore {
             state = record.region.ifBlank { null },
             myGrid = myGrids.firstOrNull(),
             myGrids = myGrids,
-            theirGrids = theirGrids
+            theirGrids = theirGrids,
+            iota = record.iota.ifBlank { null },
+            myIota = record.myIota.ifBlank { null },
+            theirFineGrids = record.theirFullGrids.ifEmpty { listOf(record.theirGrid) }
+                .filter { it.length >= 6 },
+            myFineGrids = record.myFullGrids.ifEmpty { listOf(record.myGrid) }
+                .filter { it.length >= 6 }
         )
         theirGrids.forEach { grid -> byGrid.getOrPut(grid) { mutableListOf() }.add(qso) }
         qso
     }
     // DXCC / zones / regions still count when a confirmed satellite QSO has no locator.
-    return ConfirmedGridStore(byGrid, AwardCalculator.calculate(byGrid, all))
+    return ConfirmedGridStore(byGrid, AwardCalculator.calculate(byGrid, all = all))
 }

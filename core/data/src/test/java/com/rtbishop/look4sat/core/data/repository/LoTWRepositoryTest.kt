@@ -19,6 +19,7 @@
 package com.rtbishop.look4sat.core.data.repository
 
 import com.rtbishop.look4sat.core.domain.logbook.isSatellite
+import com.rtbishop.look4sat.core.domain.logbook.toConfirmedRecord
 import com.rtbishop.look4sat.core.domain.repository.LoTWResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -26,6 +27,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LoTWRepositoryTest {
+    @Test fun unifiedSyncRetainsOriginalLocatorsAndBothIotaReferences() {
+        val body = "<EOH><QSO_DATE:8>20261021<TIME_ON:6>120000<CALL:6>YB0ABC" +
+            "<PROP_MODE:3>SAT<SAT_NAME:5>SO-50<MODE:2>FM<GRIDSQUARE:8>OI33AB12" +
+            "<MY_GRIDSQUARE:8>OL62AB34<IOTA:6>OC-021<MY_IOTA:6>AS-137<QSL_RCVD:1>Y<EOR>"
+        val result = LoTWRepository().parseSyncReport(body, "BA7OPF", true)!!
+        val detail = result.qsos.getValue("OI33").single()
+        assertEquals(listOf("OI33AB12"), detail.theirFineGrids)
+        assertEquals(listOf("OL62AB34"), detail.myFineGrids)
+        assertEquals("OC-021", detail.iota)
+        assertEquals("AS-137", detail.myIota)
+    }
 
     private val repo = LoTWRepository()
 
@@ -145,6 +157,48 @@ class LoTWRepositoryTest {
         assertEquals("2M", qso.bandDown)
         assertEquals("U/V", qso.bandLabel)
         assertEquals(2026, java.time.Instant.ofEpochMilli(qso.epochMs).atZone(java.time.ZoneOffset.UTC).year)
+    }
+
+    @Test
+    fun parseQsosKeepsFineGridAndOppositeIotaForWaipa() {
+        val sat = "<CALL:6>YB0ABC\n" +
+            "<IOTA:6>OC-177\n" +
+            "<GRIDSQUARE:6>OI33KS\n" +
+            "<PROP_MODE:3>SAT\n" +
+            "<DXCC:3>327\n" +
+            "<EOR>\n"
+        val qso = repo.parseConfirmedGridQsos(report(sat))!!.getValue("OI33").single()
+        assertEquals(listOf("OI33KS"), qso.theirFineGrids)
+        assertEquals("OC-177", qso.iota)
+        assertEquals(327, qso.dxcc)
+        val other = "<CALL:6>YB9XYZ\n" +
+            "<IOTA:6>OC-022\n" +
+            "<VUCC_GRIDS:13>OI71oi,OI72ak\n" +
+            "<PROP_MODE:3>SAT\n<EOR>\n"
+        val multi = repo.parseConfirmedGridQsos(report(other))!!.getValue("OI71").single()
+        assertEquals(listOf("OI71OI", "OI72AK"), multi.theirFineGrids)
+        assertEquals("OC-022", multi.iota)
+    }
+
+
+    @Test
+    fun parseQsosKeepsOriginalEightCharLocatorsAndIotaInLogbookBridge() {
+        val adi = "<CALL:6>YB9ABC\n<IOTA:6>OC-022\n<PROP_MODE:3>SAT\n" +
+            "<GRIDSQUARE:8>OI71OI42\n<VUCC_GRIDS:15>PI59PC55,PI79AD\n" +
+            "<MY_GRIDSQUARE:8>OL62TI99\n<MY_VUCC_GRIDS:6>OL61AT\n<MY_IOTA:6>AS-129\n<EOR>\n"
+        val grid = repo.parseConfirmedGridQsos(report(adi))!!.getValue("OI71").single()
+        assertEquals(listOf("OI71", "PI59", "PI79"), grid.theirGrids)
+        assertEquals(listOf("OI71OI42", "PI59PC55", "PI79AD"), grid.theirFineGrids)
+        assertEquals(setOf("OL62", "OL61"), grid.myGrids)
+        assertEquals(listOf("OL62TI99", "OL61AT"), grid.myFineGrids)
+        assertEquals("OC-022", grid.iota)
+        assertEquals("AS-129", grid.myIota)
+        val log = grid.toConfirmedRecord("BA7OPF")
+        assertEquals("OI71OI42", log.theirGrid)
+        assertEquals("OC-022", log.iota)
+        assertEquals("AS-129", log.myIota)
+        assertEquals(listOf("OI71OI42", "PI59PC55", "PI79AD"), log.theirFullGrids)
+        assertEquals(listOf("OL62TI99", "OL61AT"), log.myFullGrids)
     }
 
     @Test

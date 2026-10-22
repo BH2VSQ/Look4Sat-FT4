@@ -1001,4 +1001,5 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="rc_cw_spacing">Farnsworth: %1$s</string>
     <string name="rc_cw_spacing_off">Off</string>
     <string name="rc_cw_save_on_radio">Apply here; save permanently with handset MENU.</string>
+
 </resources>

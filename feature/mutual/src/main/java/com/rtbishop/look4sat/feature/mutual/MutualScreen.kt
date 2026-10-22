@@ -73,6 +73,7 @@ import com.rtbishop.look4sat.core.domain.repository.TrackSampleData
 import com.rtbishop.look4sat.core.presentation.GridTargetChip
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.ScreenColumn
+import com.rtbishop.look4sat.core.presentation.SwipeableItem
 import com.rtbishop.look4sat.core.presentation.TopBar
 import com.rtbishop.look4sat.core.presentation.isVerticalLayout
 import java.text.SimpleDateFormat
@@ -163,6 +164,8 @@ fun MutualScreen(
             isVertical = isVertical,
             onQuery = { viewModel.queryMutualPasses() },
             onSelectPass = viewModel::onSelectPass,
+            onFocusCatNum = viewModel::onFocusCatNum,
+            onClearFocus = viewModel::onClearFocus,
             onNavigateToRadar = navigateToRadar,
             onStationALat = viewModel::onStationALat,
             onStationALon = viewModel::onStationALon,
@@ -188,6 +191,8 @@ private fun MutualContent(
     isVertical: Boolean,
     onQuery: () -> Unit,
     onSelectPass: (Int) -> Unit,
+    onFocusCatNum: (Int) -> Unit,
+    onClearFocus: () -> Unit,
     onNavigateToRadar: (Int, Long, MutualPassData?) -> Unit,
     onStationALat: (String) -> Unit,
     onStationALon: (String) -> Unit,
@@ -235,6 +240,14 @@ private fun MutualContent(
     // page stays at the top). onGloballyPositioned fires on the first real
     // layout, so the subsequent scrollToItem always has a measured list.
     var listReady by remember { mutableStateOf(false) }
+
+    // Match the Passes page's swipe behavior: focus one satellite or clear
+    // the focus to show results for every satellite. Keep original indices so
+    // expanding a pass still targets the correct item after filtering.
+    val visiblePasses = remember(state.mutualPasses, state.focusedCatNum) {
+        visibleMutualPasses(state.mutualPasses, state.focusedCatNum)
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -364,7 +377,12 @@ private fun MutualContent(
         }
 
         // Results
-        itemsIndexed(state.mutualPasses) { index, pass ->
+        itemsIndexed(
+            items = visiblePasses,
+            key = { _, entry -> "${entry.second.catNum}:${entry.second.startTime}" }
+        ) { _, entry ->
+            val index = entry.first
+            val pass = entry.second
             val mutualData = MutualPassData(
                 samples = pass.elevationSamples,
                 trackSamples = pass.trackSamples.map {
@@ -387,16 +405,19 @@ private fun MutualContent(
                 stationBLongitude = com.rtbishop.look4sat.core.domain.utility.qthToPosition(state.stationBGrid)?.longitude
                     ?: state.stationBLon.toDoubleOrNull()
             )
-            MutualPassCard(
-                pass = pass,
-                isExpanded = state.selectedPassIndex == index,
-                timeFormat = timeFormat,
-                isUtc = state.isUtc,
-                minElevA = state.stationAMinElev,
-                minElevB = state.stationBMinElev,
-                onClick = { onSelectPass(if (state.selectedPassIndex == index) -1 else index) },
-                onNavigateToRadar = { onNavigateToRadar(pass.catNum, pass.startTime, mutualData) }
-            )
+            SwipeableItem(
+                onSwipeRight = { onFocusCatNum(pass.catNum) },
+                onSwipeLeft = onClearFocus
+            ) {
+                MutualPassCard(
+                    pass = pass,
+                    isExpanded = state.selectedPassIndex == index,
+                    timeFormat = timeFormat,
+                    isUtc = state.isUtc,
+                    onClick = { onSelectPass(if (state.selectedPassIndex == index) -1 else index) },
+                    onNavigateToRadar = { onNavigateToRadar(pass.catNum, pass.startTime, mutualData) }
+                )
+            }
         }
     }
 
@@ -648,8 +669,6 @@ private fun MutualPassCard(
     isExpanded: Boolean,
     timeFormat: SimpleDateFormat,
     isUtc: Boolean,
-    minElevA: Double,
-    minElevB: Double,
     onClick: () -> Unit,
     onNavigateToRadar: () -> Unit
 ) {
@@ -657,15 +676,11 @@ private fun MutualPassCard(
     // are controlled by this single progress value for bidirectional drag sync.
     var dragProgress by remember(pass) { mutableFloatStateOf(0.5f) }
 
-    // Filter to only show the portion where both stations are above their minElev
-    val visibleSamples = remember(pass, minElevA, minElevB) {
-        pass.elevationSamples.filter { (_, elev) ->
-            elev.first >= minElevA && elev.second >= minElevB
-        }
-    }
-    val visibleTracks = remember(pass, minElevA, minElevB) {
-        pass.trackSamples.filter { it.elevationA >= minElevA && it.elevationB >= minElevB }
-    }
+    // Minimum-elevation sliders decide whether a pass qualifies for the result list,
+    // not how much of its curve or radar track is drawn. Keep the full above-horizon
+    // mutual-pass samples so both elevation curves remain visible down to 0°.
+    val visibleSamples = remember(pass) { pass.elevationSamples }
+    val visibleTracks = remember(pass) { pass.trackSamples }
     val visibleStart = visibleSamples.firstOrNull()?.first ?: pass.startTime
     val visibleEnd = visibleSamples.lastOrNull()?.first ?: pass.endTime
     val adjustedMaxElev = maxOf(

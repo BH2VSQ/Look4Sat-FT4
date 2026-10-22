@@ -145,7 +145,13 @@ class LoTWRepository : ILoTWRepository {
                 state = record.region.ifBlank { null },
                 myGrid = myGrids.firstOrNull(),
                 myGrids = myGrids,
-                theirGrids = theirGrids
+                theirGrids = theirGrids,
+                iota = record.iota.ifBlank { null },
+                myIota = record.myIota.ifBlank { null },
+                theirFineGrids = record.theirFullGrids.ifEmpty { listOf(record.theirGrid) }
+                    .filter { it.length >= 6 },
+                myFineGrids = record.myFullGrids.ifEmpty { listOf(record.myGrid) }
+                    .filter { it.length >= 6 }
             )
             theirGrids.forEach { grid ->
                 gridQsos.getOrPut(grid) { mutableListOf() }.add(detail)
@@ -340,6 +346,7 @@ class LoTWRepository : ILoTWRepository {
         var country: String? = null
         var cqz: Int? = null
         var state: String? = null
+        var iota: String? = null
         // Own-station (台址) fields: MY_GRIDSQUARE + MY_VUCC_GRIDS give the
         // full grid set of the station location; the remaining MY_* fields
         // together identify the station location (one callsign can own
@@ -353,6 +360,8 @@ class LoTWRepository : ILoTWRepository {
         var myIota: String? = null
         var myCountry: String? = null
         val gridsInRecord = mutableListOf<String>()
+        val fineGridsInRecord = mutableListOf<String>()
+        val fineMyGridsInRecord = mutableListOf<String>()
 
         fun emitRecord() {
             if (propMode != "SAT" || gridsInRecord.isEmpty()) return
@@ -370,12 +379,16 @@ class LoTWRepository : ILoTWRepository {
                 call = call, epochMs = epochMs, satName = satName,
                 mode = mode, bandUp = bandUp, bandDown = bandDown,
                 dxcc = dxcc, country = country, cqz = cqz, state = state,
+                iota = iota,
                 myGrid = myGrids.firstOrNull(),
                 myGrids = myGrids,
+                myFineGrids = fineMyGridsInRecord.distinct(),
+                myIota = myIota,
                 myCallsign = myCallsign,
                 stationKey = stationKey,
                 // Copy, never the live buffer — resetRecord() clears it.
-                theirGrids = gridsInRecord.distinct().toList()
+                theirGrids = gridsInRecord.distinct().toList(),
+                theirFineGrids = fineGridsInRecord.distinct().toList()
             )
             for (grid in gridsInRecord) {
                 result.getOrPut(grid) { mutableListOf() }.add(qso)
@@ -385,11 +398,13 @@ class LoTWRepository : ILoTWRepository {
         fun resetRecord() {
             propMode = null; call = ""; qsoDate = ""; timeOn = ""
             satName = ""; mode = ""; bandUp = ""; bandDown = ""
-            dxcc = null; country = null; cqz = null; state = null
+            dxcc = null; country = null; cqz = null; state = null; iota = null
             myGrids = mutableSetOf()
             myCallsign = null; myDxcc = null; myState = null
             myCq = null; myItu = null; myIota = null; myCountry = null
             gridsInRecord.clear()
+            fineGridsInRecord.clear()
+            fineMyGridsInRecord.clear()
         }
 
         for (raw in body.lineSequence()) {
@@ -423,13 +438,18 @@ class LoTWRepository : ILoTWRepository {
                     cqz = adifValue(line).toIntOrNull()
                 line.startsWith("<STATE:") ->
                     state = adifValue(line).trim().ifBlank { null }?.let { normalizeState(it) }
+                line.startsWith("<IOTA:") ->
+                    iota = adifValue(line).trim().uppercase().ifBlank { null }
                 line.startsWith("<MY_GRIDSQUARE:") -> {
                     // Own-station grid (must not be confused with GRIDSQUARE —
                     // the opposite station's grid). Recorded per QSO so awards
                     // can be counted per operated grid. A station location may
                     // also carry MY_VUCC_GRIDS (below) for multi-grid roaming.
                     val value = adifValue(line)
-                    if (value.length >= 4) myGrids.add(value.take(4).uppercase())
+                    if (value.length >= 4) {
+                        myGrids.add(value.take(4).uppercase())
+                        if (value.length >= 6) fineMyGridsInRecord.add(value.uppercase())
+                    }
                 }
                 line.startsWith("<MY_VUCC_GRIDS:") -> {
                     // Own-station VUCC grids: a comma-separated list LoTW emits
@@ -440,7 +460,10 @@ class LoTWRepository : ILoTWRepository {
                     // count. Same split/truncate as VUCC_GRIDS below.
                     adifValue(line).split(',').forEach { grid ->
                         val field = grid.trim().uppercase()
-                        if (field.length >= 4) myGrids.add(field.take(4))
+                        if (field.length >= 4) {
+                            myGrids.add(field.take(4))
+                            if (field.length >= 6) fineMyGridsInRecord.add(field)
+                        }
                     }
                 }
                 // Remaining MY_* fields identify the station location (台址):
@@ -466,7 +489,12 @@ class LoTWRepository : ILoTWRepository {
                     // several squares; split and keep every 4-char field.
                     adifValue(line).split(',').forEach { grid ->
                         val field = grid.trim().uppercase()
-                        if (field.length >= 4) gridsInRecord.add(field.take(4))
+                        if (field.length >= 4) {
+                            gridsInRecord.add(field.take(4))
+                            // Retain the original 6/8-char position for WAIPA boundaries;
+                            // VUCC and the map store remain 4-char grouped.
+                            if (field.length >= 6) fineGridsInRecord.add(field)
+                        }
                     }
                 }
             }

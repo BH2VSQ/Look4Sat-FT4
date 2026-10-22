@@ -20,7 +20,7 @@ import com.rtbishop.look4sat.core.data.database.entity.QsoEntity
  * upload receipts). Kept apart from [Look4SatDb] so existing installations
  * never need a migration of the satellite database.
  */
-@Database(entities = [QsoEntity::class], version = 6, exportSchema = false)
+@Database(entities = [QsoEntity::class], version = 7, exportSchema = false)
 abstract class QsoDatabase : RoomDatabase() {
     abstract fun qsoDao(): QsoDao
 }
@@ -100,5 +100,20 @@ private fun SupportSQLiteDatabase.addColumnIfMissing(name: String, definition: S
     }
     if (!exists) {
         execSQL("ALTER TABLE qso_records ADD COLUMN $name $definition")
+    }
+}
+
+/**
+ * v6 → v7: retain IOTA and every original 4/6/8-character locator in the
+ * logbook. These columns are additive; existing records and QSO identity are
+ * preserved, with empty values for historical data that was already discarded.
+ */
+val QSO_MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        QSO_MIGRATION_5_6.migrate(db)
+        db.addColumnIfMissing("iota", "TEXT NOT NULL DEFAULT ''")
+        db.addColumnIfMissing("theirFullGrids", "TEXT NOT NULL DEFAULT ''")
+        db.addColumnIfMissing("myFullGrids", "TEXT NOT NULL DEFAULT ''")
+        db.addColumnIfMissing("myIota", "TEXT NOT NULL DEFAULT ''")
     }
 }

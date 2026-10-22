@@ -240,6 +240,8 @@ class SettingsRepo(
                         country = o.optString("cty").ifBlank { null },
                         cqz = o.optInt("cq", 0).takeIf { it > 0 },
                         state = o.optString("st").ifBlank { null },
+                        iota = o.optString("io").ifBlank { null },
+                        myIota = o.optString("mio").ifBlank { null },
                         // Own-grid field: absent in pre-myGrid data -> null.
                         myGrid = o.optString("mg").ifBlank { null },
                         // Multi-grid 台址 fields (v4.4.7-ba7opf.16+): "mgs" is
@@ -254,7 +256,17 @@ class SettingsRepo(
                             ?: o.optString("mg").ifBlank { null }?.let { setOf(it) }
                             ?: emptySet(),
                         myCallsign = o.optString("mc").ifBlank { null },
-                        stationKey = o.optString("sk").ifBlank { null }
+                        stationKey = o.optString("sk").ifBlank { null },
+                        theirFineGrids = o.optJSONArray("tg6")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { index ->
+                                arr.optString(index).takeIf { it.isNotBlank() }
+                            }
+                        }.orEmpty(),
+                        myFineGrids = o.optJSONArray("mgf")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { index ->
+                                arr.optString(index).takeIf { it.isNotBlank() }
+                            }
+                        }.orEmpty()
                     )
                 }
                 if (list.isNotEmpty()) result[grid] = list
@@ -282,10 +294,14 @@ class SettingsRepo(
                         .put("cty", q.country ?: "")
                         .put("cq", q.cqz ?: 0)
                         .put("st", q.state ?: "")
+                        .put("io", q.iota ?: "")
+                        .put("mio", q.myIota ?: "")
                         .put("mg", q.myGrid ?: "")
                         .put("mgs", org.json.JSONArray(q.myGrids.sorted()))
                         .put("mc", q.myCallsign ?: "")
                         .put("sk", q.stationKey ?: "")
+                        .put("tg6", org.json.JSONArray(q.theirFineGrids))
+                        .put("mgf", org.json.JSONArray(q.myFineGrids))
                 )
             }
             root.put(grid, array)
