@@ -561,7 +561,14 @@ fun MainScreen(
                         }
                         entry<Screen.AMSAT> { SatStatusDestination() }
                         entry<Screen.PassSchedule> {
-                            PassScheduleDestination(navigateUp = navigateBack)
+                            PassScheduleDestination(
+                                navigateUp = navigateBack,
+                                navigateToRadar = { catNum, aosTime ->
+                                    container.setMutualPassData(MutualPassData())
+                                    container.satelliteRepo.selectPass(catNum, aosTime)
+                                    navigateToRadar()
+                                }
+                            )
                         }
                         entry<Screen.Logbook> {
                             LogbookScreenDestination(navigateUp = navigateBack, navigateToMap = navigateToMap)

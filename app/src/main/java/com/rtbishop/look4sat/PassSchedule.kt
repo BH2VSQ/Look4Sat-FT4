@@ -108,6 +108,7 @@ import java.util.TimeZone
 private const val PASS_SCHEDULE_PREFS = "pass_schedule_preferences"
 private const val PASS_SCHEDULE_CHANNEL = "satellite_pass_schedule"
 private const val PASS_SCHEDULE_WINDOW_HOURS = 72
+private const val PASS_SCHEDULE_CACHE_TTL_MS = 5 * 60_000L
 private val PASS_REMINDER_PRESETS = listOf(5, 10, 15, 30, 60)
 private val PASS_REMINDER_OPTIONS = listOf(0) + PASS_REMINDER_PRESETS
 
@@ -117,6 +118,31 @@ private data class PassScheduleConfig(
     /** 0 means at AOS; positive values are minutes before AOS. */
     val reminderMinutes: Set<Int> = emptySet()
 )
+
+/** Cache pass predictions across navigation to the radar detail screen. */
+private data class PassScheduleCalculationKey(
+    val selectedSatelliteIds: Set<Int>,
+    val trackedSatelliteIds: Set<Int>,
+    val minimumElevation: Float,
+    val satellitesFingerprint: Int
+)
+
+private object PassSchedulePassCache {
+    private var key: PassScheduleCalculationKey? = null
+    private var passes: List<OrbitalPass> = emptyList()
+    private var calculatedAtMillis: Long = 0L
+
+    fun get(key: PassScheduleCalculationKey): List<OrbitalPass>? {
+        val ageMillis = System.currentTimeMillis() - calculatedAtMillis
+        return if (this.key == key && ageMillis in 0L..PASS_SCHEDULE_CACHE_TTL_MS) passes else null
+    }
+
+    fun put(key: PassScheduleCalculationKey, passes: List<OrbitalPass>) {
+        this.key = key
+        this.passes = passes
+        calculatedAtMillis = System.currentTimeMillis()
+    }
+}
 
 private data class ScheduledPass(
     val catNum: Int,
@@ -431,7 +457,10 @@ class PassScheduleAlarmReceiver : BroadcastReceiver() {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun PassScheduleDestination(navigateUp: () -> Unit) {
+fun PassScheduleDestination(
+    navigateUp: () -> Unit,
+    navigateToRadar: (Int, Long) -> Unit
+) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val satellites by container.satelliteRepo.satellites.collectAsStateWithLifecycle()
@@ -440,7 +469,23 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
     val stationPosition by container.settingsRepo.stationPosition.collectAsStateWithLifecycle()
     val isUtc = otherSettings.stateOfUtc
     var config by remember(context) { mutableStateOf(PassScheduleStore.readConfig(context)) }
-    var passes by remember { mutableStateOf<List<OrbitalPass>>(emptyList()) }
+    val passCalculationKey = remember(
+        satellites,
+        currentlyTrackedIds,
+        config.satelliteIds,
+        config.minimumElevation
+    ) {
+        PassScheduleCalculationKey(
+            selectedSatelliteIds = config.satelliteIds,
+            trackedSatelliteIds = currentlyTrackedIds.toSet(),
+            minimumElevation = config.minimumElevation,
+            satellitesFingerprint = satellites.hashCode()
+        )
+    }
+    // Restore previously calculated rows immediately when returning from pass details.
+    var passes by remember(passCalculationKey) {
+        mutableStateOf(PassSchedulePassCache.get(passCalculationKey) ?: emptyList())
+    }
     var isCalculating by remember { mutableStateOf(false) }
     var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
     var minimumElevationSlider by remember(config.minimumElevation) { mutableStateOf(config.minimumElevation) }
@@ -481,13 +526,7 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
 
     BackHandler(enabled = showTrackingSettings.value) { showTrackingSettings.value = false }
 
-    LaunchedEffect(
-        satellites,
-        currentlyTrackedIds,
-        config.satelliteIds,
-        config.minimumElevation,
-        config.reminderMinutes
-    ) {
+    LaunchedEffect(passCalculationKey, config.reminderMinutes) {
         // The repository is populated asynchronously after app startup. Wait for it
         // when the tracking selection is non-empty, rather than clearing a saved schedule.
         if (satellites.isEmpty() && currentlyTrackedIds.isNotEmpty()) return@LaunchedEffect
@@ -502,25 +541,32 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
             return@LaunchedEffect
         }
 
-        isCalculating = true
-        try {
-            val calculatedPasses = if (config.satelliteIds.isEmpty()) {
-                emptyList()
-            } else {
-                container.satelliteRepo.getSchedulePasses(
-                    catNums = config.satelliteIds,
-                    startTime = System.currentTimeMillis(),
-                    hoursAhead = PASS_SCHEDULE_WINDOW_HOURS,
-                    minElevation = config.minimumElevation.toDouble()
-                )
+        val cachedPasses = PassSchedulePassCache.get(passCalculationKey)
+        val calculatedPasses = if (cachedPasses != null) {
+            // Navigation back to this destination can reuse the recent prediction.
+            cachedPasses
+        } else {
+            isCalculating = true
+            try {
+                if (config.satelliteIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    container.satelliteRepo.getSchedulePasses(
+                        catNums = config.satelliteIds,
+                        startTime = System.currentTimeMillis(),
+                        hoursAhead = PASS_SCHEDULE_WINDOW_HOURS,
+                        minElevation = config.minimumElevation.toDouble()
+                    )
+                }
+            } finally {
+                isCalculating = false
             }
-            passes = calculatedPasses
-            PassScheduleStore.saveConfig(context, config)
-            // Only replace alarms after the corresponding schedule calculation completes.
-            PassScheduleNotificationScheduler.replacePasses(context, config, calculatedPasses)
-        } finally {
-            isCalculating = false
         }
+        passes = calculatedPasses
+        PassSchedulePassCache.put(passCalculationKey, calculatedPasses)
+        PassScheduleStore.saveConfig(context, config)
+        // Refresh alarms when reminders change, reusing cached predictions when possible.
+        PassScheduleNotificationScheduler.replacePasses(context, config, calculatedPasses)
     }
 
     Scaffold(
@@ -717,6 +763,7 @@ fun PassScheduleDestination(navigateUp: () -> Unit) {
                         items(day.passes, key = { "${it.catNum}-${it.aosTime}" }) { pass ->
                             PassScheduleItem(
                                 pass = pass,
+                                navigateToRadar = navigateToRadar,
                                 now = currentTime,
                                 isUtc = isUtc,
                                 satelliteRepo = container.satelliteRepo,
@@ -816,6 +863,7 @@ private fun findSunRiseSetForDisplayDay(
 @Composable
 private fun PassScheduleItem(
     pass: OrbitalPass,
+    navigateToRadar: (Int, Long) -> Unit,
     now: Long,
     isUtc: Boolean,
     satelliteRepo: com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo,
@@ -858,7 +906,7 @@ private fun PassScheduleItem(
         stringResource(R.string.pass_schedule_countdown, countdown)
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().clickable { navigateToRadar(pass.catNum, pass.aosTime) }) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
