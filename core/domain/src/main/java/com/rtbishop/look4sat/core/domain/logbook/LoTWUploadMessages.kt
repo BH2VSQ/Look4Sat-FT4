@@ -36,6 +36,8 @@ fun LoTWProblem.label(): String = when (this) {
     LoTWProblem.CALLSIGN_MISMATCH -> "MY callsign does not match the certificate"
     LoTWProblem.INVALID_CONTACT -> "invalid callsign/record"
     LoTWProblem.STATION_GRID -> "station grid missing"
+    LoTWProblem.STATION_GRID_COUNT -> "a station location holds 1, 2 or 4 grids — not 3"
+    LoTWProblem.STATION_GRID_NOT_ADJACENT -> "station grids are not a boundary pair or one four-way corner"
     LoTWProblem.STATION_REGION -> "station region missing"
     LoTWProblem.STATION_ZONE -> "station zones missing"
     LoTWProblem.STATION_IOTA -> "station IOTA missing"
