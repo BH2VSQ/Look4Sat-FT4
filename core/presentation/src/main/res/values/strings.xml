@@ -4,6 +4,7 @@
     <string name="app_name" translatable="false">Look4Sat-BA7OPF</string>
     <string name="btn_accept">Accept</string>
     <string name="btn_cancel">Cancel</string>
+    <string name="btn_confirm">Confirm</string>
     <string name="empty_list_message">No data to show</string>
 
     <!-- Navigation -->
@@ -238,7 +239,8 @@
     <string name="prefs_wavelog_upload_rights_rw">Key: read &amp; write — uploads enabled</string>
     <string name="prefs_wavelog_upload_rights_r">Key is read-only — create a read &amp; write key in Wavelog → API</string>
     <string name="prefs_wavelog_upload_hint">Tap Fetch stations to pick the station profile uploads go through. The key needs read &amp; write permission.</string>
-    <string name="prefs_lotw_title">LoTW confirmed grids</string>
+    <string name="prefs_lotw_sync_title">LoTW log sync</string>
+    <string name="prefs_lotw_title">LoTW log sync</string>
     <string name="prefs_lotw_callsign">LoTW callsign</string>
     <string name="prefs_lotw_password">LoTW password</string>
     <string name="prefs_lotw_hint">Confirmed grids: %1$d · credentials stay on this device</string>
@@ -259,6 +261,8 @@
     <string name="lotw_sync_progress_saving">Processing downloaded data…</string>
     <string name="lotw_sync_progress_count">Syncing %1$d QSOs…</string>
     <string name="lotw_sync_progress_qso">Syncing %1$d QSOs, ~%2$d s remaining</string>
+    <string name="lotw_sync_cancel_title">Cancel LoTW sync?</string>
+    <string name="lotw_sync_cancel_message">Canceling will stop this sync. The next sync will need to start from the beginning. Do you want to cancel?</string>
     <string name="prefs_locator_text">Set station\'s position using locator</string>
 
     <string name="btn_delete">Delete</string>
@@ -614,6 +618,8 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="mutual_lon">Lon</string>
     <string name="mutual_grid">Grid</string>
     <string name="mutual_grid_hint">Supports 4/6/8-char Maidenhead grid; or enter lat/lon directly</string>
+    <string name="mutual_pick_grid_on_map">Choose grid on map</string>
+    <string name="mutual_pick_grid_title">Select a grid</string>
     <string name="mutual_min_elevation">Min elevation: %d°</string>
     <string name="mutual_time_range">Time range</string>
     <string name="mutual_filter_transponder">Transponders</string>

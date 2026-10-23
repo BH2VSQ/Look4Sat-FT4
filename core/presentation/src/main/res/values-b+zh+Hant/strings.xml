@@ -3,6 +3,7 @@
     <!-- Commmon -->
     <string name="btn_accept">确定</string>
     <string name="btn_cancel">取消</string>
+    <string name="btn_confirm">确认</string>
     <string name="empty_list_message">没有数据可显示</string>
 
     <!-- Navigation -->
@@ -207,7 +208,8 @@
     <string name="prefs_wavelog_upload_rights_rw">密钥：读写 — 可上传</string>
     <string name="prefs_wavelog_upload_rights_r">密钥只读 — 请在 Wavelog → API 生成「读写」密钥</string>
     <string name="prefs_wavelog_upload_hint">点「获取站点」选择上传使用的台站档案；密钥需要「读写」权限。</string>
-    <string name="prefs_lotw_title">LoTW 已确认网格</string>
+    <string name="prefs_lotw_sync_title">LoTW 同步日志</string>
+    <string name="prefs_lotw_title">LoTW 同步日志</string>
     <string name="prefs_lotw_callsign">LoTW 呼号</string>
     <string name="prefs_lotw_password">LoTW 密码</string>
     <string name="prefs_lotw_hint">已确认网格：%1$d · 凭据仅保存在本机</string>
@@ -228,6 +230,8 @@
     <string name="lotw_sync_progress_saving">正在处理下载的数据…</string>
     <string name="lotw_sync_progress_count">本次同步 %1$d 条 QSO…</string>
     <string name="lotw_sync_progress_qso">本次同步 %1$d 条 QSO，预计还需 %2$d 秒</string>
+    <string name="lotw_sync_cancel_title">取消 LoTW 同步？</string>
+    <string name="lotw_sync_cancel_message">取消后，本次同步将停止。下次同步时需要从头开始。确定要取消吗？</string>
     <string name="prefs_locator_text">使用梅登黑德网格设置站点位置</string>
 
     <string name="btn_delete">删除</string>
@@ -579,6 +583,8 @@
     <string name="mutual_lon">经度</string>
     <string name="mutual_grid">网格</string>
     <string name="mutual_grid_hint">支持 4/6/8 位 Maidenhead 网格；也可直接输入经纬度</string>
+    <string name="mutual_pick_grid_on_map">在地图上选择网格</string>
+    <string name="mutual_pick_grid_title">选择网格</string>
     <string name="mutual_min_elevation">最小仰角：%d°</string>
     <string name="mutual_time_range">时间范围</string>
     <string name="mutual_filter_transponder">转发器</string>

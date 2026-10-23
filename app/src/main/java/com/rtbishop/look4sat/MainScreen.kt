@@ -100,6 +100,7 @@ import com.rtbishop.look4sat.core.presentation.LogbookDestination
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.LoTWUploadDestination as LoTWUploadRoute
 import com.rtbishop.look4sat.core.presentation.RadarDestination as RadarRoute
+import com.rtbishop.look4sat.core.presentation.MatchGridPickerDestination
 import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
 import com.rtbishop.look4sat.core.presentation.RadarMatchDestination
 import com.rtbishop.look4sat.core.presentation.Screen
@@ -413,10 +414,16 @@ fun MainScreen(
 ) {
     val backStack = rememberNavBackStack(Screen.Passes)
     val currentKey = backStack.lastOrNull()
-    val navigateBack: () -> Unit = { backStack.removeLastOrNull() }
+    val navigateBack: () -> Unit = {
+        val leavingGridPicker = backStack.lastOrNull() is MatchGridPickerDestination
+        backStack.removeLastOrNull()
+        if (leavingGridPicker) mutualViewModel.requestListScrollRestore()
+    }
     val navigateToScreen: (Screen) -> Unit = { screen ->
+        val leavingGridPicker = backStack.lastOrNull() is MatchGridPickerDestination
         while (backStack.size > 1) backStack.removeAt(backStack.size - 1)
         if (screen !is Screen.Passes) backStack.add(screen)
+        if (leavingGridPicker) mutualViewModel.requestListScrollRestore()
     }
     val navigateToMap: () -> Unit = { navigateToScreen(Screen.Map) }
     LaunchedEffect(openMapRequest) {
@@ -527,6 +534,18 @@ fun MainScreen(
                                 onOpenLoTWStation = navigateToLoTWStation
                             )
                         }
+                        entry<MatchGridPickerDestination> { picker ->
+                            MapDestination(
+                                mapFilterViewModel = mapFilterViewModel,
+                                gridPickerMode = true,
+                                onPickGrid = { grid ->
+                                    if (picker.stationA) mutualViewModel.onStationAGrid(grid)
+                                    else mutualViewModel.onStationBGrid(grid)
+                                    navigateBack()
+                                },
+                                onNavigateBack = navigateBack
+                            )
+                        }
                         entry<Screen.Mutual> {
                             MutualScreen(
                                 viewModel = mutualViewModel,
@@ -534,6 +553,9 @@ fun MainScreen(
                                     container.setMutualPassData(pass ?: MutualPassData())
                                     container.satelliteRepo.selectPass(catNum, aosTime)
                                     navigateToRadar()
+                                },
+                                onPickGrid = { stationA ->
+                                    backStack.add(MatchGridPickerDestination(stationA))
                                 }
                             )
                         }

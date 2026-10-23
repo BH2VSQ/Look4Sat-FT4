@@ -79,6 +79,34 @@ class MutualViewModelTest {
         assertEquals(0.0, state.stationAMinElev, 0.0)
     }
 
+    @Test
+    fun `grid picker updates only the selected station and preserves the viewport`() = runTest(mainDispatcherRule.dispatcher.scheduler) {
+        val vm = createVm()
+        vm.listScrollIndex = 3
+        vm.listScrollOffset = 47
+        val gridA = vm.uiState.value.stationAGrid
+        vm.onStationBGrid("OL87")
+        vm.requestListScrollRestore()
+
+        assertEquals(gridA, vm.uiState.value.stationAGrid)
+        assertEquals("OL87", vm.uiState.value.stationBGrid)
+        assertEquals(3, vm.listScrollIndex)
+        assertEquals(47, vm.listScrollOffset)
+        assertEquals(1L, vm.uiState.value.scrollRestoreGeneration)
+        assertFalse(vm.uiState.value.isCalculating)
+    }
+
+    @Test
+    fun `canceling grid picker restores viewport without changing station inputs`() = runTest(mainDispatcherRule.dispatcher.scheduler) {
+        val vm = createVm()
+        val before = vm.uiState.value
+        vm.requestListScrollRestore()
+        vm.requestListScrollRestore()
+
+        assertEquals(before, vm.uiState.value.copy(scrollRestoreGeneration = before.scrollRestoreGeneration))
+        assertEquals(2L, vm.uiState.value.scrollRestoreGeneration)
+    }
+
     // ------------------------------------------------------- station input
 
     @Test
