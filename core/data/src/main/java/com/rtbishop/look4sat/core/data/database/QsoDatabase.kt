@@ -20,7 +20,7 @@ import com.rtbishop.look4sat.core.data.database.entity.QsoEntity
  * upload receipts). Kept apart from [Look4SatDb] so existing installations
  * never need a migration of the satellite database.
  */
-@Database(entities = [QsoEntity::class], version = 6, exportSchema = false)
+@Database(entities = [QsoEntity::class], version = 7, exportSchema = false)
 abstract class QsoDatabase : RoomDatabase() {
     abstract fun qsoDao(): QsoDao
 }
@@ -64,5 +64,12 @@ val MIGRATION_QSO_5_6 = object : Migration(5, 6) {
         db.execSQL("ALTER TABLE qso_records ADD COLUMN theirFullGrids TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE qso_records ADD COLUMN myFullGrids TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE qso_records ADD COLUMN myIota TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+/** Preserve existing rows and append provider ownership for atomic replacement. */
+val MIGRATION_QSO_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE qso_records ADD COLUMN syncOrigin TEXT NOT NULL DEFAULT ''")
     }
 }
