@@ -191,3 +191,76 @@ private fun bearingDegrees(dNorth: Double, dEast: Double): Double {
     val bearing = atan2(dEast, dNorth) * RAD_TO_DEG
     return if (bearing < 0.0) bearing + 360.0 else bearing
 }
+
+/**
+ * Why an own-station grid set cannot describe a VUCC boundary / four-way intersection.
+ *
+ * ADIF 3.1.7 (`VUCC_GRIDS` / `MY_VUCC_GRIDS`) and LoTW's own station-location rules allow exactly
+ * one grid, two grids sharing an edge, or four grids sharing a corner — never three, and never a
+ * set that merely happens to have the right count.
+ */
+enum class StationGridSetIssue {
+    /** Not 1, 2 or 4 grids. */
+    COUNT,
+
+    /** Two grids that do not share an edge, or four that do not share a single corner. */
+    NOT_ADJACENT
+}
+
+/**
+ * Checks the grid set a TQ8 would be signed with (ADIF `GRIDSQUARE` + `MY_VUCC_GRIDS`).
+ *
+ * This is the upload-side gate only: LoTW itself validates the format of these fields (4/6-char
+ * locator syntax) but never their geometry, so a single mistyped field letter reaches the server,
+ * gets stored verbatim, and only surfaces later as a station location 1700 km from the other
+ * grids. Entries are compared as their 4-character squares (VUCC only ever credits those), which
+ * also makes a 6-character entry fold onto its square. Unparseable entries are ignored here — the
+ * station-field format check runs first and owns those.
+ *
+ * @return null when the set can be signed, otherwise the first thing wrong with it.
+ */
+fun stationGridSetIssue(grids: List<String>): StationGridSetIssue? {
+    val cells = grids.mapNotNull(::cellOf).distinct()
+    return when (cells.size) {
+        0, 1 -> null
+        2 -> if (shareEdge(cells[0], cells[1])) null else StationGridSetIssue.NOT_ADJACENT
+        4 -> if (shareCorner(cells)) null else StationGridSetIssue.NOT_ADJACENT
+        else -> StationGridSetIssue.COUNT
+    }
+}
+
+/** A 4-character square as an index pair: `lon` in 0..179 (wraps at the antimeridian), `lat` in 0..179. */
+private data class GridCell(val lon: Int, val lat: Int)
+
+private const val LON_CELLS = 180
+
+/** 4-character square of a locator, or null when the value is not a usable 4/6/8-character grid. */
+private fun cellOf(grid: String): GridCell? {
+    val g = grid.trim().uppercase(java.util.Locale.US)
+    if (g.length < 4) return null
+    val fieldLon = g[0] - 'A'
+    val fieldLat = g[1] - 'A'
+    val squareLon = g[2] - '0'
+    val squareLat = g[3] - '0'
+    if (fieldLon !in 0..17 || fieldLat !in 0..17 || squareLon !in 0..9 || squareLat !in 0..9) return null
+    return GridCell(fieldLon * 10 + squareLon, fieldLat * 10 + squareLat)
+}
+
+/** Shortest distance between two longitude indices, so the R/A join is one step, not 179. */
+private fun lonSteps(a: Int, b: Int): Int = abs(a - b).let { minOf(it, LON_CELLS - it) }
+
+private fun shareEdge(a: GridCell, b: GridCell): Boolean = lonSteps(a.lon, b.lon) + abs(a.lat - b.lat) == 1
+
+/** True when the four squares meet at one corner: {L,P}, {L+1,P}, {L,P+1}, {L+1,P+1}. */
+private fun shareCorner(cells: List<GridCell>): Boolean {
+    val set = cells.toSet()
+    return cells.any { anchor ->
+        val nextLon = (anchor.lon + 1) % LON_CELLS
+        set == setOf(
+            anchor,
+            GridCell(nextLon, anchor.lat),
+            GridCell(anchor.lon, anchor.lat + 1),
+            GridCell(nextLon, anchor.lat + 1)
+        )
+    }
+}

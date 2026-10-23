@@ -59,6 +59,7 @@ import com.rtbishop.look4sat.core.domain.usecase.IShowToast
 import com.rtbishop.look4sat.core.domain.time.IDisciplinedClock
 import com.rtbishop.look4sat.core.domain.time.ITimeSynchronizationService
 import com.rtbishop.look4sat.core.domain.utility.VersionComparator
+import com.rtbishop.look4sat.core.domain.logbook.label
 import com.rtbishop.look4sat.core.domain.logbook.needsPreviewForConflicts
 import com.rtbishop.look4sat.core.domain.logbook.resubmitCandidates
 import com.rtbishop.look4sat.core.domain.logbook.toConfirmedRecord
@@ -811,7 +812,15 @@ class SettingsViewModel(
                     )
                 }
             } catch (e: com.rtbishop.look4sat.core.domain.repository.LoTWOperationException) {
-                _uiState.update { it.copy(logbookUploadBusy = false, logbookUploadMessage = "Upload unavailable: ${e.reason}") }
+                // Surface the reason in words plus the offending values: a bare enum name ("Upload
+                // unavailable: STATION_GRID_NOT_ADJACENT") sent the operator nowhere.
+                val detail = e.detail.trim().takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+                _uiState.update {
+                    it.copy(
+                        logbookUploadBusy = false,
+                        logbookUploadMessage = "Upload unavailable: ${e.reason.label()}$detail"
+                    )
+                }
             } catch (_: Exception) {
                 _uiState.update { it.copy(logbookUploadBusy = false, logbookUploadMessage = "Upload failed") }
             }
@@ -1004,7 +1013,15 @@ class SettingsViewModel(
                     )
                 }
             } catch (e: com.rtbishop.look4sat.core.domain.repository.LoTWOperationException) {
-                _uiState.update { it.copy(logbookUploadBusy = false, logbookUploadMessage = "Upload unavailable: ${e.reason}") }
+                // Surface the reason in words plus the offending values: a bare enum name ("Upload
+                // unavailable: STATION_GRID_NOT_ADJACENT") sent the operator nowhere.
+                val detail = e.detail.trim().takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+                _uiState.update {
+                    it.copy(
+                        logbookUploadBusy = false,
+                        logbookUploadMessage = "Upload unavailable: ${e.reason.label()}$detail"
+                    )
+                }
             } catch (_: Exception) {
                 _uiState.update { it.copy(logbookUploadBusy = false, logbookUploadMessage = "Upload failed") }
             }
@@ -1077,6 +1094,12 @@ class SettingsViewModel(
             try {
                 val saved = lotwUploadRepository.saveStation(station)
                 _uiState.update { it.copy(lotwStation = saved, lotwUploadBusy = false) }
+            } catch (e: com.rtbishop.look4sat.core.domain.repository.LoTWOperationException) {
+                // A refused station location used to fail silently here (the dialog simply kept
+                // its old value), so say which field is the problem instead.
+                _uiState.update { it.copy(lotwUploadBusy = false) }
+                val detail = e.detail.trim().takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty()
+                showToast("Station location not saved: ${e.reason.label()}$detail")
             } catch (_: Exception) {
                 _uiState.update { it.copy(lotwUploadBusy = false) }
             }

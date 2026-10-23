@@ -27,6 +27,8 @@ import com.rtbishop.look4sat.core.domain.repository.LoTWRegionOption
 import com.rtbishop.look4sat.core.domain.repository.LoTWStation
 import com.rtbishop.look4sat.core.domain.repository.LoTWStationMeta
 import com.rtbishop.look4sat.core.domain.repository.LoTWZonePair
+import com.rtbishop.look4sat.core.domain.utility.StationGridSetIssue
+import com.rtbishop.look4sat.core.domain.utility.stationGridSetIssue
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
 import org.xml.sax.SAXException
@@ -146,6 +148,18 @@ internal class LoTWConfig(input: InputStream) {
         val grids = station.grid.split(',').map(::normalized).filter(String::isNotBlank).distinct()
         if (grids.size !in 1..4 || grids.any { !it.matches(Regex("[A-R]{2}[0-9]{2}([A-X]{2}([0-9]{2})?)?")) }) {
             fail(LoTWProblem.STATION_GRID)
+        }
+        // ADIF (VUCC_GRIDS / MY_VUCC_GRIDS) and LoTW's station-location rules allow one grid, a
+        // boundary pair, or a four-way intersection — never three, never a set that only has the
+        // right count. The format check above cannot tell a mistyped field letter (OM00AX for
+        // PM00AX) from a real location, and LoTW stores MY_VUCC_GRIDS verbatim (it validates the
+        // syntax of these fields, not their geometry), so the set is refused here, before signing,
+        // instead of being published as a station location that sits 1700 km from its own grids.
+        when (stationGridSetIssue(grids)) {
+            StationGridSetIssue.COUNT -> fail(LoTWProblem.STATION_GRID_COUNT, grids.joinToString(","))
+            StationGridSetIssue.NOT_ADJACENT ->
+                fail(LoTWProblem.STATION_GRID_NOT_ADJACENT, grids.joinToString(","))
+            null -> Unit
         }
         // The primary grid goes into GRIDSQUARE (the field the config's tSTATION
         // order signs); the full multi-grid set goes into MY_VUCC_GRIDS, an extra
