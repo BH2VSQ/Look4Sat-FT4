@@ -456,14 +456,7 @@ class LogbookViewModel(
                     }
                 }
             }
-            LogbookAction.DismissLoTW -> if (
-                !mutableState.value.lotwSyncing && !mutableState.value.lotwAuditing &&
-                !mutableState.value.wavelogSyncing && !mutableState.value.wavelogProbeBusy
-            ) {
-                lotwUploadRepository.discardPreview()
-                auditJob?.cancel()
-                mutableState.update { it.copy(showLoTW = false, lotwAudit = null, lotwAuditing = false) }
-            }
+            LogbookAction.DismissLoTW,
             LogbookAction.DismissLoTWAfterBackgroundStart -> {
                 lotwUploadRepository.discardPreview()
                 auditJob?.cancel()

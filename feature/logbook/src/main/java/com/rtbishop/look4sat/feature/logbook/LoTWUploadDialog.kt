@@ -4,7 +4,6 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -254,22 +253,10 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
     val audit = state.lotwAudit
     val pendingCount = audit?.pending ?: 0
     val unavailable = stringResource(R.string.logbook_value_unavailable)
-    // Handle Back from the parent composition, rather than relying on the sheet's content tree.
-    // While an operation is active, consume it and keep both the sheet and its ViewModel alive.
-    BackHandler(enabled = true) {
-        if (!busy) onAction(LogbookAction.DismissLoTW)
-    }
-
     SharedDialog(
         title = stringResource(R.string.logbook_sync),
-        // Never let Back bubble to the navigation host while this drawer is open.
-        // Our BackHandler below closes it explicitly only when no operation is active.
-        onDismissRequest = { if (!busy) onAction(LogbookAction.DismissLoTW) },
-        dismissOnClickOutside = !busy,
-        // Back is handled manually below. If the sheet is allowed to own it, some
-        // Compose/Navigation combinations deliver the event to the underlying page.
-        dismissOnBackPress = false,
-        dismissOnSwipe = !busy
+        // The foreground service owns sync work, so the UI can be dismissed at any time.
+        onDismissRequest = { onAction(LogbookAction.DismissLoTW) }
     ) { padding ->
             Row(Modifier.fillMaxWidth().padding(horizontal = padding), verticalAlignment = Alignment.CenterVertically) {
                 Text(
