@@ -49,8 +49,8 @@ class MainApplication : Application(), IContainerProvider {
         clearAmSatCacheOnAppBackground()
         // trigger automatic update every 48 hours
         container.appScope.launch { checkAutoUpdate() }
-        // automatic LoTW grid sync on every app start (gated, see checkLoTWAutoSync)
-        container.appScope.launch { checkLoTWAutoSync() }
+        // LoTW foreground data-sync starts from the first visible Activity,
+        // not Application.onCreate, to respect Android 12+ FGS launch limits.
         // repair logbooks split by the old name/band identity mismatch, independent of
         // whether a sync is due (cheap read + in-memory match on every start)
         container.appScope.launch { runCatching { container.qsoRepository.consolidateConfirmations() } }
@@ -65,6 +65,7 @@ class MainApplication : Application(), IContainerProvider {
             override fun onActivityStarted(activity: Activity) {
                 if (startedActivityCount == 0) {
                     container.appScope.launch { container.amSatRepo.prefetchStatus() }
+                    container.appScope.launch { checkLoTWAutoSync() }
                 }
                 startedActivityCount += 1
             }
@@ -105,32 +106,19 @@ class MainApplication : Application(), IContainerProvider {
      */
     private suspend fun checkLoTWAutoSync(timeNow: Long = System.currentTimeMillis()) {
         val settingsRepo = container.settingsRepo
-        // One-of-two rule: while Wavelog is configured the app uploads/syncs through
-        // Wavelog only — the automatic LoTW sync stays off.
         if (settingsRepo.wavelogUploadSettings.value.isReady) return
-        val lotwSettings = settingsRepo.lotwSettings.value
+        val account = settingsRepo.lotwSettings.value
         if (!shouldAutoSyncLoTW(
-                isConfigured = lotwSettings.isConfigured,
+                isConfigured = account.isConfigured,
                 autoLotwSyncEnabled = settingsRepo.otherSettings.value.stateOfAutoLotwSync,
                 lastSyncDate = settingsRepo.getLastLotwSyncDate(),
                 today = lotwSyncToday(timeNow)
-            )
-        ) return
-        val callsign = lotwSettings.callsign.trim().uppercase()
-        val mode = resolveLoTWSyncMode(settingsRepo.getLastLotwSyncCallsign(), callsign, requested = null)
-        val since = if (mode == LoTWSyncMode.Incremental) lotwIncrementalSince(settingsRepo) else ""
-        println("Started periodic LoTW grid sync (${mode.name.lowercase()})")
-        val result = container.lotwRepo.fetchConfirmedGridQsos(callsign, lotwSettings.password, since)
-        if (result is LoTWResult.Success) {
-            val count = applyLoTWGridResult(settingsRepo, result, mode, callsign, timeNow)
-            // Feed the logbook so confirmations appear and local uploads get matched.
-            runCatching {
-                val confirmed = result.qsos.values.flatten().map { it.toConfirmedRecord(callsign) }
-                container.qsoRepository.mergeLoTW(confirmed)
-            }
-            println("Periodic LoTW grid sync finished: $count worked grids")
-        } else {
-            println("Periodic LoTW grid sync skipped (${result::class.simpleName})")
-        }
+            )) return
+        // The service repeats the eligibility check inside its own job to
+        // avoid a duplicate request after Activity navigation/recreation.
+        androidx.core.content.ContextCompat.startForegroundService(
+            this, android.content.Intent(this, LoTWForegroundSyncService::class.java)
+        )
     }
+
 }
