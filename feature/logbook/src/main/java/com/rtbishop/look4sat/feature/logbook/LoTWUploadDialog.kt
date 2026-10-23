@@ -136,6 +136,12 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
     val audit = state.lotwAudit
     val pendingCount = audit?.pending ?: 0
     val unavailable = stringResource(R.string.logbook_value_unavailable)
+    // Handle Back from the parent composition, rather than relying on the sheet's content tree.
+    // While an operation is active, consume it and keep both the sheet and its ViewModel alive.
+    BackHandler(enabled = true) {
+        if (!busy) onAction(LogbookAction.DismissLoTW)
+    }
+
     SharedDialog(
         title = stringResource(R.string.logbook_sync),
         // Never let Back bubble to the navigation host while this drawer is open.
@@ -144,12 +150,9 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
         dismissOnClickOutside = !busy,
         // Back is handled manually below. If the sheet is allowed to own it, some
         // Compose/Navigation combinations deliver the event to the underlying page.
-        dismissOnBackPress = false
+        dismissOnBackPress = false,
+        dismissOnSwipe = !busy
     ) { padding ->
-            BackHandler(enabled = true) {
-                if (!busy) onAction(LogbookAction.DismissLoTW)
-                // While a request is active, consume Back without dismissing or cancelling it.
-            }
             val scheme = MaterialTheme.colorScheme
             val lock = state.logbookSourceLock
             val lotwBlocked = lock != null && lock != LogbookSyncProvider.LOTW

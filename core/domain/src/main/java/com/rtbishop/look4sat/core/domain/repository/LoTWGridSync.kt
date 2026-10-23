@@ -139,7 +139,7 @@ suspend fun applyLoTWGridResult(
     mode: LoTWSyncMode,
     callsign: String,
     now: Long = System.currentTimeMillis()
-): Int {
+): Int = withContext(Dispatchers.IO) {
     val existingGrids = settingsRepo.getWorkedGrids()
     val existingQsos = settingsRepo.getWorkedGridQsos()
     val existingRoamed = settingsRepo.getRoamedGrids()
@@ -167,16 +167,14 @@ suspend fun applyLoTWGridResult(
         LoTWSyncMode.Full -> reportedCursor.ifBlank { lotwSyncCursor(now) }
         LoTWSyncMode.Incremental -> maxOf(previousCursor, reportedCursor).ifBlank { lotwSyncCursor(now) }
     }
-    withContext(Dispatchers.IO) {
-        settingsRepo.setWorkedGrids(mergedGrids)
-        settingsRepo.setWorkedGridQsos(mergedQsos)
-        settingsRepo.setRoamedGrids(mergedRoamed)
-        // Advance the watermark only after the map data is saved.
-        settingsRepo.setLastLotwQslCursor(nextCursor)
-        settingsRepo.setLastLotwSyncCallsign(callsign)
-        settingsRepo.setLastLotwSyncDate(lotwSyncCursor(now))
-    }
-    return mergedGrids.size
+    settingsRepo.setWorkedGrids(mergedGrids)
+    settingsRepo.setWorkedGridQsos(mergedQsos)
+    settingsRepo.setRoamedGrids(mergedRoamed)
+    // Advance the watermark only after the map data is saved.
+    settingsRepo.setLastLotwQslCursor(nextCursor)
+    settingsRepo.setLastLotwSyncCallsign(callsign)
+    settingsRepo.setLastLotwSyncDate(lotwSyncCursor(now))
+    mergedGrids.size
 }
 
 /** Mutable MY_* station fields are deliberately excluded from contact identity. */

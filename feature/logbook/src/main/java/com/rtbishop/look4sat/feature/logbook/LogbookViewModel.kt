@@ -50,6 +50,7 @@ import com.rtbishop.look4sat.core.domain.repository.applyLoTWGridResult
 import com.rtbishop.look4sat.core.domain.repository.lotwCursorApi
 import com.rtbishop.look4sat.core.domain.repository.resolveLoTWSyncMode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -679,23 +680,28 @@ class LogbookViewModel(
             }
             return
         }
-        settingsRepo.updateLoTWSettings(settings)
         val callsign = settings.callsign.trim().uppercase(Locale.US)
-        val mode = resolveLoTWSyncMode(settingsRepo.getLastLotwSyncCallsign(), callsign, requestedMode)
-        val since = if (mode == LoTWSyncMode.Incremental) {
-            lotwCursorApi(settingsRepo.getLastLotwSyncDate())
-        } else ""
         mutableState.update {
             it.copy(
                 lotwSyncing = true,
-                lotwSyncMode = mode,
+                lotwSyncMode = null,
                 lotwProgress = null,
                 lotwDownloadError = null,
                 lotwDownloadSummary = null
             )
         }
-        syncJob = viewModelScope.launch {
+        // Run the complete sync pipeline away from the UI thread. StateFlow updates
+        // are thread-safe, so progress and completion can be published from IO.
+        syncJob = viewModelScope.launch(Dispatchers.IO) {
             try {
+                settingsRepo.updateLoTWSettings(settings)
+                val mode = resolveLoTWSyncMode(
+                    settingsRepo.getLastLotwSyncCallsign(), callsign, requestedMode
+                )
+                val since = if (mode == LoTWSyncMode.Incremental) {
+                    lotwCursorApi(settingsRepo.getLastLotwSyncDate())
+                } else ""
+                mutableState.update { it.copy(lotwSyncMode = mode) }
                 when (val result = lotwRepository.fetchQsos(
                     callsign,
                     settings.password,
