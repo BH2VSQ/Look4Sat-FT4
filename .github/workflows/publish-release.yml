@@ -14,6 +14,9 @@ name: Build Look4Sat APK
 # Local Gradle builds keep using the catalog unchanged. Runs are manual only.
 
 on:
+  # One-shot v16.2 release automation; only the specific release commit runs on push.
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       mode:
@@ -35,6 +38,7 @@ permissions:
 
 jobs:
   build:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'release: v4.4.8-ba7opf.16.2') }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -48,7 +52,7 @@ jobs:
         working-directory: source
         env:
           BUILD_RUN_NUMBER: ${{ github.run_number }}
-          BUILD_MODE: ${{ inputs.mode }}
+          BUILD_MODE: ${{ github.event_name == 'push' && 'release' || inputs.mode }}
         run: |
           set -euo pipefail
           VERSION="$(sed -nE 's/^appVersionName *= *"([^"]+)".*/\1/p' gradle/libs.versions.toml | head -n 1)"
@@ -98,7 +102,7 @@ jobs:
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
 
       - name: Run unit tests before official Release
-        if: ${{ inputs.mode == 'release' }}
+        if: ${{ inputs.mode == 'release' || github.event_name == 'push' }}
         working-directory: source
         run: |
           set -euo pipefail
@@ -194,7 +198,7 @@ jobs:
           echo "Published prerelease $TAG"
 
       - name: Publish the official Release
-        if: ${{ inputs.mode == 'release' }}
+        if: ${{ inputs.mode == 'release' || github.event_name == 'push' }}
         working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -202,7 +206,7 @@ jobs:
           CODE: ${{ steps.version.outputs.code }}
           TAG: ${{ steps.version.outputs.tag }}
           ASSET: ${{ steps.version.outputs.asset }}
-          NOTES_IN: ${{ inputs.notes }}
+          NOTES_IN: ${{ github.event_name == 'push' && 'v16.2: Added per-satellite transponder favorites with persistent star selection, priority sorting and favorite-first initial selection. Fixed LoTW PKCS12 certificate loading for empty-password files, with regression tests.' || inputs.notes }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
