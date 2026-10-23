@@ -1,8 +1,13 @@
 package com.rtbishop.look4sat.feature.radar
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -16,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -33,9 +39,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
@@ -53,7 +61,6 @@ import com.rtbishop.look4sat.core.domain.repository.NativeCwOptions
 import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.RadarViewCompose
-import com.rtbishop.look4sat.core.presentation.SharedDialog
 import com.rtbishop.look4sat.core.domain.utility.toDegrees
 
 @Composable
@@ -101,6 +108,7 @@ internal fun CwConsole(
     val values = CwTemplateValues(log.callsignInput, myCallsign, draft.sentReport, grid)
 
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Box(Modifier.fillMaxSize()) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -150,7 +158,7 @@ internal fun CwConsole(
                         OutlinedTextField(value = draft.message, onValueChange = { edit(draft.copy(message = it.take(4096))) },
                             enabled = available, label = { Text(stringResource(R.string.cw_console_message)) },
                             singleLine = true, textStyle = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.fillMaxWidth())
+                            modifier = Modifier.fillMaxWidth().testTag("cwConsoleMessage"))
                         remote?.let { Text(stringResource(R.string.rc_l4s_progress, it.cwPosition, it.cwLength, it.cwState.name)) }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = {
@@ -164,7 +172,8 @@ internal fun CwConsole(
                                 Text(stringResource(R.string.rc_l4s_stop))
                             }
                             if (caps?.cwOptions == true) OutlinedButton(onClick = { showOptions = true },
-                                enabled = !control.frequencyEditingLocked && remote?.nativeCwOptions != null) {
+                                enabled = !control.frequencyEditingLocked && remote?.nativeCwOptions != null,
+                                modifier = Modifier.heightIn(min = 48.dp)) {
                                 Text(stringResource(R.string.rc_cw_options))
                             }
                         }
@@ -195,23 +204,14 @@ internal fun CwConsole(
         }
         if (editingPreset in 0..3) {
             val dismiss = { editingPreset = -1; presetError = null }
-            SharedDialog(title = stringResource(R.string.rc_l4s_edit_preset, editingPreset + 1), onDismissRequest = dismiss,
-                onCancel = dismiss, onAccept = {
+            BackHandler(onBack = dismiss)
+            CwPresetEditor(index = editingPreset, text = presetText, error = presetError,
+                onText = { presetText = it.take(4096); presetError = null },
+                onDismiss = dismiss, onAccept = {
                     runCatching { CwTransmitPresets.normalize(presetText) }
                         .onSuccess { onAction(RadarAction.SaveCwPreset(editingPreset, it)); dismiss() }
                         .onFailure { presetError = errorLabel(it) }
-                }) { padding ->
-                Column(Modifier.fillMaxWidth().padding(padding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = presetText, onValueChange = { presetText = it.take(4096); presetError = null },
-                        modifier = Modifier.fillMaxWidth(), label = { Text(stringResource(R.string.rc_l4s_message)) })
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        CwMessageTemplate.variables.forEach { variable ->
-                            TextButton(onClick = { presetText = (presetText + " {$variable}").trim() }) { Text("{$variable}") }
-                        }
-                    }
-                    presetError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                }
-            }
+                })
         }
         if (showOptions) NativeCwOptionsDialog(remote?.nativeCwOptions ?: NativeCwOptions(),
             enabled = !control.frequencyEditingLocked, onDismiss = { showOptions = false },
@@ -224,6 +224,47 @@ internal fun CwConsole(
             syncError = error ?: remote?.error ?: control.errorMessage,
             onCancelSync = { onAction(RadarAction.CancelHandsetCwSync) },
             onApply = { onAction(RadarAction.SetNativeCwOptions(it)); showOptions = false })
+        }
+    }
+}
+
+@Composable
+private fun CwPresetEditor(index: Int, text: String, error: String?, onText: (String) -> Unit,
+    onDismiss: () -> Unit, onAccept: () -> Unit) {
+    // Keep the editor in this window; the native decoder host must remain attached.
+    BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.64f))
+        .clickable(onClick = onDismiss).safeDrawingPadding().imePadding().padding(16.dp),
+        contentAlignment = Alignment.Center) {
+        Surface(onClick = {}, shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().heightIn(max = maxHeight)) {
+            Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.rc_l4s_edit_preset, index + 1),
+                    style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                OutlinedTextField(value = text, onValueChange = onText,
+                    modifier = Modifier.fillMaxWidth().testTag("cwPresetText"),
+                    label = { Text(stringResource(R.string.cw_console_message)) }, maxLines = 5)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CwMessageTemplate.variables.forEach { variable ->
+                        val label = when (variable) {
+                            "CALL" -> R.string.cw_console_their_call
+                            "MYCALL" -> R.string.cw_console_my_call
+                            "RST" -> R.string.cw_console_report
+                            else -> R.string.cw_console_grid_field
+                        }
+                        TextButton(onClick = { onText((text + " {$variable}").trim()) }) {
+                            Text("${stringResource(label)} {$variable}")
+                        }
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.btn_cancel)) }
+                    TextButton(onClick = onAccept) { Text(stringResource(R.string.btn_accept)) }
+                }
+            }
+        }
     }
 }
 
