@@ -18,7 +18,6 @@
 package com.rtbishop.look4sat.feature.settings
 
 import android.Manifest
-import android.app.PendingIntent
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -1240,7 +1239,9 @@ fun RadioControlDialog(
     val txUsbError = remember { mutableStateOf<UsbSelectionError?>(null) }
     val rxUsbError = remember { mutableStateOf<UsbSelectionError?>(null) }
     val usbPermissionDenied = remember { mutableStateOf(false) }
-    val pendingUsbSelection = remember { mutableStateOf<PendingUsbSelection?>(null) }
+    val pendingUsbSelection = rememberSaveable(saver = pendingUsbSelectionSaver) {
+        mutableStateOf<PendingUsbSelection?>(null)
+    }
     val usbManager = remember(context) { context.getSystemService(UsbManager::class.java) }
     val usbPermissionAction = remember(context.packageName) {
         "${context.packageName}.USB_CAT_PERMISSION"
@@ -1272,24 +1273,38 @@ fun RadioControlDialog(
                 when (intent.action) {
                     usbPermissionAction -> {
                         usbDevicesRevision.intValue++
-                        val selection = pendingUsbSelection.value
-                        val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                        if (granted && selection != null) {
+                        val selection = pendingUsbSelection.value ?: return
+                        if (intent.data?.lastPathSegment != selection.token) return
+                        if (!selection.accepts(intent.data?.lastPathSegment, selectingFor.value,
+                                radioModel.value, catTransport.value == RadioControlSettings.TRANSPORT_USB)) {
+                            pendingUsbSelection.value = null
+                            return
+                        }
+                        if (authorizedUsbDevice(usbManager, selection) != null) {
                             applyUsbSelection(selection)
-                        } else if (!granted) {
+                        } else {
                             usbPermissionDenied.value = true
                         }
                         pendingUsbSelection.value = null
                     }
-                    UsbManager.ACTION_USB_DEVICE_ATTACHED,
-                    UsbManager.ACTION_USB_DEVICE_DETACHED -> usbDevicesRevision.intValue++
+                    UsbManager.ACTION_USB_DEVICE_ATTACHED -> usbDevicesRevision.intValue++
+                    UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                        usbDevicesRevision.intValue++
+                        pendingUsbSelection.value?.let { selection ->
+                            if (usbManager.deviceList.values.none(selection::matches)) {
+                                pendingUsbSelection.value = null
+                                usbPermissionDenied.value = false
+                                if (selection.target == "tx") txUsbError.value = UsbSelectionError.DEVICE_MISSING
+                                else rxUsbError.value = UsbSelectionError.DEVICE_MISSING
+                            }
+                        }
+                    }
                 }
             }
         }
         val filter = IntentFilter().apply {
             addAction(usbPermissionAction)
-            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addDataScheme("look4sat-usb")
         }
         ContextCompat.registerReceiver(
             context,
@@ -1297,7 +1312,24 @@ fun RadioControlDialog(
             filter,
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        ContextCompat.registerReceiver(context, receiver, IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }, ContextCompat.RECEIVER_NOT_EXPORTED)
         onDispose { runCatching { context.unregisterReceiver(receiver) } }
+    }
+
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        usbDevicesRevision.intValue++
+        pendingUsbSelection.value?.let { selection ->
+            if (!selection.accepts(selection.token, selectingFor.value, radioModel.value,
+                    catTransport.value == RadioControlSettings.TRANSPORT_USB)) {
+                pendingUsbSelection.value = null
+            } else if (authorizedUsbDevice(usbManager, selection) != null) {
+                applyUsbSelection(selection)
+                pendingUsbSelection.value = null
+            }
+        }
     }
 
     val selectDevice: (String) -> Unit = { target ->
@@ -1835,19 +1867,19 @@ fun RadioControlDialog(
                                         val selection = PendingUsbSelection(
                                             selectingFor.value,
                                             entry.name,
-                                            entry.address
+                                            entry.address,
+                                            radioModel.value
                                         )
                                         if (!usbManager.hasPermission(device)) {
                                             pendingUsbSelection.value = selection
                                             usbPermissionDenied.value = false
-                                            val permissionIntent = PendingIntent.getBroadcast(
-                                                context,
-                                                device.deviceId,
-                                                Intent(usbPermissionAction)
-                                                    .setPackage(context.packageName),
-                                                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-                                            )
-                                            usbManager.requestPermission(device, permissionIntent)
+                                            try {
+                                                usbManager.requestPermission(device,
+                                                    usbPermissionIntent(context, usbPermissionAction, selection))
+                                            } catch (_: RuntimeException) {
+                                                pendingUsbSelection.value = null
+                                                usbPermissionDenied.value = true
+                                            }
                                             return@clickable
                                         }
                                         applyUsbSelection(selection)
@@ -2009,12 +2041,6 @@ internal data class RadioDeviceUiEntry(
     val usbDeviceId: Int? = null,
     val hasUsbPermission: Boolean = true,
     val isSupported: Boolean = true
-)
-
-private data class PendingUsbSelection(
-    val target: String,
-    val name: String,
-    val address: String
 )
 
 private enum class UsbSelectionError(val messageResource: Int) {
