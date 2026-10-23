@@ -80,6 +80,8 @@ import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.repository.CompassAccuracy
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.LoTWSyncMode
+import com.rtbishop.look4sat.core.domain.repository.ILoTWForegroundSyncLauncher
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundSyncStatus
 import com.rtbishop.look4sat.core.domain.repository.WavelogSyncMode
 import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.SharedDialog
@@ -145,6 +147,8 @@ private fun SettingsScreen(
         return
     }
     val dialogs = rememberDialogVisibility()
+    val foregroundStatus by LoTWForegroundSyncStatus.state.collectAsStateWithLifecycle()
+    val syncLauncher = LocalContext.current.applicationContext as? ILoTWForegroundSyncLauncher
     var showRadioProfiles by rememberSaveable {mutableStateOf(false)}
     val diagnosticContext=LocalContext.current
     LaunchedEffect(uiState.controlDiagnosticsExportText) {
@@ -302,15 +306,27 @@ private fun SettingsScreen(
         LoTWDialog(
             initialSettings = uiState.lotwSettings,
             workedGridsCount = uiState.workedGridsCount,
-            isSyncing = uiState.lotwSyncing,
-            syncMode = uiState.lotwSyncMode,
-            progress = uiState.lotwProgress,
-            message = lotwErrorMessage,
+            isSyncing = uiState.lotwSyncing || foregroundStatus.running,
+            syncMode = foregroundStatus.mode ?: uiState.lotwSyncMode,
+            progress = foregroundStatus.progress ?: uiState.lotwProgress,
+            message = if (foregroundStatus.running) foregroundStatus.message else lotwErrorMessage,
             dismiss = { dialogs.lotw = false },
-            onCancelSync = { onAction(SettingsAction.CancelLoTWSync); dialogs.lotw = false },
+            onCancelSync = {
+                if (foregroundStatus.running) syncLauncher?.cancelManualLoTWSync()
+                else onAction(SettingsAction.CancelLoTWSync)
+                dialogs.lotw = false
+            },
             onSave = { onAction(SettingsAction.UpdateLoTW(it)) },
-            onSyncFull = { onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Full)) },
-            onSyncIncremental = { onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Incremental)) }
+            onSyncFull = {
+                if (syncLauncher != null) {
+                    if (!foregroundStatus.running) syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Full)
+                } else onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Full))
+            },
+            onSyncIncremental = {
+                if (syncLauncher != null) {
+                    if (!foregroundStatus.running) syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Incremental)
+                } else onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Incremental))
+            }
         )
     }
     if (dialogs.logbook) {
