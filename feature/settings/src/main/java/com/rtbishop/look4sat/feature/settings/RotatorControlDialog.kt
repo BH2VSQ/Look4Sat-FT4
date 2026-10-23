@@ -10,7 +10,6 @@
 package com.rtbishop.look4sat.feature.settings
 
 import android.Manifest
-import android.app.PendingIntent
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -44,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,7 +82,9 @@ fun RotatorControlDialog(
     var draft by remember { mutableStateOf(initialSettings) }
     var usbRevision by remember { mutableIntStateOf(0) }
     var bluetoothRevision by remember { mutableIntStateOf(0) }
-    var pendingUsbSelection by remember { mutableStateOf<RadioDeviceUiEntry?>(null) }
+    var pendingUsbSelection by rememberSaveable(saver = pendingUsbSelectionSaver) {
+        mutableStateOf<PendingUsbSelection?>(null)
+    }
     var usbPermissionDenied by remember { mutableStateOf(false) }
     var pendingNetworkConnect by remember { mutableStateOf(false) }
     var testAzimuth by remember { mutableStateOf("180") }
@@ -121,10 +123,23 @@ fun RotatorControlDialog(
     DisposableEffect(usbPermissionAction) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                if (intent?.action == UsbManager.ACTION_USB_DEVICE_ATTACHED ||
+                    intent?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
+                    usbRevision++
+                    pendingUsbSelection?.let { pending ->
+                        if (usbManager.deviceList.values.none(pending::matches)) pendingUsbSelection = null
+                    }
+                    return
+                }
                 if (intent?.action != usbPermissionAction) return
-                val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                val pending = pendingUsbSelection
-                if (granted && pending != null) {
+                val pending = pendingUsbSelection ?: return
+                if (intent.data?.lastPathSegment != pending.token) return
+                if (!pending.accepts(intent.data?.lastPathSegment, "rotator", draft.protocol.name,
+                        draft.transport == RotatorTransport.USB_SERIAL)) {
+                    pendingUsbSelection = null
+                    return
+                }
+                if (authorizedUsbDevice(usbManager, pending) != null) {
                     draft = draft.copy(deviceAddress = pending.address)
                     usbPermissionDenied = false
                 } else {
@@ -134,14 +149,27 @@ fun RotatorControlDialog(
                 usbRevision++
             }
         }
-        val filter = IntentFilter(usbPermissionAction)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            context.registerReceiver(receiver, filter)
-        }
+        val filter = IntentFilter(usbPermissionAction).apply { addDataScheme("look4sat-usb") }
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        ContextCompat.registerReceiver(context, receiver, IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }, ContextCompat.RECEIVER_NOT_EXPORTED)
         onDispose { runCatching { context.unregisterReceiver(receiver) } }
+    }
+
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        usbRevision++
+        pendingUsbSelection?.let { pending ->
+            if (!pending.accepts(pending.token, "rotator", draft.protocol.name,
+                    draft.transport == RotatorTransport.USB_SERIAL)) {
+                pendingUsbSelection = null
+            } else if (authorizedUsbDevice(usbManager, pending) != null) {
+                draft = draft.copy(deviceAddress = pending.address)
+                usbPermissionDenied = false
+                pendingUsbSelection = null
+            }
+        }
     }
 
     val devices = remember(draft.transport, bluetoothRevision, usbRevision) {
@@ -156,14 +184,14 @@ fun RotatorControlDialog(
         }
         val deviceId = entry.usbDeviceId ?: return
         val device = usbManager.deviceList.values.firstOrNull { it.deviceId == deviceId } ?: return
-        pendingUsbSelection = entry
-        val permissionIntent = PendingIntent.getBroadcast(
-            context,
-            deviceId,
-            Intent(usbPermissionAction).setPackage(context.packageName),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        usbManager.requestPermission(device, permissionIntent)
+        val pending = PendingUsbSelection("rotator", entry.name, entry.address, draft.protocol.name)
+        pendingUsbSelection = pending
+        try {
+            usbManager.requestPermission(device, usbPermissionIntent(context, usbPermissionAction, pending))
+        } catch (_: RuntimeException) {
+            pendingUsbSelection = null
+            usbPermissionDenied = true
+        }
     }
 
     fun requestConnect() {

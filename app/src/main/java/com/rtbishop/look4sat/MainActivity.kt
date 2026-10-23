@@ -20,6 +20,7 @@ package com.rtbishop.look4sat
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -54,6 +55,11 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         val mainContainer = (applicationContext as IContainerProvider).getMainContainer()
         mainContainer.appScope.launch { mainContainer.radioTrackingService.setAudioForeground(true) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 
     override fun onStop() {
