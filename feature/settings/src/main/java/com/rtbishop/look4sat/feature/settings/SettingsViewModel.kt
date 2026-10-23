@@ -441,11 +441,15 @@ class SettingsViewModel(
                     }
                     return@launch
                 }
-                val merge = if (fetch.records.isEmpty()) {
-                    com.rtbishop.look4sat.core.domain.logbook.AdifImportResult(0, 0, 0)
-                } else {
-                    qsoRepository.mergeWavelog(fetch.records)
-                }
+                // Full re-scan replaces the previous downloaded rows only if
+                // every Wavelog station finished; otherwise preserve old records.
+                // The Room transaction writes new rows and deletes old source rows
+                // atomically, after the network response is complete.
+                val merge = qsoRepository.mergeWavelog(
+                    fetch.records, settings.url,
+                    replaceExisting = actualMode == WavelogSyncMode.Full &&
+                        fetch.failedStations.isEmpty()
+                )
                 // Stations that failed keep their previous cursor; fetched ones advance.
                 val cursors = settingsRepo.getWavelogSyncCursors() + fetch.cursors
                 applyWavelogSyncResult(
@@ -539,14 +543,15 @@ class SettingsViewModel(
                     // Incremental: merge new grids/QSOs into the stored set (dedup
                     // by call + QSO time); full: the fresh report replaces it all.
                     // Shared with the automatic sync on app start (MainApplication).
+                    // Import before advancing the cursor; do not clear existing
+                    // downloaded rows on HTTP failure, parsing error or DB failure.
+                    val confirmed = result.qsos.values.flatten()
+                        .map { it.toConfirmedRecord(callsign) }
+                    qsoRepository.mergeLoTW(
+                        confirmed, callsign,
+                        replaceExisting = effectiveMode == LoTWSyncMode.Full
+                    )
                     val mergedGridsCount = applyLoTWGridResult(settingsRepo, result, effectiveMode, callsign)
-                    // Feed the logbook: imported confirmations show up in 日志本 and
-                    // match local uploads (sameConfirmedContact) to mark them confirmed.
-                    viewModelScope.launch {
-                        val confirmed = result.qsos.values.flatten()
-                            .map { it.toConfirmedRecord(callsign) }
-                        qsoRepository.mergeLoTW(confirmed)
-                    }
                     _uiState.update { state ->
                         state.copy(
                             lotwSyncing = false, lotwSyncMode = null, lotwProgress = null,
