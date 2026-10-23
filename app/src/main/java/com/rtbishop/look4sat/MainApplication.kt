@@ -20,6 +20,12 @@ package com.rtbishop.look4sat
 import android.app.Activity
 import android.app.Application
 import android.app.Application.ActivityLifecycleCallbacks
+import android.content.Intent
+import androidx.core.content.ContextCompat
+import com.rtbishop.look4sat.core.domain.model.LoTWSettings
+import com.rtbishop.look4sat.core.domain.repository.ILoTWForegroundSyncLauncher
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundStatus
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundSyncStatus
 import android.os.Bundle
 import com.rtbishop.look4sat.core.data.injection.MainContainer
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
@@ -37,11 +43,38 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainApplication : Application(), IContainerProvider {
+class MainApplication : Application(), IContainerProvider, ILoTWForegroundSyncLauncher {
 
     private lateinit var container: IMainContainer
 
     override fun getMainContainer(): IMainContainer = container
+
+    override fun startManualLoTWSync(account: LoTWSettings, mode: LoTWSyncMode): Boolean {
+        if (!account.isConfigured || LoTWForegroundSyncStatus.state.value.running) return false
+        // Save the just-entered credentials in the existing encrypted settings
+        // store. Never put a password or callsign into a service Intent.
+        container.settingsRepo.updateLoTWSettings(account)
+        LoTWForegroundSyncStatus.publish(LoTWForegroundStatus(running = true, mode = mode,
+            message = "Preparing LoTW synchronization"))
+        return runCatching {
+            ContextCompat.startForegroundService(this, Intent(this, LoTWForegroundSyncService::class.java).apply {
+                action = LoTWForegroundSyncService.ACTION_MANUAL
+                putExtra(LoTWForegroundSyncService.EXTRA_MODE, mode.name)
+            })
+            true
+        }.getOrElse { e ->
+            android.util.Log.w("LoTWForegroundSync", "Unable to start foreground service", e)
+            LoTWForegroundSyncStatus.publish(
+                LoTWForegroundStatus(message = "Unable to start background LoTW synchronization"))
+            false
+        }
+    }
+
+    override fun cancelManualLoTWSync() {
+        startService(Intent(this, LoTWForegroundSyncService::class.java).apply {
+            action = LoTWForegroundSyncService.ACTION_CANCEL
+        })
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -116,9 +149,10 @@ class MainApplication : Application(), IContainerProvider {
             )) return
         // The service repeats the eligibility check inside its own job to
         // avoid a duplicate request after Activity navigation/recreation.
-        androidx.core.content.ContextCompat.startForegroundService(
-            this, android.content.Intent(this, LoTWForegroundSyncService::class.java)
-        )
+        if (LoTWForegroundSyncStatus.state.value.running) return
+        runCatching {
+            ContextCompat.startForegroundService(this, Intent(this, LoTWForegroundSyncService::class.java))
+        }.onFailure { android.util.Log.w("LoTWForegroundSync", "Automatic sync could not start", it) }
     }
 
 }
