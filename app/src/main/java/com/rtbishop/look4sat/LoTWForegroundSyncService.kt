@@ -17,6 +17,8 @@ import android.os.SystemClock
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.LoTWPhase
 import com.rtbishop.look4sat.core.domain.repository.LoTWProgress
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundStatus
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundSyncStatus
 import com.rtbishop.look4sat.core.domain.repository.LoTWResult
 import com.rtbishop.look4sat.core.domain.repository.LoTWSyncMode
 import com.rtbishop.look4sat.core.domain.repository.applyLoTWGridResult
@@ -52,7 +54,22 @@ class LoTWForegroundSyncService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CANCEL) {
+            syncJob?.cancel()
+            LoTWForegroundSyncStatus.publish(LoTWForegroundStatus(message = "LoTW synchronization cancelled"))
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (syncJob?.isActive == true) return START_NOT_STICKY
+        val requested = if (intent?.action == ACTION_MANUAL)
+            runCatching { LoTWSyncMode.valueOf(intent.getStringExtra(EXTRA_MODE).orEmpty()) }.getOrNull()
+        else null
+        if (intent?.action == ACTION_MANUAL && requested == null) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        LoTWForegroundSyncStatus.publish(LoTWForegroundStatus(
+            running = true, mode = requested, message = "Preparing LoTW synchronization"))
 
         // Android requires the initial foreground notification immediately,
         // before the first network or database operation.
@@ -64,13 +81,18 @@ class LoTWForegroundSyncService : Service() {
         }
         syncJob = work.launch {
             try {
-                synchronize()
+                synchronize(requested)
             } catch (e: kotlinx.coroutines.CancellationException) {
+                LoTWForegroundSyncStatus.publish(LoTWForegroundStatus(message = "LoTW synchronization cancelled"))
                 throw e
             } catch (e: Exception) {
                 report("LoTW synchronization failed", null)
                 android.util.Log.e("LoTWForegroundSync", "Synchronization failed", e)
             } finally {
+                // Preserve the final result while marking the job stopped, so
+                // reopened Settings can show an accurate completion state.
+                LoTWForegroundSyncStatus.publish(
+                    LoTWForegroundSyncStatus.state.value.copy(running = false, progress = null))
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 // A second onStartCommand while the first job was active can
                 // increment startId without starting a new job. stopSelfResult
@@ -83,20 +105,29 @@ class LoTWForegroundSyncService : Service() {
         return START_NOT_STICKY
     }
 
-    private suspend fun synchronize() {
+    private suspend fun synchronize(requested: LoTWSyncMode?) {
         val container = (application as IContainerProvider).getMainContainer()
         val settings = container.settingsRepo
-        if (settings.wavelogUploadSettings.value.isReady) return
+        if (settings.wavelogUploadSettings.value.isReady) {
+            report("LoTW sync disabled while Wavelog is active", null)
+            return
+        }
         val account = settings.lotwSettings.value
         val now = System.currentTimeMillis()
-        if (!shouldAutoSyncLoTW(
+        if (!account.isConfigured) {
+            report("LoTW credentials are not configured", null)
+            return
+        }
+        if (requested == null && !shouldAutoSyncLoTW(
                 account.isConfigured,
                 settings.otherSettings.value.stateOfAutoLotwSync,
                 settings.getLastLotwSyncDate(),
                 lotwSyncToday(now)
             )) return
         val callsign = account.callsign.trim().uppercase()
-        val mode = resolveLoTWSyncMode(settings.getLastLotwSyncCallsign(), callsign, null)
+        val mode = resolveLoTWSyncMode(settings.getLastLotwSyncCallsign(), callsign, requested)
+        LoTWForegroundSyncStatus.publish(
+            LoTWForegroundSyncStatus.state.value.copy(mode = mode))
         val since = if (mode == LoTWSyncMode.Incremental) lotwIncrementalSince(settings) else ""
         report("Connecting to LoTW", null)
         val result = container.lotwRepo.fetchConfirmedGridQsos(
@@ -126,6 +157,8 @@ class LoTWForegroundSyncService : Service() {
     }
 
     private fun report(message: String, progress: LoTWProgress?) {
+        LoTWForegroundSyncStatus.publish(
+            LoTWForegroundSyncStatus.state.value.copy(progress = progress, message = message))
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, notification(message, progress))
     }
@@ -157,10 +190,15 @@ class LoTWForegroundSyncService : Service() {
 
     override fun onDestroy() {
         work.cancel()
+        LoTWForegroundSyncStatus.publish(
+            LoTWForegroundSyncStatus.state.value.copy(running = false, progress = null))
         super.onDestroy()
     }
 
     companion object {
+        const val ACTION_MANUAL = "com.rtbishop.look4sat.action.LOTW_MANUAL_SYNC"
+        const val ACTION_CANCEL = "com.rtbishop.look4sat.action.LOTW_CANCEL_SYNC"
+        const val EXTRA_MODE = "mode"
         const val CHANNEL_ID = "lotw_background_sync"
         const val NOTIFICATION_ID = 7422
     }
