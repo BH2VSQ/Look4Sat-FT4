@@ -345,6 +345,8 @@ class RadarViewModel(
         when (action) {
             is RadarAction.AddToCalendar -> addToCalendar(action.name, action.aosTime, action.losTime)
             is RadarAction.ToggleFavoriteTransponder -> {
+                val pass = _uiState.value.currentPass ?: return
+                if (pass.catNum != action.catnum) return
                 val current = settingsRepo.getFavoriteTransponders(action.catnum).toMutableList()
                 if (action.uuid in current) current.remove(action.uuid) else current.add(action.uuid)
                 settingsRepo.setFavoriteTransponders(action.catnum, current)
