@@ -19,6 +19,8 @@ package com.rtbishop.look4sat.feature.settings
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import java.io.File
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -44,6 +46,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 
@@ -55,6 +58,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -132,6 +136,37 @@ private fun SettingsScreen(
     var showUpdateChecker by rememberSaveable { mutableStateOf(false) }
     var showMapSettings by rememberSaveable { mutableStateOf(false) }
     var showProjectWiki by rememberSaveable { mutableStateOf(false) }
+    var showDebugMenu by rememberSaveable { mutableStateOf(false) }
+    var debugExportMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    val isDebuggableBuild = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    val exportPreferencesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/xml")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val preferencesFile = File(
+                    context.applicationInfo.dataDir,
+                    "shared_prefs/${context.packageName}_preferences.xml"
+                )
+                // Wait for pending SharedPreferences.apply() writes before copying the raw XML.
+                context.getSharedPreferences(
+                    "${context.packageName}_preferences",
+                    android.content.Context.MODE_PRIVATE
+                ).edit().commit()
+                check(preferencesFile.isFile) { "Preferences XML file does not exist yet." }
+                val contents = preferencesFile.readBytes()
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(contents)
+                } ?: error("Unable to open the selected destination.")
+                debugExportMessage = context.getString(R.string.debug_export_success)
+            } catch (error: Exception) {
+                debugExportMessage = context.getString(
+                    R.string.debug_export_failed,
+                    error.localizedMessage ?: error.javaClass.simpleName
+                )
+            }
+        }
+    }
     // Only one collapsible settings section may be open at a time.
     // 0 = none, 1 = data output, 2 = FT4/time sync, 3 = display, 4 = other settings.
     var expandedSettingsSection by rememberSaveable { mutableStateOf(0) }
@@ -141,6 +176,36 @@ private fun SettingsScreen(
     val otherSettingsExpanded = expandedSettingsSection == 4
     var passListFontScaleSlider by remember(uiState.otherSettings.passListFontScale) {
         mutableFloatStateOf(uiState.otherSettings.passListFontScale)
+    }
+    if (showDebugMenu && isDebuggableBuild) {
+        AlertDialog(
+            onDismissRequest = { showDebugMenu = false },
+            title = { Text(stringResource(R.string.debug_menu_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.debug_menu_description))
+                    debugExportMessage?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    debugExportMessage = null
+                    // Match: adb exec-out run-as <package> cat shared_prefs/<package>_preferences.xml
+                    context.getSharedPreferences(
+                        "${context.packageName}_preferences",
+                        android.content.Context.MODE_PRIVATE
+                    ).edit().commit()
+                    exportPreferencesLauncher.launch("look4sat_preferences.xml")
+                }) {
+                    Text(stringResource(R.string.debug_export_button))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDebugMenu = false }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            }
+        )
     }
     if (showProjectWiki) {
         ProjectWikiDialog(onDismiss = { showProjectWiki = false })
@@ -509,6 +574,15 @@ private fun SettingsScreen(
                         onMapSettings = { showMapSettings = true },
                         loTWEnabled = !wavelogMode,
                         onAction = onAction
+                    )
+                }
+            }
+            if (isDebuggableBuild) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    CardButton(
+                        onClick = { debugExportMessage = null; showDebugMenu = true },
+                        text = stringResource(R.string.debug_menu_title),
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
