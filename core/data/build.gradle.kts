@@ -5,6 +5,12 @@ plugins {
 android {
     namespace = "com.rtbishop.look4sat.core.data"
     testOptions.unitTests.isReturnDefaultValues = true
+    testOptions.unitTests.isIncludeAndroidResources = true
+}
+
+dependencies {
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {

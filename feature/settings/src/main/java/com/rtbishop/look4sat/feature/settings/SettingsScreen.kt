@@ -129,24 +129,6 @@ private fun SettingsScreen(
     onFixStationGrid: (List<String>) -> Unit = {},
     onClearStationGridPrefill: () -> Unit = {}
 ) {
-    var showUpdateChecker by rememberSaveable { mutableStateOf(false) }
-    var showMapSettings by rememberSaveable { mutableStateOf(false) }
-    var showProjectWiki by rememberSaveable { mutableStateOf(false) }
-    if (showProjectWiki) {
-        ProjectWikiDialog(onDismiss = { showProjectWiki = false })
-    }
-    if (showUpdateChecker) {
-        UpdateCheckerScreen(
-            currentVersion = uiState.appVersionName,
-            state = uiState.updateChecker,
-            onBack = { showUpdateChecker = false },
-            onCheck = { onAction(SettingsAction.CheckForUpdate) },
-            onDownload = { onAction(SettingsAction.DownloadUpdate) },
-            onConsumeApk = { onAction(SettingsAction.ConsumeDownloadedApk) }
-        )
-        return
-    }
-    val dialogs = rememberDialogVisibility()
     val foregroundStatus by LoTWForegroundSyncStatus.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val syncLauncher = context.applicationContext as? ILoTWForegroundSyncLauncher
@@ -169,6 +151,25 @@ private fun SettingsScreen(
             notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         } else block()
     }
+
+    var showUpdateChecker by rememberSaveable { mutableStateOf(false) }
+    var showMapSettings by rememberSaveable { mutableStateOf(false) }
+    var showProjectWiki by rememberSaveable { mutableStateOf(false) }
+    if (showProjectWiki) {
+        ProjectWikiDialog(onDismiss = { showProjectWiki = false })
+    }
+    if (showUpdateChecker) {
+        UpdateCheckerScreen(
+            currentVersion = uiState.appVersionName,
+            state = uiState.updateChecker,
+            onBack = { showUpdateChecker = false },
+            onCheck = { onAction(SettingsAction.CheckForUpdate) },
+            onDownload = { onAction(SettingsAction.DownloadUpdate) },
+            onConsumeApk = { onAction(SettingsAction.ConsumeDownloadedApk) }
+        )
+        return
+    }
+    val dialogs = rememberDialogVisibility()
     var showRadioProfiles by rememberSaveable {mutableStateOf(false)}
     val diagnosticContext=LocalContext.current
     LaunchedEffect(uiState.controlDiagnosticsExportText) {
