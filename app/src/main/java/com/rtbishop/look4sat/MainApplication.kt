@@ -122,12 +122,16 @@ class MainApplication : Application(), IContainerProvider {
         println("Started periodic LoTW grid sync (${mode.name.lowercase()})")
         val result = container.lotwRepo.fetchConfirmedGridQsos(callsign, lotwSettings.password, since)
         if (result is LoTWResult.Success) {
-            val count = applyLoTWGridResult(settingsRepo, result, mode, callsign, timeNow)
-            // Feed the logbook so confirmations appear and local uploads get matched.
-            runCatching {
-                val confirmed = result.qsos.values.flatten().map { it.toConfirmedRecord(callsign) }
-                container.qsoRepository.mergeLoTW(confirmed)
+            // Full synchronization never deletes the old download before a
+            // successful fetch; database replacement is atomic and provider-scoped.
+            val confirmed = result.qsos.values.flatten().map { it.toConfirmedRecord(callsign) }
+            try {
+                container.qsoRepository.mergeLoTW(confirmed, callsign, mode == LoTWSyncMode.Full)
+            } catch (error: Exception) {
+                println("Periodic LoTW logbook sync failed; old records retained: $error")
+                return
             }
+            val count = applyLoTWGridResult(settingsRepo, result, mode, callsign, timeNow)
             println("Periodic LoTW grid sync finished: $count worked grids")
         } else {
             println("Periodic LoTW grid sync skipped (${result::class.simpleName})")

@@ -37,7 +37,7 @@ import java.util.Locale
 class QsoRepository(
     private val dao: QsoDao,
     private val dispatcher: CoroutineDispatcher
-) : IQsoRepository {
+) : IQsoRepository, com.rtbishop.look4sat.core.domain.logbook.ITransactionalLoTWSync {
     private val importMutex = Mutex()
 
     override val records: Flow<List<QsoRecord>> = dao.observeAll().map { records -> records.map(QsoEntity::toDomain) }
@@ -59,6 +59,7 @@ class QsoRepository(
                     id = 0L,
                     lotwUploaded = false, lotwConfirmed = false, lotwReceived = false,
                     wavelogUploaded = false,
+                    syncOrigin = "",
                     wavelogStation = "",
                     lotwQslDate = "", vuccGrids = emptyList(), theirVuccGrids = emptyList(),
                     dxcc = null, country = "", cqZone = null, region = ""
@@ -75,7 +76,7 @@ class QsoRepository(
                         record.rxFrequencyHz != previous.rxFrequencyHz || record.band != previous.band ||
                         record.rxBand != previous.rxBand || record.propagationMode != previous.propagationMode
                     )) false else saved.lotwReceived
-                dao.save(saved.copy(lotwReceived = received).toEntity())
+                dao.save(saved.copy(lotwReceived = received, syncOrigin = "").toEntity())
             }
         }
     }
@@ -156,6 +157,13 @@ class QsoRepository(
     override suspend fun mergeLoTW(records: List<QsoRecord>): AdifImportResult = withContext(dispatcher) {
         importMutex.withLock { mergeRecords(records, fromLoTW = true) }
     }
+    override suspend fun mergeLoTW(
+        records: List<QsoRecord>, sourceKey: String, replaceExisting: Boolean
+    ): AdifImportResult = withContext(dispatcher) {
+        val origin = "LOTW|" + sourceKey.trim().uppercase(Locale.US)
+        require(sourceKey.isNotBlank())
+        importMutex.withLock { mergeRecords(records, fromLoTW = true, origin = origin, replaceExisting = replaceExisting) }
+    }
 
     /**
      * Merges QSO records pulled from Wavelog (the sync/download direction).
@@ -168,6 +176,13 @@ class QsoRepository(
      */
     override suspend fun mergeWavelog(records: List<QsoRecord>): AdifImportResult = withContext(dispatcher) {
         importMutex.withLock { mergeWavelogRecords(records) }
+    }
+    override suspend fun mergeWavelog(
+        records: List<QsoRecord>, sourceKey: String, replaceExisting: Boolean
+    ): AdifImportResult = withContext(dispatcher) {
+        require(sourceKey.isNotBlank())
+        val origin = "WAVELOG|" + sourceKey.trim().trimEnd('/').lowercase(Locale.US)
+        importMutex.withLock { mergeWavelogRecords(records, origin, replaceExisting) }
     }
 
     override suspend fun consolidateConfirmations(): Int = withContext(dispatcher) {
@@ -185,8 +200,13 @@ class QsoRepository(
         }
     }
 
-    private suspend fun mergeRecords(records: List<QsoRecord>, fromLoTW: Boolean = false): AdifImportResult {
-        val working = dao.getAll().map(QsoEntity::toDomain).toMutableList()
+    private suspend fun mergeRecords(
+        records: List<QsoRecord>, fromLoTW: Boolean = false,
+        origin: String = "", replaceExisting: Boolean = false
+    ): AdifImportResult {
+        val existing = dao.getAll()
+        val (removed, retained) = existing.partition { replaceExisting && it.syncOrigin == origin }
+        val working = retained.map(QsoEntity::toDomain).toMutableList()
         // Consolidate first: confirmations synced before the identity fix sit as their own
         // rows (the tracker name and a mirrored band direction both failed the comparison),
         // and left in place they would make the lookup below ambiguous between the operator's
@@ -233,7 +253,8 @@ class QsoRepository(
                             band = remote.band.ifBlank { working[index].band },
                             rxBand = remote.rxBand.ifBlank { working[index].rxBand }
                         )
-                        val folded = if (index == target) healed.withConfirmation(remote) else healed
+                        val folded = if (index == target) healed.withConfirmation(remote).copy(
+                            syncOrigin = sharedOrigin(healed.syncOrigin, origin)) else healed
                         working[index] = folded
                         changes[index] = folded
                     }
@@ -241,7 +262,7 @@ class QsoRepository(
                     return@forEach
                 }
                 if (stableQsoKey(remote) in knownKeys) { skipped++; return@forEach }
-                val added = remote.copy(id = 0L, satelliteName = officialSatelliteName(remote.satelliteName))
+                val added = remote.copy(id = 0L, satelliteName = officialSatelliteName(remote.satelliteName), syncOrigin = origin)
                 changes[working.size] = added
                 lookup.getOrPut(added.confirmationLookupKey()) { mutableListOf() }.add(working.size)
                 knownKeys += stableQsoKey(added)
@@ -249,7 +270,7 @@ class QsoRepository(
                 imported++
             } else {
                 val previous = working[match]
-                val merged = previous.withConfirmation(remote)
+                val merged = previous.withConfirmation(remote).copy(syncOrigin = sharedOrigin(previous.syncOrigin, origin))
                 if (merged == previous) skipped++ else {
                     working[match] = merged
                     changes[match] = merged
@@ -257,13 +278,16 @@ class QsoRepository(
                 }
             }
         }
-        dao.saveBatch(changes.values.map(QsoRecord::toEntity))
-        consolidation.redundant.forEach { dao.delete(it.id) }
+        dao.applySyncBatch(removed.map { it.id }, changes.values.map(QsoRecord::toEntity), consolidation.redundant.map { it.id })
         return AdifImportResult(imported, skipped, updated)
     }
 
-    private suspend fun mergeWavelogRecords(records: List<QsoRecord>): AdifImportResult {
-        val working = dao.getAll().map(QsoEntity::toDomain).toMutableList()
+    private suspend fun mergeWavelogRecords(
+        records: List<QsoRecord>, origin: String = "", replaceExisting: Boolean = false
+    ): AdifImportResult {
+        val existing = dao.getAll()
+        val (removed, retained) = existing.partition { replaceExisting && it.syncOrigin == origin }
+        val working = retained.map(QsoEntity::toDomain).toMutableList()
         // Rows imported under a tracking-source name join the ARRL name first, so the
         // lookup below sees one identity for both sides of a match.
         val renames = rewriteOfficialNames(working)
@@ -284,6 +308,7 @@ class QsoRepository(
             if (index == null) {
                 val added = remote.copy(
                     id = 0L,
+                    syncOrigin = origin,
                     wavelogUploaded = true,
                     satelliteName = officialSatelliteName(remote.satelliteName)
                 )
@@ -294,6 +319,7 @@ class QsoRepository(
             } else {
                 val previous = working[index]
                 val merged = previous.copy(
+                    syncOrigin = sharedOrigin(previous.syncOrigin, origin),
                     wavelogUploaded = true,
                     wavelogStation = remote.wavelogStation.ifBlank { previous.wavelogStation },
                     theirGrid = previous.theirGrid.ifBlank { remote.theirGrid },
@@ -312,7 +338,7 @@ class QsoRepository(
                 }
             }
         }
-        dao.saveBatch(changes.values.map { it.toEntity() })
+        dao.applySyncBatch(removed.map { it.id }, changes.values.map { it.toEntity() })
         return AdifImportResult(imported, skipped, updated)
     }
 
@@ -323,6 +349,9 @@ class QsoRepository(
         /** imported confirmation rows that are now part of a local record. */
         val redundant: List<QsoRecord>
     )
+
+    private fun sharedOrigin(previous: String, incoming: String): String =
+        if (previous == incoming) previous else ""
 
     /**
      * Rewrites the names records were imported under into their ARRL names ("SAUDISAT 1C" ->
@@ -357,7 +386,8 @@ class QsoRepository(
         splitConfirmationPairs(working.toList()).forEach { pair ->
             val local = working[pair.localIndex]
             val confirmation = working[pair.confirmationIndex]
-            val folded = local.withConfirmation(confirmation)
+            val folded = local.withConfirmation(confirmation).copy(
+                syncOrigin = sharedOrigin(local.syncOrigin, confirmation.syncOrigin))
             if (folded != local) {
                 working[pair.localIndex] = folded
                 merged[pair.localIndex] = folded
@@ -407,7 +437,8 @@ private fun QsoEntity.toDomain() = QsoRecord(
     iota = iota,
     theirFullGrids = theirFullGrids.split(',').filter(String::isNotBlank),
     myFullGrids = myFullGrids.split(',').filter(String::isNotBlank),
-    myIota = myIota
+    myIota = myIota,
+    syncOrigin = syncOrigin
 )
 
 private fun QsoRecord.toEntity() = QsoEntity(
@@ -450,7 +481,8 @@ private fun QsoRecord.toEntity() = QsoEntity(
     iota = iota.trim().uppercase(Locale.US),
     theirFullGrids = theirFullGrids.joinToString(","),
     myFullGrids = myFullGrids.joinToString(","),
-    myIota = myIota.trim().uppercase(Locale.US)
+    myIota = myIota.trim().uppercase(Locale.US),
+    syncOrigin = syncOrigin
 )
 
 internal fun stableQsoKey(record: QsoRecord): String = listOf(
