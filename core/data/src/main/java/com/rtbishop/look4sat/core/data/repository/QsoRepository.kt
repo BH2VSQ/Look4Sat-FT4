@@ -37,7 +37,7 @@ import java.util.Locale
 class QsoRepository(
     private val dao: QsoDao,
     private val dispatcher: CoroutineDispatcher
-) : IQsoRepository {
+) : IQsoRepository, com.rtbishop.look4sat.core.domain.logbook.ITransactionalLoTWSync {
     private val importMutex = Mutex()
 
     override val records: Flow<List<QsoRecord>> = dao.observeAll().map { records -> records.map(QsoEntity::toDomain) }

@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.rtbishop.look4sat.core.data.database.QsoDatabase
 import com.rtbishop.look4sat.core.data.database.MIGRATION_QSO_6_7
 import com.rtbishop.look4sat.core.domain.logbook.QsoRecord
+import com.rtbishop.look4sat.core.domain.logbook.mergeDownloadedLoTW
 import com.rtbishop.look4sat.core.domain.logbook.QsoStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -36,7 +37,7 @@ class QsoFullSyncTransactionTest {
         repository.mergeLoTW(listOf(record("OLD")),"BA7OPF",false)
         repository.mergeLoTW(listOf(record("OTHER")),"BG5JSU",false)
         repository.mergeWavelog(listOf(record("WAVELOG")),"https://radio.example",false)
-        repository.mergeLoTW(listOf(record("NEW")),"BA7OPF",true)
+        repository.mergeDownloadedLoTW(listOf(record("NEW")),"BA7OPF",true)
         assertEquals(setOf("MANUAL","OTHER","WAVELOG","NEW"),repository.records.first().map {it.theirCallsign}.toSet())
     }
 
