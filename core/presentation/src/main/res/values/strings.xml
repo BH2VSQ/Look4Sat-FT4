@@ -483,6 +483,11 @@
     <string name="prefs_net_perm_error">Check your network permission</string>
 
     <string name="prefs_other_title">Other settings</string>
+    <string name="debug_menu_title">Debug</string>
+    <string name="debug_menu_description">Export the current SharedPreferences XML used by the app. Its contents match the file available through adb run-as.</string>
+    <string name="debug_export_button">Export configuration</string>
+    <string name="debug_export_success">Configuration exported successfully.</string>
+    <string name="debug_export_failed">Export failed: %1$s</string>
     <string name="prefs_map_title">Map settings</string>
     <string name="prefs_map_configure">Configure map</string>
     <string name="prefs_map_source_title">Map source</string>

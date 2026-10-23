@@ -453,6 +453,11 @@
     <string name="rc_usb_port_incompatible">此 CP2105 辅助端口无法提供 Yaesu CAT 所需的 8N2 串口格式。</string>
 
     <string name="prefs_other_title">其他设置</string>
+    <string name="debug_menu_title">Debug</string>
+    <string name="debug_menu_description">导出应用当前使用的 SharedPreferences XML，内容与通过 adb run-as 获取的文件一致。</string>
+    <string name="debug_export_button">导出配置</string>
+    <string name="debug_export_success">配置导出成功。</string>
+    <string name="debug_export_failed">导出失败：%1$s</string>
     <string name="prefs_map_title">地图设置</string>
     <string name="prefs_map_configure">配置地图</string>
     <string name="prefs_map_source_title">地图来源</string>
