@@ -547,10 +547,22 @@ class SettingsViewModel(
                     // downloaded rows on HTTP failure, parsing error or DB failure.
                     val confirmed = result.qsos.values.flatten()
                         .map { it.toConfirmedRecord(callsign) }
-                    qsoRepository.mergeLoTW(
-                        confirmed, callsign,
-                        replaceExisting = effectiveMode == LoTWSyncMode.Full
-                    )
+                    try {
+                        qsoRepository.mergeLoTW(
+                            confirmed, callsign,
+                            replaceExisting = effectiveMode == LoTWSyncMode.Full
+                        )
+                    } catch (cancel: kotlinx.coroutines.CancellationException) {
+                        throw cancel
+                    } catch (error: Exception) {
+                        // Do not advance the LoTW cursor or claim success if the
+                        // transaction failed. The old download is still intact.
+                        _uiState.update { it.copy(
+                            lotwSyncing = false, lotwSyncMode = null, lotwProgress = null,
+                            lotwError = LoTWError.Network(error.message ?: "Logbook transaction failed")
+                        ) }
+                        return@launch
+                    }
                     val mergedGridsCount = applyLoTWGridResult(settingsRepo, result, effectiveMode, callsign)
                     _uiState.update { state ->
                         state.copy(
