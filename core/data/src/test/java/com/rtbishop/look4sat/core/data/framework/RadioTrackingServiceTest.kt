@@ -65,22 +65,6 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
-    @Test fun openingProfilesPublishesTheLiveControllerSnapshotBeforeReading()=runTest {
-        val remote=MutableStateFlow(RemoteRadioState(connected=true,session=41,capabilities=
-            RemoteRadioCapabilities(10,92,10,45,1500,18000000,1300000000,15,9,
-                true,true,true,true,false,false,transactionalProfileStore=true)))
-        val tx=FakeRadioController(remote=remote)
-        val fixture=Fixture(backgroundScope,tx,FakeRadioController(),
-            radioModel=RadioControlSettings.MODEL_QUANSHENG_UVK1)
-        fixture.service.connectRadios()
-        // This stub has no profile storage response; the link must still stay online.
-        assertFalse(fixture.service.refreshRadioProfiles())
-        assertEquals(41L,fixture.service.state.value.remoteRadio?.session)
-        assertTrue(fixture.service.state.value.remoteRadio?.connected==true)
-        assertTrue(fixture.service.state.value.txConnected)
-        assertTrue(fixture.service.profileManagerState.value.error?.contains("profile status")==true)
-        fixture.close()
-    }
     @Test fun n76UsesAtomicNativeTrackingAndDoesNotApplyTheL4s250HzQuantizer() = runTest {
         val remote = remoteFixtureState().also { flow ->
             flow.value = flow.value.copy(capabilities = flow.value.capabilities!!.copy(
@@ -676,18 +660,76 @@ class RadioTrackingServiceTest {
     }
 
     @Test
-    fun ic820CannotAcquireCatTransmitLeaseEvenWithStaleSplitSettings() = runTest {
+    fun ic820SinglePresetModeStillCannotAcquireCatTransmitLease() = runTest {
         val tx = FakeRadioController()
         val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
             radioModel = RadioControlSettings.MODEL_ICOM_IC820, splitMode = true)
         fixture.service.connectRadios()
-        assertFalse(fixture.service.state.value.splitMode)
+        assertTrue(fixture.service.state.value.splitMode)
         fixture.service.emergencyPttOff()
         assertFalse(tx.operations.contains("ptt:off"))
         val error = runCatching { fixture.service.beginTransmit(fixture.request(820L)) }.exceptionOrNull()
         assertTrue(error?.message?.contains("does not support CAT PTT") == true)
         assertFalse(tx.operations.contains("ptt:on"))
         fixture.close()
+    }
+
+    @Test fun ic820SinglePresetUsesOneConnectionAndBandAccessWithoutChangingRadioMode() = runTest {
+        val tx = FakeRadioController()
+        val rx = FakeRadioController()
+        val fixture = Fixture(backgroundScope, tx, rx, radioModel = RadioControlSettings.MODEL_ICOM_IC820, splitMode = true)
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        assertEquals(1, fixture.service.state.value.physicalConnectionCount)
+        assertTrue(fixture.service.state.value.isActive)
+        assertFalse(rx.isConnected)
+        assertTrue(tx.operations.any { it.startsWith("band:145") })
+        assertTrue(tx.operations.any { it.startsWith("band:435") })
+        assertTrue(tx.operations.none { it.startsWith("split:") || it.startsWith("vfo:") || it.startsWith("mode:") })
+        fixture.close()
+    }
+
+    @Test fun legacySinglePresetTracksSelectedVfoAndFreezesWhilePhysicalPttIsOn() = runTest {
+        val tx = FakeRadioController(pttReadbackSupported = true).also { it.frequencyHz = 435_100_000 }
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(), splitMode = true)
+        fixture.service.connectRadios()
+        fixture.startTracking()
+        runCurrent()
+        assertTrue(tx.operations.any { it.startsWith("frequency:435") })
+        assertTrue(tx.operations.none { it.startsWith("frequency:145") })
+        tx.frequencyHz = 145_900_000
+        advanceTimeBy(1_001); runCurrent()
+        assertTrue(tx.operations.any { it.startsWith("frequency:145") })
+        assertTrue(tx.operations.none { it.startsWith("split:") || it.startsWith("vfo:") || it.startsWith("mode:") })
+        tx.physicalPtt = true
+        val writes = tx.operations.count { it.startsWith("frequency:") }
+        advanceTimeBy(1_001); runCurrent()
+        assertEquals(writes, tx.operations.count { it.startsWith("frequency:") })
+        fixture.close()
+    }
+
+    @Test fun ambiguousOrUnmatchedPresetVfoIsNeverRetuned() {
+        assertEquals(true, presetHalfDuplexLeg(435_101_000, 435_100_000, 145_900_000))
+        assertEquals(false, presetHalfDuplexLeg(145_901_000, 435_100_000, 145_900_000))
+        assertNull(presetHalfDuplexLeg(7_100_000, 435_100_000, 145_900_000))
+        assertNull(presetHalfDuplexLeg(145_900_000, 145_900_000, 145_900_000))
+        assertEquals(true, presetHalfDuplexLeg(435_101_000, 435_100_000, null))
+    }
+
+    @Test fun failedIc820PresetWriteRestoresRxBandAccessWithoutSwitchingTransmitRoles() = runTest {
+        val tx = FakeRadioController().also { it.frequencySucceeds = false }
+        val result = tunePresetHalfDuplex(tx, true, 435_100_000, 145_900_000)
+        assertFalse(result.success)
+        assertEquals("band:435100000", tx.operations.last())
+        assertTrue(tx.operations.none { it.startsWith("ptt:") || it.startsWith("vfo:") || it.startsWith("split:") })
+    }
+
+    @Test fun canceledIc820PresetWriteStillRestoresRxBandAccess() = runTest {
+        val tx = FakeRadioController().also { it.beforeSetFrequency = { throw kotlinx.coroutines.CancellationException("canceled") } }
+        val result = runCatching { tunePresetHalfDuplex(tx, true, 435_100_000, 145_900_000) }
+        assertTrue(result.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertEquals("band:435100000", tx.operations.last())
     }
 
     @Test
@@ -888,6 +930,37 @@ class RadioTrackingServiceTest {
         assertEquals(settings, fixture.settings.radioControlSettings.value)
         assertTrue(tx.operations.drop(commandCount).all { it == "disconnect" })
         assertFalse(fixture.service.state.value.isActive)
+        fixture.close()
+    }
+
+    @Test fun savingCatDoesNotRequireProfileStorageAckOrAStillConnectedRadio() = runTest {
+        val remote = remoteFixtureState()
+        val tx = FakeRadioController(remote = remote)
+        val fixture = Fixture(backgroundScope, tx, FakeRadioController(),
+            radioModel = RadioControlSettings.MODEL_QUANSHENG_UVK1, splitMode = true)
+        fixture.service.connectRadios()
+        runCurrent()
+        val correction = fixture.settings.radioControlSettings.value.copy(l4sCorrectionEditStepHz = 20)
+        assertTrue(fixture.service.applyRadioControlSettings(correction))
+        remote.value = remote.value.copy(connected = false, transmitStateKnown = false, nativeMenuOpen = true)
+        runCurrent()
+        val invalid = correction.copy(txRadioAddress = "missing USB device")
+        assertTrue(fixture.service.applyRadioControlSettings(invalid))
+        assertEquals(invalid, fixture.settings.radioControlSettings.value)
+        fixture.close()
+    }
+
+    @Test fun savingCatQueriesOnlyAttachedControllersAndStillRejectsPhysicalTransmission() = runTest {
+        val tx = FakeRadioController(pttReadbackSupported = true)
+        val rx = FakeRadioController(pttReadbackSupported = true)
+        val fixture = Fixture(backgroundScope, tx, rx)
+        fixture.service.connectRadios()
+        rx.isConnected = false
+        val changed = fixture.settings.radioControlSettings.value.copy(baudRate = 9600)
+        tx.physicalPtt = true
+        assertFalse(fixture.service.applyRadioControlSettings(changed))
+        tx.physicalPtt = false
+        assertTrue(fixture.service.applyRadioControlSettings(changed))
         fixture.close()
     }
 

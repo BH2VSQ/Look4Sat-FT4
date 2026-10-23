@@ -104,10 +104,6 @@ interface ISettingsRepo {
     val radioControlSettings: StateFlow<RadioControlSettings>
     fun getRemoteCwPresets(): List<String> = CwTransmitPresets.defaults
     fun updateRemoteCwPreset(index: Int, text: String) = Unit
-    fun getRadioProfileMetadata():Map<String,RadioProfileMetadata> = emptyMap()
-    fun setRadioProfileMetadata(values:Map<String,RadioProfileMetadata>) = Unit
-    fun getRadioProfileAliases():Map<String,String> = emptyMap()
-    fun setRadioProfileAliases(values:Map<String,String>) = Unit
     fun updateRadioControlSettings(settings: RadioControlSettings)
     //endregion
 

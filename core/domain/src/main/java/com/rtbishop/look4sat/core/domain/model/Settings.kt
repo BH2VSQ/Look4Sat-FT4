@@ -160,7 +160,7 @@ data class RadioControlSettings(
     val txRadioName: String,
     val rxRadioName: String,
     val baudRate: Int,
-    /** Use one Icom radio with VFO-A/B split or supported satellite MAIN/SUB control. */
+    /** One radio: automatic split where supported, otherwise a manually preset half-duplex radio. */
     val splitMode: Boolean = false,
     val catTransport: String = TRANSPORT_BLUETOOTH,
     /** Dedicated satellite MAIN/SUB when supported; ordinary VFO-A/B split otherwise. */

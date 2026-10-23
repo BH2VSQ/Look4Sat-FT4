@@ -86,7 +86,6 @@ data class RadioTrackingState(
 
 interface IRadioTrackingService {
     val state: StateFlow<RadioTrackingState>
-    val profileManagerState:StateFlow<RadioProfileManagerState> get()=EmptyRadioProfileManagerState
 
     suspend fun connectRadios()
     suspend fun disconnectRadios()
@@ -106,18 +105,9 @@ interface IRadioTrackingService {
     fun syncHandsetCwPresets() = Unit
     fun cancelHandsetCwSync() = Unit
     fun cancelRemoteTransmit() = Unit
-    suspend fun refreshRadioProfiles():Boolean=false
-    suspend fun requestDeleteRadioProfile(slot:Int):Boolean=false
-    suspend fun prepareRadioProfileImport(json:String):Boolean=false
-    suspend fun stageRadioProfileImport(overwrite:Set<String>):Boolean=false
-    suspend fun exportRadioProfiles():String?=null
-    suspend fun cancelRadioProfileOperation()=Unit
-    fun setRadioProfileAlias(key:String,alias:String)=Unit
     suspend fun applyRadioControlSettings(settings:com.rtbishop.look4sat.core.domain.model.RadioControlSettings):Boolean=false
     suspend fun setAudioForeground(enabled: Boolean) = Unit
     fun setRadioMonitor(enabled: Boolean) = Unit
     fun recordingAction(action: com.rtbishop.look4sat.core.domain.model.RadioRecordingAction) = Unit
     fun saveRecording(destinationUri: String) = Unit
 }
-
-private val EmptyRadioProfileManagerState:StateFlow<RadioProfileManagerState> = kotlinx.coroutines.flow.MutableStateFlow(RadioProfileManagerState())

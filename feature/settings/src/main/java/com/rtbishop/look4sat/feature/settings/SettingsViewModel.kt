@@ -106,8 +106,6 @@ class SettingsViewModel(
     private val defaultDataSettings = DataSettings(false, 0, 0, 0L)
     /** In-flight LoTW sync job, cancelled by CancelLoTWSync. */
     private var lotwSyncJob: kotlinx.coroutines.Job? = null
-    private var profileRefreshJob: kotlinx.coroutines.Job? = null
-    private var profileRefreshPending = false
     private var rawCompassHeading = sensorsRepo.sensorData.value.first
     private val _uiState = MutableStateFlow(
         SettingsState(
@@ -123,7 +121,6 @@ class SettingsViewModel(
             rcSettings = settingsRepo.rcSettings.value,
             radioControlSettings = settingsRepo.radioControlSettings.value,
             radioTrackingState = radioTrackingService.state.value,
-            radioProfiles = radioTrackingService.profileManagerState.value,
             rotatorSettings = settingsRepo.rotatorSettings.value,
             rotatorTrackingState = rotatorTrackingService.state.value,
             controlDiagnosticCount = controlDiagnostics.events.value.size,
@@ -143,7 +140,6 @@ class SettingsViewModel(
     val uiState: StateFlow<SettingsState> = _uiState
 
     init {
-        viewModelScope.launch {radioTrackingService.profileManagerState.collect {profiles->_uiState.update {it.copy(radioProfiles=profiles)}}}
         viewModelScope.launch {radioTrackingService.state.collect {radio->_uiState.update {it.copy(radioTrackingState=radio)}}}
         val ft4Settings = settingsRepo.ft4Settings.value
         timeSynchronizationService.setNtpEnabled(ft4Settings.ntpSynchronizationEnabled)
@@ -371,28 +367,6 @@ class SettingsViewModel(
             is SettingsAction.UpdateRadioControl -> viewModelScope.launch {
                 if(!radioTrackingService.applyRadioControlSettings(action.settings))showToast("Stop transmitting before changing CAT settings")
             }
-            SettingsAction.RefreshRadioProfiles -> {
-                _uiState.update { it.copy(radioTrackingState=radioTrackingService.state.value,
-                    radioProfiles=radioTrackingService.profileManagerState.value) }
-                profileRefreshPending=true
-                if(profileRefreshJob?.isActive!=true) profileRefreshJob=viewModelScope.launch {
-                    while(profileRefreshPending) {
-                        profileRefreshPending=false
-                        try { radioTrackingService.refreshRadioProfiles() }
-                        finally { _uiState.update { it.copy(radioTrackingState=radioTrackingService.state.value,
-                            radioProfiles=radioTrackingService.profileManagerState.value) } }
-                    }
-                }
-            }
-            is SettingsAction.DeleteRadioProfile -> viewModelScope.launch {radioTrackingService.requestDeleteRadioProfile(action.slot)}
-            is SettingsAction.ImportRadioProfiles -> viewModelScope.launch {radioTrackingService.prepareRadioProfileImport(action.json)}
-            is SettingsAction.RestoreRadioProfiles -> viewModelScope.launch {radioTrackingService.stageRadioProfileImport(action.overwrite)}
-            SettingsAction.CancelRadioProfileOperation -> viewModelScope.launch {radioTrackingService.cancelRadioProfileOperation()}
-            SettingsAction.ExportRadioProfiles -> viewModelScope.launch {
-                val json=radioTrackingService.exportRadioProfiles();_uiState.update {it.copy(radioProfilesExport=json)}
-            }
-            SettingsAction.ConsumeRadioProfilesExport -> _uiState.update {it.copy(radioProfilesExport=null)}
-            is SettingsAction.SetRadioProfileAlias -> radioTrackingService.setRadioProfileAlias(action.key,action.alias)
             is SettingsAction.UpdateRotatorControl -> settingsRepo.updateRotatorSettings(action.settings)
             SettingsAction.ConnectRotator -> viewModelScope.launch { rotatorTrackingService.connect() }
             SettingsAction.DisconnectRotator -> viewModelScope.launch {

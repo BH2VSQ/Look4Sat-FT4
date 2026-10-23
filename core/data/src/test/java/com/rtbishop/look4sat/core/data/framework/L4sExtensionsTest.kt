@@ -1,8 +1,6 @@
 package com.rtbishop.look4sat.core.data.framework
 
-import com.rtbishop.look4sat.core.data.repository.RadioProfileBackup
 import com.rtbishop.look4sat.core.domain.repository.NativeCwOptions
-import com.rtbishop.look4sat.core.domain.repository.RadioProfileRecordCodec
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -126,20 +124,6 @@ class L4sExtensionsTest {
             assertTrue(runCatching {HandsetMacroSync.stage(List(4){"CQ"},1) {calls++;status}}.isFailure)
             assertEquals(1,calls)
         }
-    }
-
-    @Test fun versionTwoProfilesRoundTripAndDetectCorruptedCwOptions() {
-        val raw=ByteArray(64)
-        "L4SM".toByteArray().copyInto(raw);raw[4]=2;raw[6]=3;raw[7]=25;raw[8]=70;raw[9]=4
-        L4sProtocol.put32(raw,30,435100000);L4sProtocol.put32(raw,34,145900000)
-        raw[46]=45;raw[47]=3;raw[62]=12
-        L4sProtocol.put16(raw,60,RadioProfileRecordCodec.crc(raw))
-        val profile=checkNotNull(RadioProfileRecordCodec.decode(0,raw))
-        assertTrue(profile.compatible)
-        val restored=RadioProfileBackup.decode(RadioProfileBackup.encode(listOf(profile),1)).single()
-        assertEquals(profile.rawHex,restored.rawHex)
-        for(index in listOf(46,47,62))assertFalse(checkNotNull(RadioProfileRecordCodec.decode(0,
-            raw.copyOf().also {it[index]=(it[index].toInt() xor 1).toByte()})).compatible)
     }
 
     private fun macroReply(phase: Int,slot: Int=255,text: String="") = ByteArray(10+text.length).also {

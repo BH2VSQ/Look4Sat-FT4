@@ -1195,17 +1195,14 @@ fun RadioControlDialog(
     initialSettings: RadioControlSettings,
     onDismiss: () -> Unit,
     onSave: (RadioControlSettings) -> Unit,
-    frequencyLocked:Boolean=false,
-    onOpenProfiles:()->Unit={}
+    frequencyLocked:Boolean=false
 ) {
     val context    = androidx.compose.ui.platform.LocalContext.current
     val padding    = LocalSpacing.current.large
     val enabled    = rememberSaveable { mutableStateOf(initialSettings.enabled) }
     val radioModel = rememberSaveable { mutableStateOf(initialSettings.radioModel) }
-    val initialIsIcom = radioModelDescriptor(initialSettings.radioModel).protocolFamily ==
-        RadioProtocolFamily.ICOM_CIV
     val initialBaudRates = radioBaudRates(initialSettings.radioModel)
-    val splitMode  = rememberSaveable { mutableStateOf(initialSettings.splitMode && initialIsIcom) }
+    val splitMode  = rememberSaveable { mutableStateOf(initialSettings.splitMode) }
     val duplexMode = rememberSaveable { mutableStateOf(initialSettings.duplexMode) }
     val catTransport = rememberSaveable { mutableStateOf(initialSettings.catTransport) }
     val tcpProtocol = rememberSaveable { mutableStateOf(initialSettings.tcpProtocol) }
@@ -1244,6 +1241,8 @@ fun RadioControlDialog(
     val civAddress = rememberSaveable {
         mutableStateOf(initialCivAddress?.let { "0x%02X".format(it) }.orEmpty())
     }
+    var rejectedDraft by remember { mutableStateOf<RadioControlSettings?>(null) }
+    var configurationErrors by remember { mutableStateOf(emptyList<String>()) }
     val txAddressError = rememberSaveable { mutableStateOf(false) }
     val rxAddressError = rememberSaveable { mutableStateOf(false) }
     val civAddressError = rememberSaveable { mutableStateOf(false) }
@@ -1392,7 +1391,7 @@ fun RadioControlDialog(
     val supportsSatelliteMode = modelDescriptor.capabilities.satelliteMode &&
         !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
             tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB)
-    val isSingleRadio = modelDescriptor.capabilities.singleRadioSplit && (splitMode.value || isL4s || isN76)
+    val isSingleRadio = splitMode.value || isL4s || isN76
     val requiredStopBits = modelDescriptor.serialStopBits
 
     val baudRates = radioBaudRates(radioModel.value)
@@ -1495,17 +1494,34 @@ fun RadioControlDialog(
             !(catTransport.value == RadioControlSettings.TRANSPORT_TCP &&
                 tcpProtocol.value == RadioControlSettings.TCP_PROTOCOL_HAMLIB) &&
             parsedCivAddress == null
-        if (
-            txAddressError.value || rxAddressError.value || civAddressError.value ||
-            txUsbError.value != null || rxUsbError.value != null
-        ) return@accept
-        val parsedL4sStep=l4sDopplerStepHz.value.toLongOrNull()
-        if(isL4s && (parsedL4sStep==null || parsedL4sStep !in 10L..10_000L || parsedL4sStep%10!=0L)) return@accept
-        if(frequencyLocked)return@accept
-        val correctionStep=l4sCorrectionStepHz.value.toLongOrNull()
-        if(isL4s && (correctionStep==null || correctionStep !in 10L..1000L || correctionStep%10!=0L))return@accept
-        onSave(
-            RadioControlSettings(
+        val issues = mutableListOf<String>()
+        if (enabled.value) {
+            if (txAddressError.value) issues += "TX: " + context.getString(R.string.rc_tcp_address_error)
+            if (rxAddressError.value) issues += "RX: " + context.getString(R.string.rc_tcp_address_error)
+            if (civAddressError.value) issues += context.getString(R.string.rc_civ_address_error)
+            txUsbError.value?.let { issues += "TX: " + context.getString(it.messageResource) }
+            rxUsbError.value?.let { issues += "RX: " + context.getString(it.messageResource) }
+            if (catTransport.value == RadioControlSettings.TRANSPORT_BLUETOOTH) {
+                val addresses = listOf(txAddress.value) + if (isSingleRadio) emptyList() else listOf(rxAddress.value)
+                if (addresses.all { it.isBlank() }) issues += context.getString(R.string.rc_config_device_required)
+                if (addresses.any { it.isNotBlank() && !android.bluetooth.BluetoothAdapter.checkBluetoothAddress(it) })
+                    issues += context.getString(R.string.rc_config_bluetooth_address)
+            }
+            if (!isSingleRadio && txAddress.value.isNotBlank() && txAddress.value == rxAddress.value)
+                issues += context.getString(R.string.rc_config_duplicate_device)
+        }
+        val parsedL4sStep = l4sDopplerStepHz.value.toLongOrNull()
+        val correctionStep = l4sCorrectionStepHz.value.toLongOrNull()
+        if (enabled.value && isL4s && (parsedL4sStep == null || parsedL4sStep !in 10L..10_000L || parsedL4sStep % 10 != 0L))
+            issues += context.getString(R.string.rc_config_doppler_step)
+        if (enabled.value && isL4s && (correctionStep == null || correctionStep !in 10L..1000L || correctionStep % 10 != 0L))
+            issues += context.getString(R.string.rc_config_correction_step)
+        if (enabled.value && (dialSettleMillis.value.toLongOrNull()?.let { it in 0L..10_000L } != true ||
+            linearDialDeadbandHz.value.toLongOrNull()?.let { it in 1L..10_000L } != true ||
+            fmDialDeadbandHz.value.toLongOrNull()?.let { it in 10L..100_000L } != true ||
+            sharedBusDelayMillis.value.toLongOrNull()?.let { it in 0L..2_000L } != true))
+            issues += context.getString(R.string.rc_config_timing)
+        val draft = RadioControlSettings(
                 enabled        = enabled.value,
                 radioModel     = radioModel.value,
                 txRadioAddress = txAddress.value,
@@ -1535,10 +1551,35 @@ fun RadioControlDialog(
                 n76BluetoothAudio = n76BluetoothAudio.value,
                 n76Options = n76Options
             )
-        )
-        onDismiss()
+        if (issues.isEmpty()) {
+            onSave(draft)
+            onDismiss()
+        } else {
+            configurationErrors = issues
+            rejectedDraft = draft
+        }
     }
 
+    rejectedDraft?.let { draft ->
+        AlertDialog(
+            onDismissRequest = { rejectedDraft = null },
+            shape = sheetDialogShape(),
+            containerColor = sheetDialogContainerColor(),
+            title = { SheetDialogTitle(stringResource(R.string.rc_config_error_title)) },
+            text = { Text(configurationErrors.joinToString("\n") + "\n\n" +
+                stringResource(R.string.rc_config_error_hint)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    rejectedDraft = null
+                    onSave(draft)
+                    onDismiss()
+                }) { Text(stringResource(R.string.rc_config_ignore_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { rejectedDraft = null }) { Text(stringResource(R.string.rc_config_modify)) }
+            }
+        )
+    }
     SharedDialog(
         title    = stringResource(R.string.rc_settings_title),
         onCancel = onDismiss,
@@ -1644,7 +1685,6 @@ fun RadioControlDialog(
                                 }
                             }
                             val newCapabilities = radioModelDescriptor(model).capabilities
-                            if (!newCapabilities.singleRadioSplit) splitMode.value = false
                             if (!newCapabilities.satelliteMode) {
                                 duplexMode.value = RadioControlSettings.DUPLEX_MODE_SPLIT
                             }
@@ -1725,9 +1765,8 @@ fun RadioControlDialog(
                     isError=correctionStep==null || correctionStep !in 10L..1000L || correctionStep%10!=0L,
                     enabled=enabled.value && !frequencyLocked,singleLine=true,modifier=Modifier.fillMaxWidth())
                 if(frequencyLocked)Text(stringResource(R.string.rc_l4s_edit_locked),color=MaterialTheme.colorScheme.primary)
-                OutlinedButton(onClick=onOpenProfiles,modifier=Modifier.fillMaxWidth()) {Text(stringResource(R.string.rc_l4s_profiles))}
             }
-            if (modelDescriptor.capabilities.singleRadioSplit && !isL4s && !isN76) {
+            if (!isL4s && !isN76) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment     = Alignment.CenterVertically,
@@ -1747,6 +1786,9 @@ fun RadioControlDialog(
                 Spacer(modifier = Modifier.height(6.dp))
             }
 
+            if (isSingleRadio && !modelDescriptor.capabilities.singleRadioSplit) {
+                Text(stringResource(R.string.rc_manual_half_duplex), style = MaterialTheme.typography.bodySmall)
+            }
             if (isSingleRadio && supportsSatelliteMode) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2159,6 +2201,7 @@ internal fun UsbDevice.usbSerialPorts(): List<UsbSerialUiPort> {
         0x10C4 -> "CP210x"
         0x0403 -> "FTDI"
         0x1A86, 0x4348 -> "CH34x"
+        0x067B -> if (com.rtbishop.look4sat.core.domain.control.isProlificSerialAdapter(vendorId, productId)) "PL2303" else return emptyList()
         else -> return emptyList()
     }
     val serialInterfaces = interfaces.mapIndexedNotNull { index, intf ->

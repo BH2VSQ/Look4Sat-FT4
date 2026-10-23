@@ -156,57 +156,35 @@ class RadioTrackingService(
     private val hasTransmitClaim: Boolean
         get() = transmitPreparing || activeTxLease != null || manualOwner != RadioTransmitOwner.NONE
 
-    private val profiles=RadioProfileManager({txController},{_state.value},settingsRepo,satelliteRepo) {radio,data->
-        transmitMutex.withLock {
-            if(userFrequencyEditingBlocked() || txController!==radio) null else radio.profileStoreCommand(data)
-        }
-    }
-    override val profileManagerState get()=profiles.state
-    override suspend fun refreshRadioProfiles():Boolean {
-        connectionMutex.withLock {
-            val radio=txController
-            radio?.remoteState?.value?.let { remote ->
-                val connected=radio.isConnected && remote.connected
-                _state.update { it.copy(remoteRadio=remote.copy(connected=connected),
-                    txConnected=connected,rxConnected=connected,physicalConnectionCount=if(connected)1 else 0) }
-            }
-            diagnose("profiles/refresh/start", "controller=${radio!=null} transport=${radio?.isConnected==true} " +
-                "remote=${radio?.remoteState?.value?.connected==true} store=${radio?.remoteState?.value?.capabilities?.transactionalProfileStore==true}")
-        }
-        val result=profiles.refresh()
-        diagnose("profiles/refresh/result", "success=$result count=${profiles.state.value.profiles.size} " +
-            "error=${profiles.state.value.error.orEmpty()}",
-            if(result) ControlDiagnosticSeverity.INFO else ControlDiagnosticSeverity.ERROR)
-        return result
-    }
-    override suspend fun requestDeleteRadioProfile(slot:Int):Boolean {
-        val key=profiles.state.value.profiles.find {it.slot==slot}?.key
-        val result=profiles.delete(slot)
-        if(result && key!=null && _state.value.remoteRadio?.nativeProfileKey==key)transmitMutex.withLock {
-            nativeBaseOverride=null;calculatorTuning=null;txController?.invalidatePendingPttOn()
-            _state.update {it.copy(txBaseFrequencyHz=null,nominalRxFrequencyHz=null,nominalTxFrequencyHz=null,
-                targetRxFrequencyHz=null,targetTxFrequencyHz=null,calculatorLinked=false,isActive=false,trackingPhase=TrackingPhase.IDLE)}
-        }
-        return result
-    }
-    override suspend fun prepareRadioProfileImport(json:String)=profiles.prepareImport(json)
-    override suspend fun stageRadioProfileImport(overwrite:Set<String>)=profiles.import(overwrite)
-    override suspend fun exportRadioProfiles()=profiles.export()
-    override suspend fun cancelRadioProfileOperation()=profiles.cancel()
-    override fun setRadioProfileAlias(key:String,alias:String)=profiles.alias(key,alias)
     override suspend fun applyRadioControlSettings(settings:RadioControlSettings):Boolean=connectionMutex.withLock connection@ {
         var reconnectRequired=false
         val accepted=transmitMutex.withLock edit@ {
-            if (settings.catTransport == RadioControlSettings.TRANSPORT_VOX) {
-                val current = _state.value
-                val remote = txController?.remoteState?.value ?: current.remoteRadio
-                if (hasTransmitClaim || manualJob?.isActive == true ||
-                    current.pttState in setOf(PttState.ARMING, PttState.ON) ||
-                    current.catTransmitting || remote?.txSource?.let { it != 0 } == true) return@edit false
-            } else {
-                if(userFrequencyEditingBlocked())return@edit false
-                if(!authorizeFrequencyEdit(settings.l4sCorrectionEditStepHz))return@edit false
+            val current = _state.value
+            val remote = txController?.remoteState?.value ?: current.remoteRadio
+            if (hasTransmitClaim || manualJob?.isActive == true) return@edit false
+            val connected = txController?.isConnected == true || rxController?.isConnected == true
+            if (connected && (current.pttState in setOf(PttState.ARMING, PttState.ON) ||
+                remote?.txSource?.let { it != 0 } == true)) return@edit false
+            if (connected && settings.catTransport == RadioControlSettings.TRANSPORT_VOX && current.catTransmitting) return@edit false
+            if (connected && settings.catTransport != RadioControlSettings.TRANSPORT_VOX) {
+                if (remote?.connected == true && !remote.transmitStateKnown) return@edit false
+                if (remote == null) {
+                    val readable = listOfNotNull(txController, rxController).distinct()
+                        .filter { it.isConnected && it.supportsPttReadback }
+                    for (radio in readable) {
+                        val transmitting = try { radio.readPttState() }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (error: Exception) {
+                            diagnose("settings/transmit-status", error.message ?: "PTT readback failed", ControlDiagnosticSeverity.ERROR)
+                            null
+                        }
+                        if (transmitting != false) return@edit false
+                    }
+                    if (readable.isEmpty() && current.catTransmitting) return@edit false
+                }
             }
+            // Saving CAT configuration is not a frequency edit. It must not depend on
+            // an attached USB device, a closed radio menu or a profile-store ACK.
             val old=settingsRepo.radioControlSettings.value
             reconnectRequired=old.radioModel!=settings.radioModel || old.catTransport!=settings.catTransport ||
                 old.txRadioAddress!=settings.txRadioAddress || old.rxRadioAddress!=settings.rxRadioAddress ||
@@ -288,12 +266,12 @@ class RadioTrackingService(
             return
         }
         connectedCatPttSupported = profile.capabilities.ptt || (profile.isN76 && rcSettings.n76BluetoothAudio)
-        if (profile.icomVariant == IcomCivVariant.IC820 && txAddr.isNotBlank() && txAddr == rxAddr) {
+        if (profile.icomVariant == IcomCivVariant.IC820 && !rcSettings.splitMode && txAddr.isNotBlank() && txAddr == rxAddr) {
             _state.update { it.copy(errorMessage = "IC-820 needs separate TX/RX radios; for receive-only tracking configure RX only") }
             return
         }
         val isIcom     = profile.isIcom
-        val isSplit    = profile.capabilities.singleRadioSplit && (rcSettings.splitMode || profile.isL4s || profile.isN76)
+        val isSplit    = rcSettings.splitMode || profile.isL4s || profile.isN76
         if (!isSplit && txAddr.isNotBlank() && txAddr == rxAddr) {
             _state.update { it.copy(txConnected=false, rxConnected=false, physicalConnectionCount=0,
                 errorMessage="Dual-radio operation requires separate TX/RX endpoints; select single-radio split when supported") }
@@ -402,7 +380,6 @@ class RadioTrackingService(
                 var previousProfileGeneration: Long? = null
                 var previousRemoteError: String? = null
                 remoteFlow.collect { remote ->
-                    profiles.observe(remote.profileStore)
                     val settingsChanged=remote.settingsSequence!=null && remote.settingsSequence!=previousSettingsSequence
                     val matchingProfile=remote.nativeProfileValid && _state.value.selectedTransponder?.let { profileKey(remote,it) }==remote.nativeProfileKey
                     _state.update { current -> current.copy(
@@ -1317,6 +1294,10 @@ class RadioTrackingService(
         val radio = txController
             ?: return failTrackingInitialization("TX radio is not connected")
         if (!radio.isConnected) return failTrackingInitialization("TX radio is not connected")
+        if (!radioProfile(settingsRepo.radioControlSettings.value.radioModel).capabilities.singleRadioSplit) {
+            runPresetSingleTracking(transponder, initialTxBaseFreqHz)
+            return
+        }
         if (radioProfile(settingsRepo.radioControlSettings.value.radioModel).isN76) {
             runN76Tracking(radio, transponder, initialTxBaseFreqHz)
             return
@@ -1453,7 +1434,24 @@ class RadioTrackingService(
 
     // A cycle and a settings change own the same lock as transmit preparation.
     // During PTT, hold both CAT legs and suppress dial-change detection.
-    private suspend fun runTrackingLoop(split: Boolean) {
+    private suspend fun runPresetSingleTracking(transponder: SatRadio, initialTxBaseFreqHz: Long?) {
+        transmitMutex.withLock {
+            val txBase = if (transponder.uplinkLow == null) null else initialTxBaseFreqHz ?: transponder.uplinkCenterFrequency()
+            val rxBase = transponder.downlinkLow
+            if (nativeBaseOverride == null && rxBase != null) {
+                val offset = if (DopplerFrequencyCalculator.isLinearTransponder(transponder))
+                    DopplerFrequencyCalculator.parseOffsetHz(settingsRepo.getSatelliteOffset(transponder.catnum ?: 0)) else 0L
+                nativeBaseOverride = com.rtbishop.look4sat.core.domain.repository.RadioBaseFrequencies(rxBase + offset, txBase)
+            }
+            _state.update { it.copy(isActive = true, trackingPhase = TrackingPhase.READY,
+                txMode = controlUplinkMode(transponder), rxMode = controlDownlinkMode(transponder, controlUplinkMode(transponder)),
+                txBaseFrequencyHz = nativeBaseOverride?.txHz ?: txBase) }
+            diagnose("tracking/ready", "mode=single-radio-preset; radio owns TX/RX mode and VFO selection")
+        }
+        runTrackingLoop(split = true, presetSingle = true)
+    }
+
+    private suspend fun runTrackingLoop(split: Boolean, presetSingle: Boolean = false) {
         var lastSetTx: Long? = null
         var lastSetRx: Long? = null
         var dialFollowState = DialFollowState()
@@ -1529,7 +1527,7 @@ class RadioTrackingService(
                     suspend fun readTx() = if (split) tx?.readTxVfoFrequency() else tx?.readFrequencyAndMode()?.first
                     suspend fun readRx() = if (split) rx?.readWorkingFrequency() else rx?.readFrequencyAndMode()?.first
                     // Do not change the nominal pair under a waveform, even from the RX dial.
-                    if (!frozen && calculated == null && tx?.remoteState==null) {
+                    if (!frozen && !presetSingle && calculated == null && tx?.remoteState==null) {
                         suspend fun sampleDial(leg: DialLeg): Boolean {
                             val controller = if (leg == DialLeg.TX) tx else rx
                             val commanded = if (leg == DialLeg.TX) lastSetTx else lastSetRx
@@ -1601,7 +1599,13 @@ class RadioTrackingService(
                         }
                         val txWriteAllowed = current.pttState == PttState.OFF
                         var wroteTx = false
-                        if (split && tx?.supportsAtomicPair == true && desiredRx != null) {
+                        if (presetSingle && tx?.isConnected == true) {
+                            val result = tunePresetHalfDuplex(tx,
+                                controlSettings.radioModel == RadioControlSettings.MODEL_ICOM_IC820, desiredRx, desiredTx)
+                            result.rxHz?.let { lastSetRx = it; observedRx = it }
+                            result.txHz?.let { lastSetTx = it; observedTx = it }
+                            if (!result.success) failTrackingCommand("Preset RX/TX VFO could not be identified or tuned; check the radio preset")
+                        } else if (split && tx?.supportsAtomicPair == true && desiredRx != null) {
                             when (tx.setTrackingFrequencies(desiredRx, desiredTx)) {
                                 FrequencyPairResult.APPLIED -> {
                                     observedTx = tx.remoteState?.value?.txFrequencyHz
@@ -1692,6 +1696,10 @@ class RadioTrackingService(
                 return
             }
             val split = _state.value.splitMode
+            if (split && !radioProfile(settingsRepo.radioControlSettings.value.radioModel).capabilities.singleRadioSplit) {
+                updateSelectedTransponder(transponder, rxMode)
+                return
+            }
             if (tx?.isConnected==true && !selectProfileContext(tx,transponder)) {
                 failTrackingCommand("Radio context was not acknowledged");return
             }
@@ -1969,11 +1977,6 @@ class RadioTrackingService(
         val ok=if(pass!=null && pass.catNum==transponder.catnum) radio.selectSatelliteProfile(pass.name,transponder.uuid)
             else radio.prepareTrackingContext(radioContextKey(transponder.uuid))
         if(ok) {
-            if(pass!=null && pass.catNum==transponder.catnum) {
-                val key=com.rtbishop.look4sat.core.domain.repository.radioSatelliteProfileKey(pass.name,transponder.uuid)
-                settingsRepo.setRadioProfileMetadata(settingsRepo.getRadioProfileMetadata()+(key to
-                    com.rtbishop.look4sat.core.domain.repository.RadioProfileMetadata(pass.name,transponder.uuid,transponder.info)))
-            }
             restoreNativeProfile(transponder)
         }
         return ok

@@ -69,8 +69,6 @@ data class SettingsState(
     val rcSettings: RCSettings,
     val radioControlSettings: RadioControlSettings,
     val radioTrackingState:com.rtbishop.look4sat.core.domain.repository.RadioTrackingState = com.rtbishop.look4sat.core.domain.repository.RadioTrackingState(),
-    val radioProfiles:com.rtbishop.look4sat.core.domain.repository.RadioProfileManagerState = com.rtbishop.look4sat.core.domain.repository.RadioProfileManagerState(),
-    val radioProfilesExport:String?=null,
     val rotatorSettings: RotatorSettings = RotatorSettings(),
     val rotatorTrackingState: RotatorTrackingState = RotatorTrackingState(),
     val dataSourcesSettings: DataSourcesSettings,
@@ -151,14 +149,6 @@ sealed interface LoTWError {
 }
 
 sealed interface SettingsAction {
-    data object RefreshRadioProfiles:SettingsAction
-    data class DeleteRadioProfile(val slot:Int):SettingsAction
-    data class ImportRadioProfiles(val json:String):SettingsAction
-    data class RestoreRadioProfiles(val overwrite:Set<String>):SettingsAction
-    data object CancelRadioProfileOperation:SettingsAction
-    data object ExportRadioProfiles:SettingsAction
-    data object ConsumeRadioProfilesExport:SettingsAction
-    data class SetRadioProfileAlias(val key:String,val alias:String):SettingsAction
     // Position
     data object SetGpsPosition : SettingsAction
     data class SetGeoPosition(val latitude: Double, val longitude: Double) : SettingsAction
