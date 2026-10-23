@@ -593,15 +593,15 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="rc_cw_save_on_radio">Apply here; save permanently with handset MENU.</string>
     <string name="rc_cw_spacing">Farnsworth: %1$s</string>
     <string name="rc_cw_spacing_off">Off</string>
-    <string name="rc_cw_sync">Sync F1–F8</string>
+    <string name="rc_cw_sync">Sync F1–F4</string>
     <string name="rc_cw_sync_busy">Syncing CW presets…</string>
     <string name="rc_cw_sync_confirm">Confirm with MENU on the handset</string>
-    <string name="rc_cw_sync_done">F1–F8 saved on handset</string>
+    <string name="rc_cw_sync_done">F1–F4 saved on handset</string>
     <string name="rc_cw_volume">Volume: %1$d</string>
     <string name="rc_dial_follow">Dial follow</string>
     <string name="rc_dial_settle_ms">Settle (ms)</string>
     <string name="rc_fm_deadband_hz">FM deadband (Hz)</string>
-    <string name="rc_ic820_limits">IC-820: CI-V 0x42, 1200 baud (8N1). Frequency and LSB/USB/CW/FM control with main/sub band access. CAT PTT, CAT CTCSS, DATA and automatic single-radio satellite setup are not supported. For receive-only tracking, configure only the RX connection; use separate radios for dual-radio tracking. Configure satellite mode and tone on the radio itself.</string>
+    <string name="rc_ic820_limits">IC-820: CI-V 0x42, 1200 baud (8N1). Preset satellite mode and tone on the radio; select single-radio control here. CAT PTT is not supported.</string>
     <string name="rc_linear_deadband_hz">Linear deadband (Hz)</string>
     <string name="rc_n76_auto">Automatic</string>
     <string name="rc_n76_bluetooth_audio">Bluetooth audio</string>
@@ -651,7 +651,7 @@ Upstream: https://github.com/rt-bishop/Look4Sat</string>
     <string name="rc_select_tx_device">Select TX Device</string>
     <string name="rc_shared_bus_delay_ms">Shared-bus spacing (ms)</string>
     <string name="rc_single_radio">Radio (single duplex)</string>
-    <string name="rc_split_mode">Single-radio duplex</string>
+    <string name="rc_split_mode">Single-radio control</string>
     <string name="rc_tcp_address_error">Enter host:port or [IPv6]:port.</string>
     <string name="rc_tcp_protocol">TCP protocol</string>
     <string name="rc_tcp_protocol_hamlib">Hamlib rigctld</string>

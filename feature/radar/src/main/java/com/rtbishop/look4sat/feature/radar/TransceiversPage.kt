@@ -17,8 +17,6 @@
  */
 package com.rtbishop.look4sat.feature.radar
 
-import android.app.Activity
-import android.view.LayoutInflater
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -35,7 +33,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,36 +48,28 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.CardDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -91,19 +80,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.constraintlayout.widget.ConstraintLayout
 import com.rtbishop.look4sat.core.domain.model.SatRadio
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
+import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
 import com.rtbishop.look4sat.core.domain.utility.CalculatorTuning
 import com.rtbishop.look4sat.core.domain.utility.CalculatorFrequencyAnchor
-import com.rtbishop.look4sat.core.domain.utility.DopplerFrequencyCalculator
-import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.R
-import com.rtbishop.look4sat.core.presentation.formatFrequency
 import com.rtbishop.look4sat.core.presentation.infiniteMarquee
-import com.rtbishop.look4sat.feature.cw.R as CwR
-import com.ve3nea.morse_expert.MainActivity
 import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -114,6 +97,7 @@ fun TransceiversPage(
     favoriteUuids: Set<String> = emptySet(),
     radioControl: RadioControlSubState,
     onAction: (RadarAction) -> Unit,
+    connectRadios: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (transceivers.isEmpty()) {
@@ -152,10 +136,10 @@ fun TransceiversPage(
                     isExpanded = isExpanded,
                     radioControl = radioControl,
                     isFavorite = radio.uuid in favoriteUuids,
-                    onToggleFavorite = {
-                        radio.catnum?.let { onAction(RadarAction.ToggleFavoriteTransponder(radio.uuid, it)) }
+                    onToggleFavorite = { radio.catnum?.let { onAction(RadarAction.ToggleFavoriteTransponder(radio.uuid, it)) } },
+                    onAction = { action ->
+                        if (action == RadarAction.ConnectRadios) connectRadios() else onAction(action)
                     },
-                    onAction = onAction,
                     onToggle = { onAction(RadarAction.SelectTransmitter(radio.uuid)) }
                 )
             }
@@ -340,7 +324,7 @@ private fun TransceiverItem(
                         .weight(1f)
                         .infiniteMarquee()
                 )
-                // Toggle the satellite-specific favorite without expanding the row.
+                // Favorite toggle is satellite-specific and independent of row expansion.
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
@@ -352,19 +336,14 @@ private fun TransceiverItem(
                 ) {
                     Text(
                         text = if (isFavorite) "★" else "☆",
-                        color = if (isFavorite) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 22.sp,
                         lineHeight = 24.sp
                     )
                 }
-                // Right radio icon slot
                 val iconTint = if (isExpanded) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.outlineVariant
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(24.dp)
-                ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(24.dp)) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_radios),
                         contentDescription = null,
@@ -475,34 +454,11 @@ private fun ExpandedRadioControl(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-        if (radioControl.catEnabled) {
-            // Connection LEDs in collapsed rows can be ambiguous when one
-            // VFO/endpoint is intentionally disabled. Expose both physical
-            // links and the tracking interlock separately in the CAT page.
-            val tx = stringResource(
-                if (radioControl.txPanel.isConnected) R.string.rc_cat_link_online
-                else R.string.rc_cat_link_offline
-            )
-            val rx = stringResource(
-                if (radioControl.rxPanel.isConnected) R.string.rc_cat_link_online
-                else R.string.rc_cat_link_offline
-            )
-            val control = stringResource(
-                if (radioControl.isReady) R.string.rc_cat_tracking_ready
-                else R.string.rc_cat_tracking_paused
-            )
-            Text(
-                text = stringResource(R.string.rc_cat_link_diagnostics, rx, tx, control),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
         ReferenceFrequencyControls(radioControl, onAction)
         TxToneControl(radio, radioControl, onAction)
-        if (!radioControl.catEnabled) {
+        if (!radioControl.catControlsActive) {
             Text(
-                stringResource(R.string.rc_cat_disabled_status),
+                stringResource(if (!radioControl.catEnabled) R.string.rc_cat_disabled_status else R.string.rc_vox_status),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -937,128 +893,16 @@ private fun DopplerFrequencyCalculator(
 }
 
 @Composable
-private fun CwDecoderPanel(
-    cw: CwSubState,
-    onAction: (RadarAction) -> Unit,
-    requestMicPermission: () -> Unit = {},
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        // Header row: expand/collapse toggle
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onAction(RadarAction.CwToggleExpanded(!cw.isExpanded)) },
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = stringResource(R.string.radar_cw_decoder),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Icon(
-                painter = painterResource(id = R.drawable.ic_arrow),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .size(20.dp)
-                    .rotate(if (cw.isExpanded) 270f else 90f)
-            )
-        }
-
-        AnimatedVisibility(visible = cw.isExpanded) {
-            // PR #1 Morse Expert engine: mini layout with waterfall + decoded text.
-            // Keep the old Kotlin decoder state/actions as fallback code, but this panel no longer feeds it.
-            val context = LocalContext.current
-            val activity = remember(context) {
-                context as? Activity ?: error("CwDecoderPanel must be hosted in an Activity")
-            }
-            val controller = remember { MainActivity() }
-            val rootView = remember(context) {
-                LayoutInflater.from(context).inflate(CwR.layout.activity_main, null) as ConstraintLayout
-            }
-            var initialized by remember { mutableStateOf(false) }
-            var listening by remember { mutableStateOf(false) }
-
-            // 重要: 不在展开时初始化控制器(避免"一展开就崩溃")。
-            // controller.onCreate/onResume/onPermissionGranted 全部推迟到用户点 Start 才执行。
-            fun startDecoding() {
-                if (!initialized) {
-                    controller.onCreate(activity, rootView)
-                    controller.onPermissionGranted()
-                    controller.onResume()
-                    initialized = true
-                } else {
-                    controller.onResume()
-                }
-                listening = true
-            }
-
-            DisposableEffect(Unit) {
-                onDispose {
-                    if (initialized) {
-                        controller.onPause()
-                        controller.onDestroy()
-                    }
-                }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (!listening) {
-                        Button(
-                            onClick = {
-                                if (!cw.hasPermission) {
-                                    requestMicPermission()
-                                } else {
-                                    startDecoding()
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(stringResource(R.string.radar_cw_start))
-                        }
-                    } else {
-                        Button(
-                            onClick = {
-                                controller.onPause()
-                                listening = false
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(stringResource(R.string.radar_cw_stop))
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { if (initialized) controller.clearDecoded() },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(stringResource(R.string.radar_cw_reset))
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp)
-                ) {
-                    AndroidView(
-                        factory = { rootView },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-        }
+private fun CwDecoderPanel(cw: CwSubState, onAction: (RadarAction) -> Unit,
+    requestMicPermission: () -> Unit, modifier: Modifier = Modifier) {
+    if (LocalCwConsoleVisible.current) return
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.radar_cw_decoder), color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.fillMaxWidth().clickable { onAction(RadarAction.CwToggleExpanded(!cw.isExpanded)) })
+        if (cw.isExpanded) SharedCwDecoderPanel(cw, onAction, requestMicPermission)
     }
 }
+
 
 @Composable
 private fun FrequencyText(frequency: Long?, modifier: Modifier = Modifier) {
@@ -1080,6 +924,3 @@ private fun transceiverTitle(radio: SatRadio): String {
     val mode = "${radio.downlinkMode ?: "--"}/${radio.uplinkMode ?: "--"}"
     return "$title ($mode)"
 }
-
-private val FREQ_ADJUSTMENTS =
-    listOf(-10_000L to "-10k", -1_000L to "-1k", -100L to "-100", 100L to "+100", 1_000L to "+1k", 10_000L to "+10k")
