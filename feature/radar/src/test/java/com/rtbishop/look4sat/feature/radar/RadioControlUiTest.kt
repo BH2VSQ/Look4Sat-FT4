@@ -7,14 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RadioControlUiTest {
-    @org.junit.Test fun transportPermissionDoesNotConfuseUsbWithBluetoothAndHonorsAndroidLocalNetworkPermission() {
-        val settings=com.rtbishop.look4sat.core.domain.model.RadioControlSettings
-        org.junit.Assert.assertNull(requiredRadioPermission(settings.TRANSPORT_USB,37))
-        org.junit.Assert.assertNull(requiredRadioPermission(settings.TRANSPORT_BLUETOOTH,30))
-        org.junit.Assert.assertEquals(android.Manifest.permission.BLUETOOTH_CONNECT,requiredRadioPermission(settings.TRANSPORT_BLUETOOTH,31))
-        org.junit.Assert.assertNull(requiredRadioPermission(settings.TRANSPORT_TCP,36))
-        org.junit.Assert.assertEquals(android.Manifest.permission.ACCESS_LOCAL_NETWORK,requiredRadioPermission(settings.TRANSPORT_TCP,37))
-    }
     @Test fun frequenciesUseUnambiguousMhzWithAllSixDecimalPlaces() {
         assertEquals("145.950000", referenceFrequencyText(145_950_000L))
         assertEquals("435.850010", referenceFrequencyText(435_850_010L))

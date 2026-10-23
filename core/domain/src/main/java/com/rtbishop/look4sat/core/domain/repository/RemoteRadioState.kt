@@ -26,7 +26,8 @@ data class RemoteRadioCapabilities(
     val transactionalProfileStore: Boolean = false,
     val cwOptions: Boolean = false,
     val handsetMacros: Boolean = false,
-    val passClock: Boolean = false
+    val passClock: Boolean = false,
+    val handsetMacroSlots: Int = 8
 )
 
 data class RadioTrackingDisplay(val satelliteName: String, val azimuthDegrees: Double, val elevationDegrees: Double,
@@ -146,6 +147,6 @@ object CwTransmitText {
 }
 
 object CwTransmitPresets {
-    val defaults=listOf("CQ CQ CQ", "DE", "K", "RR", "599", "TNX", "73", "SK")
-    fun normalize(text: String): String = if(text.isBlank()) "" else CwTransmitText.normalize(text)
+    val defaults=listOf("CQ CQ CQ", "DE", "K", "RR")
+    fun normalize(text: String): String = CwMessageTemplate.normalize(text)
 }

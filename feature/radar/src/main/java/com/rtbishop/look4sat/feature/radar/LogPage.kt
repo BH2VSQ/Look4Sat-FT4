@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -75,7 +74,9 @@ fun LogPage(
     uiState: RadarState,
     logViewModel: LogViewModel,
     onFixGrid: (List<String>) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    overrides: LogRecordOverrides = LogRecordOverrides(),
+    showCallsignInput: Boolean = true
 ) {
     val logUiState by logViewModel.uiState.collectAsStateWithLifecycle()
     val records by logViewModel.records.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -127,7 +128,7 @@ fun LogPage(
     } else {
         uiState.calculatorRxHz ?: repeaterRxHz ?: selectedRxHz
     }
-    val mode = if (isLinear) logUiState.selectedMode.ifBlank { "CW" } else "FM"
+    val mode = overrides.mode ?: if (isLinear) logUiState.selectedMode.ifBlank { "CW" } else "FM"
     val satIdentity = remember(satName) { satelliteIdentity(satName) }
     val passWindow = remember(uiState.currentPass) {
         uiState.currentPass?.let { it.aosTime..it.losTime }
@@ -139,86 +140,94 @@ fun LogPage(
         .sortedByDescending { it.startUtcMillis }
     val maxElev = uiState.currentPass?.maxElevation ?: 0.0
 
-    Column(modifier = modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = logUiState.callsignInput,
-                onValueChange = logViewModel::updateCallsign,
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Callsign", fontSize = 14.sp) },
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Characters,
-                    imeAction = ImeAction.Done
-                ),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
-                    logViewModel.record(satName, mode, txHz, rxHz, logUiState.stationGrid, passWindow)
-                })
-            )
-            Button(
-                onClick = { logViewModel.record(satName, mode, txHz, rxHz, logUiState.stationGrid, passWindow) },
-                enabled = logUiState.callsignInput.isNotBlank() && satName.isNotBlank()
-            ) { Text("Log") }
-        }
-        logUiState.stationMismatch?.let { mismatch ->
-            Text(
-                text = "⚠ " + stringResource(
-                    R.string.lotw_upload_pos_hint,
-                    mismatch.currentGrid,
-                    gridsLabel(mismatch.stationGrids)
-                ),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onFixGrid(listOf(mismatch.currentGrid)) }
-            )
-        }
-        if (isLinear) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("CW", "SSB", "FT4").forEach { candidate ->
-                    FilterChip(
-                        selected = mode == candidate,
-                        onClick = { logViewModel.selectMode(catnum, candidate) },
-                        label = { Text(candidate, fontSize = 13.sp) }
+    LazyColumn(modifier = modifier.fillMaxSize().padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (showCallsignInput) OutlinedTextField(
+                        value = logUiState.callsignInput,
+                        onValueChange = logViewModel::updateCallsign,
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Callsign", fontSize = 14.sp) },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Characters,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                            logViewModel.record(satName, mode, txHz, rxHz, logUiState.stationGrid, passWindow, overrides)
+                        })
+                    )
+                    else Text(logUiState.callsignInput, modifier = Modifier.weight(1f))
+                    Button(
+                        onClick = { logViewModel.record(satName, mode, txHz, rxHz, logUiState.stationGrid, passWindow, overrides) },
+                        enabled = !logUiState.recordSaving && logUiState.callsignInput.isNotBlank() && satName.isNotBlank()
+                    ) { Text("Log") }
+                }
+                logUiState.stationMismatch?.let { mismatch ->
+                    Text(
+                        text = "⚠ " + stringResource(
+                            R.string.lotw_upload_pos_hint,
+                            mismatch.currentGrid,
+                            gridsLabel(mismatch.stationGrids)
+                        ),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onFixGrid(listOf(mismatch.currentGrid)) }
                     )
                 }
+                if (logUiState.recordSaveFailed) Text(stringResource(R.string.cw_console_log_failed), color = MaterialTheme.colorScheme.error)
+                if (isLinear && overrides.mode == null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("CW", "SSB", "FT4").forEach { candidate ->
+                            FilterChip(
+                                selected = mode == candidate,
+                                onClick = { logViewModel.selectMode(catnum, candidate) },
+                                label = { Text(candidate, fontSize = 13.sp) }
+                            )
+                        }
+                    }
+                } else {
+                    Text(mode, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-        } else {
-            Text("FM", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         if (recent.isEmpty()) {
-            EmptyListCard(message = "No QSOs yet — type a callsign and tap Log")
+            item { EmptyListCard(message = "No QSOs yet — type a callsign and tap Log") }
         } else {
-            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                items(recent, key = { it.id }) { record ->
-                    LogRecordRow(
-                        record = record,
-                        swipeController = swipeController,
-                        onDelete = { logViewModel.delete(record.id) },
-                        onClick = { editTarget = record }
-                    )
-                }
+            items(recent, key = { it.id }) { record ->
+                LogRecordRow(
+                    record = record,
+                    swipeController = swipeController,
+                    onDelete = { logViewModel.delete(record.id) },
+                    onClick = { editTarget = record }
+                )
             }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(
-                onClick = { logViewModel.generatePost(satName, maxElev, passWindow) },
-                enabled = recent.isNotEmpty(),
-                modifier = Modifier.weight(1f)
-            ) { Text("生成通联记录", fontSize = 13.sp) }
-            OutlinedButton(
-                onClick = logViewModel::prepareUpload,
-                enabled = !logUiState.busy,
-                modifier = Modifier.weight(1f)
-            ) { Text(if (logUiState.wavelogMode) "上传 Wavelog" else "上传 LoTW", fontSize = 13.sp) }
-        }
-        if (logUiState.busy) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
-                Text("Working…", fontSize = 13.sp)
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { logViewModel.generatePost(satName, maxElev, passWindow) },
+                        enabled = recent.isNotEmpty(),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("生成通联记录", fontSize = 13.sp) }
+                    OutlinedButton(
+                        onClick = logViewModel::prepareUpload,
+                        enabled = !logUiState.busy,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (logUiState.wavelogMode) "上传 Wavelog" else "上传 LoTW", fontSize = 13.sp) }
+                }
+                if (logUiState.busy) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
+                        Text("Working…", fontSize = 13.sp)
+                    }
+                }
             }
         }
     }
