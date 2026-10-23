@@ -68,7 +68,7 @@ class L4sController(
             val (firmware,caps)=L4sProtocol.capabilities(hello.data) ?: return@withContext failedConnect()
             if(hello.result!=0) return@withContext failedConnect()
             state.value=RemoteRadioState(firmware=firmware,capabilities=caps,transmitStateKnown=false)
-            diagnose("l4s/hello","firmware=$firmware features=0x${L4sProtocol.u32(hello.data,5).toString(16)} profiles=${caps.transactionalProfileStore} macros=${caps.handsetMacros} macroSlots=${caps.handsetMacroSlots}")
+            diagnose("l4s/hello","firmware=$firmware capabilities=${hello.data.size} bytes")
             if(!ok(request(L4sProtocol.OPEN))) return@withContext failedConnect()
             if(caps.satelliteProfiles && !ok(request(L4sProtocol.PROFILE,byteArrayOf(2)))) return@withContext failedConnect()
             if(!caps.satelliteProfiles && caps.nativeSettings && !ok(request(L4sProtocol.SETTINGS))) return@withContext failedConnect()

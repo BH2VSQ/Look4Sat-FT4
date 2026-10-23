@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="rc_cat_link_online">已连接</string>
-    <string name="rc_cat_link_offline">未连接</string>
-    <string name="rc_cat_tracking_ready">就绪</string>
-    <string name="rc_cat_tracking_paused">保持 / 未就绪</string>
-    <string name="rc_cat_link_diagnostics">CAT 接收：%1$s · 发射：%2$s · 跟踪：%3$s</string>
-</resources>

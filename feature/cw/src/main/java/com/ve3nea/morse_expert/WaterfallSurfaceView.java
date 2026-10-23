@@ -15,10 +15,5 @@ public class WaterfallSurfaceView extends GLSurfaceView {
         b bVar = new b(context, H2.b.f603B);
         this.f = bVar;
         setRenderer(bVar);
-        setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
-    }
-
-    public void submitSpectrum(float[] spectrum) {
-        if (f.appendSpectrum(spectrum)) requestRender();
     }
 }

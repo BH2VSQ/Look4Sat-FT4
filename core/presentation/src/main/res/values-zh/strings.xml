@@ -565,15 +565,15 @@
     <string name="rc_cw_save_on_radio">应用后，在手台 MENU 确认永久保存。</string>
     <string name="rc_cw_spacing">字符间隔：%1$s</string>
     <string name="rc_cw_spacing_off">关闭</string>
-    <string name="rc_cw_sync">同步 F1–F4</string>
+    <string name="rc_cw_sync">同步 F1–F8</string>
     <string name="rc_cw_sync_busy">正在同步 CW 预设…</string>
     <string name="rc_cw_sync_confirm">请在手台按 MENU 确认</string>
-    <string name="rc_cw_sync_done">F1–F4 已保存到手台</string>
+    <string name="rc_cw_sync_done">F1–F8 已保存到手台</string>
     <string name="rc_cw_volume">音量：%1$d</string>
     <string name="rc_dial_follow">旋钮跟随</string>
     <string name="rc_dial_settle_ms">稳定等待（毫秒）</string>
     <string name="rc_fm_deadband_hz">FM 死区（Hz）</string>
-    <string name="rc_ic820_limits">IC-820：CI-V 地址 0x42，1200 波特（8N1）。请在电台预设卫星模式和亚音，在此选择单机半双工。不支持 CAT PTT。</string>
+    <string name="rc_ic820_limits">IC-820：CI-V 地址 0x42，默认 1200 波特（8N1）。支持主/副波段访问、频率及 LSB/USB/CW/FM 控制。不支持 CAT PTT、CAT 亚音、DATA 和自动单机卫星配置。仅接收跟踪请只配置 RX 连接；双机跟踪请使用两台独立电台。卫星模式和亚音需在电台上设置。</string>
     <string name="rc_linear_deadband_hz">线性死区（Hz）</string>
     <string name="rc_n76_auto">自动</string>
     <string name="rc_n76_bluetooth_audio">蓝牙音频</string>
@@ -623,7 +623,7 @@
     <string name="rc_select_tx_device">选择 TX 设备</string>
     <string name="rc_shared_bus_delay_ms">共享总线间隔（毫秒）</string>
     <string name="rc_single_radio">电台（单机双工）</string>
-    <string name="rc_split_mode">单机半双工</string>
+    <string name="rc_split_mode">单电台双工控制</string>
     <string name="rc_tcp_address_error">请输入 host:port 或 [IPv6]:port。</string>
     <string name="rc_tcp_protocol">TCP 协议</string>
     <string name="rc_tcp_protocol_hamlib">Hamlib rigctld</string>

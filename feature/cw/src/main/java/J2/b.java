@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
+import android.os.SystemClock;
 import android.util.Log;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
@@ -12,7 +13,6 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
-import com.rtbishop.look4sat.feature.cw.WaterfallHistory;
 
 /* loaded from: classes.dex */
 public final class b implements GLSurfaceView.Renderer {
@@ -25,13 +25,23 @@ public final class b implements GLSurfaceView.Renderer {
     public final Bitmap f730d;
     public final Context f;
 
+    /* renamed from: g, reason: collision with root package name */
+    public double f732g;
+
+    /* renamed from: h, reason: collision with root package name */
+    public final Bitmap f733h;
+
     /* renamed from: i, reason: collision with root package name */
     public final a f734i;
 
-    private final WaterfallHistory history;
-    private final int[] uploadPixels;
-    private long uploadedSequence = -1L;
-    private int visibleColumns = 1;
+    /* renamed from: j, reason: collision with root package name */
+    public long f735j;
+
+    /* renamed from: k, reason: collision with root package name */
+    public double f736k;
+
+    /* renamed from: l, reason: collision with root package name */
+    public int f737l;
 
     /* renamed from: a, reason: collision with root package name */
     public final int[] f728a = new int[1];
@@ -43,10 +53,14 @@ public final class b implements GLSurfaceView.Renderer {
         Bitmap.Config config = Bitmap.Config.ARGB_8888;
         Bitmap createBitmap = Bitmap.createBitmap(2048, i4, config);
         this.f730d = createBitmap;
+        createBitmap.eraseColor(16);
+        this.f732g = 0.09375d;
         this.f734i = new a();
-        this.history = new WaterfallHistory(2048, i4, f734i.f727a);
-        this.uploadPixels = new int[2048 * i4];
+        this.f735j = 0L;
+        this.f736k = 0.0d;
+        this.f737l = -1;
         this.f = context;
+        this.f733h = Bitmap.createBitmap(1, i4, config);
     }
 
     public static void a() {
@@ -57,16 +71,12 @@ public final class b implements GLSurfaceView.Renderer {
         }
     }
 
-    public boolean appendSpectrum(float[] spectrum) {
-        return history.appendSpectrum(spectrum);
-    }
-
-    private void updateBitmap(long previousSequence) {
-        long sequence = history.copyIfChanged(previousSequence, uploadPixels);
-        if (sequence != previousSequence) {
-            f730d.setPixels(uploadPixels, 0, f730d.getWidth(), 0, 0, f730d.getWidth(), f730d.getHeight());
-        }
-        uploadedSequence = sequence;
+    public final double b() {
+        long uptimeMillis = SystemClock.uptimeMillis();
+        double width = (((uptimeMillis - this.f735j) * this.f732g) + this.f736k) % this.f730d.getWidth();
+        this.f735j = uptimeMillis;
+        this.f736k = width;
+        return width;
     }
 
     public final void c(GL10 gl10) {
@@ -105,19 +115,14 @@ public final class b implements GLSurfaceView.Renderer {
 
     @Override // android.opengl.GLSurfaceView.Renderer
     public final void onDrawFrame(GL10 gl10) {
-        long previousSequence = uploadedSequence;
-        updateBitmap(previousSequence);
-        if (previousSequence != uploadedSequence) {
-            GLES20.glBindTexture(3553, f728a[0]);
-            GLUtils.texSubImage2D(3553, 0, 0, 0, f730d);
-        }
-        float right = (history.nextColumn(uploadedSequence) - 0.5f) / f730d.getWidth();
-        float left = right - (float) visibleColumns / f730d.getWidth();
+        float b4 = (float) (b() / this.f730d.getWidth());
+        float f = 0.5f + b4;
         float[] fArr = this.f731e;
-        fArr[6] = left;
-        fArr[2] = left;
-        fArr[14] = right;
-        fArr[10] = right;
+        fArr[6] = f;
+        fArr[2] = f;
+        float f4 = b4 + 1.0f;
+        fArr[14] = f4;
+        fArr[10] = f4;
         this.f729b.position(0);
         this.f729b.put(this.f731e);
         c(gl10);
@@ -126,8 +131,12 @@ public final class b implements GLSurfaceView.Renderer {
     @Override // android.opengl.GLSurfaceView.Renderer
     public final void onSurfaceChanged(GL10 gl10, int i4, int i5) {
         d(gl10, i4, i5);
-        visibleColumns = Math.max(1, Math.min(f730d.getWidth(),
-            Math.round(i4 / f.getResources().getDisplayMetrics().density / 0.7f)));
+        float width = 1.0f - (((this.f730d.getWidth() * 0.7f) / (i4 / this.f.getResources().getDisplayMetrics().density)) * 2.0f);
+        float[] fArr = this.f731e;
+        fArr[4] = width;
+        fArr[0] = width;
+        this.f729b.position(0);
+        this.f729b.put(this.f731e);
     }
 
     @Override // android.opengl.GLSurfaceView.Renderer
@@ -162,7 +171,6 @@ public final class b implements GLSurfaceView.Renderer {
         GLES20.glTexParameteri(3553, 10241, 9729);
         GLES20.glTexParameteri(3553, 10243, 10497);
         a();
-        updateBitmap(-1L);
         GLUtils.texImage2D(3553, 0, this.f730d, 0);
         a();
         float[] fArr = this.f731e;

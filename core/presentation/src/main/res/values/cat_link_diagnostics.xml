@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="rc_cat_link_online">Connected</string>
-    <string name="rc_cat_link_offline">Disconnected</string>
-    <string name="rc_cat_tracking_ready">Ready</string>
-    <string name="rc_cat_tracking_paused">Held / Not ready</string>
-    <string name="rc_cat_link_diagnostics">CAT RX: %1$s · TX: %2$s · tracking: %3$s</string>
-</resources>

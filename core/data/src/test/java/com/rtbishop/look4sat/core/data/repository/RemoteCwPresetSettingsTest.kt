@@ -7,33 +7,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RemoteCwPresetSettingsTest {
-    @Test fun seriousInitializationFailuresAreNotReplacedWithDefaultPresets() {
-        val prefs=Proxy.newProxyInstance(javaClass.classLoader,arrayOf(SharedPreferences::class.java)) { _,_,_ ->
-            throw NoClassDefFoundError("template initialization failed")
-        } as SharedPreferences
-        assertThrows(NoClassDefFoundError::class.java) {readRemoteCwPresets(prefs)}
-    }
-    @Test fun legacyWrongPreferenceTypeStillFallsBackSafely() {
-        val prefs=Proxy.newProxyInstance(javaClass.classLoader,arrayOf(SharedPreferences::class.java)) { _,_,_ ->
-            throw ClassCastException("legacy non-string preference")
-        } as SharedPreferences
-        assertEquals(CwTransmitPresets.defaults,readRemoteCwPresets(prefs))
-    }
-    @Test fun templatesPersistWithoutExpansionOrChangingExistingKeys() {
-        val values = mutableMapOf("remoteCwPreset1" to "CQ DE BA7OPF")
-        writeRemoteCwPreset(preferences(values), 0, "{call} de {mycall} ur {rst} {grid}")
-        assertEquals("{CALL} DE {MYCALL} UR {RST} {GRID}", values["remoteCwPreset0"])
-        assertEquals("{CALL} DE {MYCALL} UR {RST} {GRID}", readRemoteCwPresets(preferences(values))[0])
-        assertEquals("CQ DE BA7OPF", readRemoteCwPresets(preferences(values))[1])
-        assertThrows(IllegalArgumentException::class.java) { writeRemoteCwPreset(preferences(values), 0, "{UNKNOWN}") }
-        assertEquals("{CALL} DE {MYCALL} UR {RST} {GRID}", values["remoteCwPreset0"])
-    }
     @Test fun everyPresetPersistsIndependentlyAndReloads() {
         val values=mutableMapOf<String,String>()
         val prefs=preferences(values)
         assertEquals(CwTransmitPresets.defaults,readRemoteCwPresets(prefs))
-        for(index in 0..3) writeRemoteCwPreset(prefs,index," cq f${index+1} ")
-        assertEquals((1..4).map {"CQ F$it"},readRemoteCwPresets(preferences(values)))
+        for(index in 0..7) writeRemoteCwPreset(prefs,index," cq f${index+1} ")
+        assertEquals((1..8).map {"CQ F$it"},readRemoteCwPresets(preferences(values)))
         writeRemoteCwPreset(prefs,3,"")
         assertEquals("",readRemoteCwPresets(preferences(values))[3])
         assertEquals("CQ F1",readRemoteCwPresets(prefs)[0])

@@ -58,13 +58,6 @@ import java.util.TimeZone
  * so the window-filtered log page can show them; the exact time can be re-dated from the
  * edit dialog afterwards.
  */
-data class LogRecordOverrides(
-    val myCallsign: String? = null,
-    val sentReport: String = "",
-    val receivedReport: String = "",
-    val mode: String? = null
-)
-
 data class OutOfWindowLog(
     val callsign: String,
     val satName: String,
@@ -72,14 +65,11 @@ data class OutOfWindowLog(
     val txHz: Long?,
     val rxHz: Long?,
     val myGrid: String,
-    val midpointUtcMillis: Long,
-    val overrides: LogRecordOverrides = LogRecordOverrides()
+    val midpointUtcMillis: Long
 )
 
 data class LogUiState(
     val callsignInput: String = "",
-    val recordSaving: Boolean = false,
-    val recordSaveFailed: Boolean = false,
     /** Current logbook mode for the selected satellite (FM/CW/SSB/FT4). */
     val selectedMode: String = "",
     /** Station callsign from the imported LoTW certificate ("" when none). */
@@ -132,19 +122,6 @@ class LogViewModel(
     // Record ids submitted in the most recent prepare → upload cycle, so a
     // successful POST can mark them "uploaded" (distinct from "confirmed").
     private var lastUploadedIds: List<Long> = emptyList()
-    private var passKey: Pair<Int, Long>? = null
-
-    fun clearPassDraft() {
-        passKey = null
-        _uiState.update { it.copy(callsignInput = "", outOfWindowLog = null, recordSaveFailed = false) }
-    }
-
-    fun selectPass(catnum: Int, aosTime: Long) {
-        val key = catnum to aosTime
-        if (passKey == key) return
-        passKey = key
-        _uiState.update { it.copy(callsignInput = "", outOfWindowLog = null, recordSaveFailed = false) }
-    }
 
     init {
         viewModelScope.launch {
@@ -177,7 +154,7 @@ class LogViewModel(
     }
 
     fun updateCallsign(value: String) =
-        _uiState.update { it.copy(callsignInput = value.uppercase(Locale.US), recordSaveFailed = false) }
+        _uiState.update { it.copy(callsignInput = value.uppercase(Locale.US)) }
 
     /** Load the per-satellite mode preset when the selected satellite changes. */
     fun selectSatellite(catnum: Int) {
@@ -196,10 +173,8 @@ class LogViewModel(
         txHz: Long?,
         rxHz: Long?,
         myGrid: String,
-        passWindow: ClosedRange<Long>?,
-        overrides: LogRecordOverrides = LogRecordOverrides()
+        passWindow: ClosedRange<Long>?
     ) {
-        if (_uiState.value.recordSaving) return
         val call = _uiState.value.callsignInput.trim()
         if (call.isEmpty()) return
         // Whole minutes (seconds zeroed): matches the edit dialog's HH:mm granularity and the
@@ -215,11 +190,11 @@ class LogViewModel(
                 .let { it / 60_000L * 60_000L }
                 .coerceIn(passWindow.start, passWindow.endInclusive)
             _uiState.update {
-                it.copy(outOfWindowLog = OutOfWindowLog(call, satName, mode, txHz, rxHz, myGrid, midpoint, overrides))
+                it.copy(outOfWindowLog = OutOfWindowLog(call, satName, mode, txHz, rxHz, myGrid, midpoint))
             }
             return
         }
-        storeRecord(call, satName, mode, txHz, rxHz, myGrid, now, overrides)
+        storeRecord(call, satName, mode, txHz, rxHz, myGrid, now)
     }
 
     /** The operator confirmed the out-of-window notice: store the contact at the pass midpoint. */
@@ -227,7 +202,7 @@ class LogViewModel(
         val pending = _uiState.value.outOfWindowLog ?: return
         storeRecord(
             pending.callsign, pending.satName, pending.mode,
-            pending.txHz, pending.rxHz, pending.myGrid, pending.midpointUtcMillis, pending.overrides
+            pending.txHz, pending.rxHz, pending.myGrid, pending.midpointUtcMillis
         )
         _uiState.update { it.copy(outOfWindowLog = null) }
     }
@@ -241,12 +216,9 @@ class LogViewModel(
         txHz: Long?,
         rxHz: Long?,
         myGrid: String,
-        timeMillis: Long,
-        overrides: LogRecordOverrides
+        timeMillis: Long
     ) {
-        if (_uiState.value.recordSaving) return
-        val normalizedMode = (overrides.mode ?: mode).ifBlank { "FM" }.uppercase(Locale.US)
-        val recordingPass = passKey
+        val normalizedMode = mode.ifBlank { "FM" }.uppercase(Locale.US)
         // kHz granularity (3 decimals in MHz) — enough for operating and for the ADIF export.
         val tx = txHz?.let { (it + 500L) / 1000L * 1000L }
         val rx = rxHz?.let { (it + 500L) / 1000L * 1000L }
@@ -254,9 +226,7 @@ class LogViewModel(
             startUtcMillis = timeMillis,
             endUtcMillis = timeMillis,
             theirCallsign = call,
-            myCallsign = (overrides.myCallsign ?: _uiState.value.ownCallsign).trim().uppercase(Locale.US),
-            sentReport = overrides.sentReport.trim(),
-            receivedReport = overrides.receivedReport.trim(),
+            myCallsign = _uiState.value.ownCallsign,
             myGrid = myGrid.take(6).uppercase(Locale.US),
             txFrequencyHz = tx,
             rxFrequencyHz = rx,
@@ -271,21 +241,8 @@ class LogViewModel(
             status = QsoStatus.COMPLETE,
             propagationMode = "SAT"
         )
-        _uiState.update { it.copy(recordSaving = true, recordSaveFailed = false) }
-        viewModelScope.launch {
-            try {
-                qsoRepository.save(record)
-                _uiState.update {
-                    it.copy(callsignInput = if (passKey == recordingPass && it.callsignInput.trim() == call) "" else it.callsignInput)
-                }
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                _uiState.update { if (passKey == recordingPass) it.copy(recordSaveFailed = true) else it }
-            } finally {
-                _uiState.update { it.copy(recordSaving = false) }
-            }
-        }
+        viewModelScope.launch { qsoRepository.save(record) }
+        _uiState.update { it.copy(callsignInput = "") }
     }
 
     fun delete(id: Long) = viewModelScope.launch { qsoRepository.delete(id) }

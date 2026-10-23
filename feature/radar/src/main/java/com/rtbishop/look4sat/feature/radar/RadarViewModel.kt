@@ -18,14 +18,12 @@
 package com.rtbishop.look4sat.feature.radar
 
 import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
-
+import com.rtbishop.look4sat.core.domain.repository.TrackingPhase
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.rtbishop.look4sat.core.domain.model.SatRadio
-import com.rtbishop.look4sat.core.domain.audio.AudioConsumer
-import com.rtbishop.look4sat.core.domain.audio.IAudioHub
 import com.rtbishop.look4sat.core.domain.predict.CelestialComputer
 import com.rtbishop.look4sat.core.domain.predict.OrbitalObject
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPass
@@ -36,26 +34,25 @@ import com.rtbishop.look4sat.core.domain.repository.IReporter
 import com.rtbishop.look4sat.core.domain.repository.ISatelliteRepo
 import com.rtbishop.look4sat.core.domain.repository.ISensorsRepo
 import com.rtbishop.look4sat.core.domain.repository.ISettingsRepo
-import com.rtbishop.look4sat.core.domain.repository.TrackingPhase
 import com.rtbishop.look4sat.core.domain.sstv.LineRecoveryStrategy
 import com.rtbishop.look4sat.core.domain.sstv.SstvDecoder
 import com.rtbishop.look4sat.core.domain.cw.CwDecoder
+import com.rtbishop.look4sat.core.domain.usecase.IAudioCapture
 import com.rtbishop.look4sat.core.domain.usecase.IAddToCalendar
 import com.rtbishop.look4sat.core.domain.usecase.ISaveImage
 import com.rtbishop.look4sat.core.domain.usecase.IShowToast
+import com.rtbishop.look4sat.core.domain.utility.round
+import com.rtbishop.look4sat.core.domain.utility.toDegrees
 import com.rtbishop.look4sat.core.domain.utility.toTimerString
 import com.rtbishop.look4sat.core.presentation.formatFrequency
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
 
 class RadarViewModel(
@@ -66,7 +63,7 @@ class RadarViewModel(
     private val sensorsRepo: ISensorsRepo,
     private val addToCalendar: IAddToCalendar,
     private val trackingService: IRadioTrackingService,
-    private val audioHub: IAudioHub,
+    private val audioCapture: IAudioCapture,
     private val saveImage: ISaveImage,
     private val showToast: IShowToast
 ) : ViewModel() {
@@ -76,13 +73,9 @@ class RadarViewModel(
     private var transponders: List<SatRadio> = emptyList()
     private var calculatorCatnum: Int? = null
     private var sstvDecoder: SstvDecoder? = null
-    private var sstvSampleRate: Int? = null
-    private var sstvFrameJob: Job? = null
-    private var sstvDiagnosticsJob: Job? = null
     private var sstvRecordingJob: Job? = null
     private var cwDecoder: CwDecoder? = null
     private var cwListeningJob: Job? = null
-    private var cwListeningGeneration = 0L
 
     // Celestial positions change slowly, recompute at most once per minute
     private var lastCelestialUpdateMs = 0L
@@ -98,7 +91,6 @@ class RadarViewModel(
             sstv = SstvSubState(selectedMode = settingsRepo.otherSettings.value.sstvMode),
             radioControl = RadioControlSubState(
                 catEnabled = settingsRepo.radioControlSettings.value.enabled,
-                catTransport = settingsRepo.radioControlSettings.value.catTransport,
                 cwPresets = settingsRepo.getRemoteCwPresets()),
             radioTransport = settingsRepo.radioControlSettings.value.catTransport
         )
@@ -123,6 +115,7 @@ class RadarViewModel(
         }
     }
 
+    /** 指南针方位 = 传感器方位 + 磁偏角 + 手动偏置(compassOffsetDegrees, 校准用). */
     private fun correctedOrientation(data: Pair<Float, Float>): Pair<Float, Float> {
         val offset = settingsRepo.otherSettings.value.compassOffsetDegrees
         val azimuth = ((data.first + magDeclination + offset) % 360f + 360f) % 360f
@@ -145,13 +138,11 @@ class RadarViewModel(
             settingsRepo.radioControlSettings.collectLatest { settings ->
                 _uiState.update { it.copy(radioTransport = settings.catTransport,
                     radioControl = it.radioControl.copy(catEnabled = settings.enabled,
-                        catTransport = settings.catTransport, isL4sModel = settings.radioModel in setOf(
+                        isL4sModel = settings.radioModel in setOf(
                         RadioControlSettings.MODEL_QUANSHENG_UVK1, RadioControlSettings.MODEL_QUANSHENG_UVK5V3))) }
             }
         }
     }
-
-    // --- Pass loading split into focused functions ---
 
     private fun collectPassAndStartTickLoop() {
         viewModelScope.launch {
@@ -175,18 +166,13 @@ class RadarViewModel(
 
     // Loads transmitters and satellite track for pass, sets initial state, returns full radio list
     private suspend fun loadPassData(pass: OrbitalPass): List<SatRadio> {
-        val previous = _uiState.value.currentPass
-        val changed = previous?.catNum != pass.catNum || previous?.aosTime != pass.aosTime
-        if (changed) stopCwListening()
-        _uiState.update { it.copy(currentPass = pass,
-            cwConsole = if (changed) CwConsoleState() else it.cwConsole,
-            cw = if (changed) it.cw.copy(decodedText = "", resetGeneration = it.cw.resetGeneration + 1) else it.cw) }
+        _uiState.update { it.copy(currentPass = pass) }
         val allRadios = satelliteRepo.getRadiosWithId(pass.catNum)
         val favorites = settingsRepo.getFavoriteTransponders(pass.catNum).toSet()
         _uiState.update { it.copy(favoriteTransponderUuids = favorites) }
         transponders = allRadios.filter { it.downlinkLow != null }
             .sortedWith(compareByDescending<SatRadio> { it.uuid in favorites })
-        val initialTransponder = transponders.firstOrNull { it.uuid in favorites } ?: transponders.firstOrNull()
+        val initialTransponder = transponders.firstOrNull()
         if (initialTransponder != null) {
             _uiState.update {
                 it.copy(transceivers = it.transceivers.copy(selectedUuid = initialTransponder.uuid))
@@ -221,7 +207,7 @@ class RadarViewModel(
             )
         }
         processRadios(allRadios, pass.orbitalObject, timeNow)
-        sendFrequencyData()
+        sendPassData(pos)
     }
 
     private fun collectRadioTrackingState() {
@@ -270,7 +256,6 @@ class RadarViewModel(
     override fun onCleared() {
         trackingService.cancelRemoteTransmit()
         sensorsRepo.disableSensor()
-        viewModelScope.launch { audioHub.stopAll() }
     }
 
     fun onAction(action: RadarAction) {
@@ -294,7 +279,6 @@ class RadarViewModel(
                 _uiState.update { it.copy(favoriteTransponderUuids = favorites) }
                 transponders = transponders.sortedWith(compareByDescending<SatRadio> { it.uuid in favorites })
                 viewModelScope.launch {
-                    val pass = _uiState.value.currentPass ?: return@launch
                     val radios = satelliteRepo.getRadiosWithId(pass.catNum)
                     processRadios(radios, pass.orbitalObject, System.currentTimeMillis())
                 }
@@ -328,25 +312,6 @@ class RadarViewModel(
             RadarAction.DisconnectRadios -> viewModelScope.launch { trackingService.disconnectRadios() }
             is RadarAction.VoicePtt -> trackingService.setVoicePtt(action.pressed)
             is RadarAction.SendCw -> trackingService.sendCw(action.text, action.wpm)
-            RadarAction.OpenCwConsole -> _uiState.update { it.copy(cwConsole = it.cwConsole.copy(visible = true)) }
-            RadarAction.CloseCwConsole -> {
-                val control = _uiState.value.radioControl
-                if (control.shouldStopConsoleCw()) trackingService.cancelRemoteTransmit()
-                _uiState.update { it.copy(cwConsole = it.cwConsole.copy(visible = false)) }
-            }
-            RadarAction.LeaveCwSession -> {
-                onAction(RadarAction.CloseCwConsole)
-                stopCwListening()
-                cwDecoder?.resetDecoder()
-                _uiState.update { it.copy(cwConsole = CwConsoleState(),
-                    cw = it.cw.copy(decodedText = "", error = null, resetGeneration = it.cw.resetGeneration + 1)) }
-            }
-            is RadarAction.SetCwConsoleDraft -> _uiState.update { it.copy(cwConsole = it.cwConsole.copy(draft = action.draft)) }
-            is RadarAction.CwDecodedTextChanged -> _uiState.update { it.copy(cw = it.cw.copy(decodedText = action.text)) }
-            is RadarAction.CwDecoderFailed -> {
-                stopCwListening()
-                _uiState.update { it.copy(cw = it.cw.copy(error = action.message)) }
-            }
             is RadarAction.SetNativeCwOptions -> trackingService.setNativeCwOptions(action.options)
             RadarAction.SyncHandsetCwPresets -> trackingService.syncHandsetCwPresets()
             RadarAction.CancelHandsetCwSync -> trackingService.cancelHandsetCwSync()
@@ -362,7 +327,7 @@ class RadarViewModel(
             // SSTV actions
             is RadarAction.SstvPermissionResult -> {
                 _uiState.update { it.copy(sstv = it.sstv.copy(hasPermission = action.granted)) }
-                if (!action.granted) stopSstvRecording()
+                if (action.granted) initSstvDecoder()
             }
             RadarAction.SstvStartRecording -> startSstvRecording()
             RadarAction.SstvStopRecording -> stopSstvRecording()
@@ -389,17 +354,17 @@ class RadarViewModel(
             // CW actions
             is RadarAction.CwPermissionResult -> {
                 _uiState.update { it.copy(cw = it.cw.copy(hasPermission = action.granted)) }
-                if (!action.granted) stopCwListening()
+                if (action.granted) initCwDecoder()
             }
             RadarAction.CwStartListening -> startCwListening()
             RadarAction.CwStopListening -> stopCwListening()
             RadarAction.CwReset -> {
                 cwDecoder?.resetDecoder()
-                _uiState.update { it.copy(cw = it.cw.copy(decodedText = "", resetGeneration = it.cw.resetGeneration + 1)) }
+                _uiState.update { it.copy(cw = it.cw.copy(decodedText = "")) }
             }
             is RadarAction.CwSetToneFreq -> {
                 _uiState.update { it.copy(cw = it.cw.copy(cwToneFreq = action.freq)) }
-                cwDecoder = null
+                cwDecoder = CwDecoder(sampleRate = audioCapture.sampleRate, cwToneFreq = action.freq)
             }
             is RadarAction.CwToggleExpanded -> {
                 _uiState.update { it.copy(cw = it.cw.copy(isExpanded = action.expanded)) }
@@ -443,17 +408,34 @@ class RadarViewModel(
         }
     }
 
-    private fun sendFrequencyData() {
+    private fun sendPassData(orbitalPos: OrbitalPos) {
         val rc = settingsRepo.rcSettings.value
-        reportFrequency(networkReporter, rc.frequencyState, rc.frequencyFormat)
-        reportFrequency(bluetoothReporter, rc.bluetoothFrequencyState, rc.bluetoothFrequencyFormat)
+        sendReporterData(
+            networkReporter, orbitalPos,
+            rc.rotatorState, rc.rotatorFormat,
+            rc.frequencyState, rc.frequencyFormat
+        )
+        sendReporterData(
+            bluetoothReporter, orbitalPos,
+            rc.bluetoothRotatorState, rc.bluetoothRotatorFormat,
+            rc.bluetoothFrequencyState, rc.bluetoothFrequencyFormat
+        )
     }
 
-    private fun reportFrequency(
+    private fun sendReporterData(
         reporter: IReporter,
+        orbitalPos: OrbitalPos,
+        rotatorEnabled: Boolean,
+        rotatorFormat: String,
         frequencyEnabled: Boolean,
         frequencyFormat: String
     ) {
+        // Only send rotator commands when the satellite is above the horizon
+        if (rotatorEnabled && orbitalPos.aboveHorizon) {
+            val azimuth = orbitalPos.azimuth.toDegrees().round(2)
+            val elevation = orbitalPos.elevation.toDegrees().round(2)
+            reporter.reportRotation(rotatorFormat, azimuth, elevation)
+        }
         if (frequencyEnabled) {
             _uiState.value.transceivers.selectedFrequency?.let { freq ->
                 reporter.reportFrequency(frequencyFormat, freq)
@@ -487,12 +469,10 @@ class RadarViewModel(
         }
     }
 
-    private fun initSstvDecoder(sampleRate: Int): SstvDecoder {
-        if (sstvSampleRate != sampleRate) {
-            sstvFrameJob?.cancel()
-            sstvDiagnosticsJob?.cancel()
+    private fun initSstvDecoder() {
+        if (sstvDecoder == null) {
             val decoder = SstvDecoder(
-                sampleRate = sampleRate,
+                sampleRate = audioCapture.sampleRate,
                 targetRmsLevel = SSTV_TARGET_RMS,
                 includeScopeData = SSTV_INCLUDE_SCOPE,
                 enableRmsNormalization = SSTV_ENABLE_RMS_NORMALIZATION,
@@ -502,10 +482,9 @@ class RadarViewModel(
                 lineRecoveryStrategy = SSTV_LINE_RECOVERY_STRATEGY
             )
             sstvDecoder = decoder
-            sstvSampleRate = sampleRate
             decoder.lockMode(_uiState.value.sstv.selectedMode)
             _uiState.update { it.copy(sstv = it.sstv.copy(supportedModes = decoder.supportedModes)) }
-            sstvFrameJob = viewModelScope.launch {
+            viewModelScope.launch {
                 decoder.frames.collect { frame ->
                     val metrics = decoder.getQualityMetrics()
                     _uiState.update {
@@ -514,26 +493,23 @@ class RadarViewModel(
                 }
             }
             decoder.getDiagnosticsHandle()?.let { handle ->
-                sstvDiagnosticsJob = viewModelScope.launch {
+                viewModelScope.launch {
                     handle.metrics.collectLatest { metrics ->
                         _uiState.update { it.copy(sstv = it.sstv.copy(diagnosticsMetrics = metrics)) }
                     }
                 }
             }
         }
-        return requireNotNull(sstvDecoder)
     }
 
     private fun startSstvRecording() {
         if (sstvRecordingJob?.isActive == true) return
-        stopCwListening()
+        initSstvDecoder()
         _uiState.update { it.copy(sstv = it.sstv.copy(status = SstvStatus.Recording)) }
         sstvRecordingJob = viewModelScope.launch {
-            audioHub.audioFlow(AudioConsumer.SSTV)
-                .onCompletion {
-                    _uiState.update { it.copy(sstv = it.sstv.copy(status = SstvStatus.Idle)) }
-                }
-                .collect { chunk -> initSstvDecoder(chunk.sampleRate).feedSamples(chunk.samples) }
+            audioCapture.audioFlow().collect { buffer ->
+                sstvDecoder?.feedSamples(buffer)
+            }
         }
     }
 
@@ -543,14 +519,13 @@ class RadarViewModel(
         _uiState.update { it.copy(sstv = it.sstv.copy(status = SstvStatus.Idle)) }
     }
 
-    private fun initCwDecoder(sampleRate: Int): CwDecoder {
-        if (cwDecoder?.sampleRate != sampleRate) {
+    private fun initCwDecoder() {
+        if (cwDecoder == null) {
             cwDecoder = CwDecoder(
-                sampleRate = sampleRate,
+                sampleRate = audioCapture.sampleRate,
                 cwToneFreq = _uiState.value.cw.cwToneFreq
             )
         }
-        return requireNotNull(cwDecoder)
     }
 
     private fun startCwListening() {
@@ -561,37 +536,30 @@ class RadarViewModel(
         }
         // Stop SSTV if running (audio capture is shared)
         stopSstvRecording()
-        if (com.rtbishop.look4sat.feature.cw.CwNativeCapability.isAvailable) {
-            _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Listening, error = null)) }
-            return
-        }
+        initCwDecoder()
         cwDecoder?.resetDecoder()
-        val generation = ++cwListeningGeneration
-        _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Listening, error = null)) }
+        _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Listening)) }
         cwListeningJob = viewModelScope.launch {
-            audioHub.audioFlow(AudioConsumer.CW)
-                .onCompletion {
-                    if (generation == cwListeningGeneration) {
-                        _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Idle)) }
-                    }
+            // Collect decoded text flow
+            launch {
+                cwDecoder?.decodedTextFlow?.collect { text ->
+                    _uiState.update { it.copy(cw = it.cw.copy(decodedText = text)) }
                 }
-                .collect { chunk ->
-                    val decoder = initCwDecoder(chunk.sampleRate)
-                    withContext(Dispatchers.Default) { decoder.processBuffer(chunk.samples) }
-                    _uiState.update {
-                        it.copy(
-                            cw = it.cw.copy(
-                                decodedText = decoder.decodedTextFlow.value,
-                                signalStrength = decoder.signalStrength.value
-                            )
-                        )
-                    }
+            }
+            // Collect signal strength
+            launch {
+                cwDecoder?.signalStrength?.collect { strength ->
+                    _uiState.update { it.copy(cw = it.cw.copy(signalStrength = strength)) }
                 }
+            }
+            // Capture audio and feed to decoder
+            audioCapture.audioFlow().collect { buffer ->
+                cwDecoder?.processBuffer(buffer)
+            }
         }
     }
 
     private fun stopCwListening() {
-        cwListeningGeneration++
         cwListeningJob?.cancel()
         cwListeningJob = null
         _uiState.update { it.copy(cw = it.cw.copy(status = CwStatus.Idle)) }
@@ -632,7 +600,12 @@ class RadarViewModel(
         // Debug: Return scope visualization in frames (increases per-frame memory usage).
         private const val SSTV_INCLUDE_SCOPE = false
 
-        val CTCSS_TONES = com.rtbishop.look4sat.core.domain.utility.CtcssTones.tenths.map { it/10.0 }
+        val CTCSS_TONES = listOf(
+            67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5, 85.4, 88.5, 91.5,
+            94.8, 97.4, 100.0, 103.5, 107.2, 110.9, 114.8, 118.8, 123.0, 127.3, 131.8, 136.5,
+            141.3, 146.2, 151.4, 156.7, 162.2, 167.9, 173.8, 179.9, 186.2, 192.8, 203.5, 210.7,
+            218.1, 225.7, 233.6, 241.8, 250.3
+        )
 
 
         fun factory(container: IMainContainer) = viewModelFactory {
@@ -645,7 +618,7 @@ class RadarViewModel(
                     sensorsRepo = container.provideSensorsRepo(),
                     addToCalendar = container.provideAddToCalendar(),
                     trackingService = container.radioTrackingService,
-                    audioHub = container.audioHub,
+                    audioCapture = container.provideAudioCapture(),
                     saveImage = container.provideSaveImage(),
                     showToast = container.provideShowToast()
                 )

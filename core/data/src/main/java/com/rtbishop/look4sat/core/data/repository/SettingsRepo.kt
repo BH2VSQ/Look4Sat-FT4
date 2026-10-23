@@ -998,6 +998,24 @@ class SettingsRepo(
     override fun updateRemoteCwPreset(index: Int, text: String) {
         writeRemoteCwPreset(preferences,index,text)
     }
+    override fun getRadioProfileMetadata():Map<String,com.rtbishop.look4sat.core.domain.repository.RadioProfileMetadata> = runCatching {
+        val json=JSONObject(preferences.getString("l4sProfileMetadata","{}") ?: "{}")
+        json.keys().asSequence().associateWith {key->val item=json.getJSONObject(key)
+            com.rtbishop.look4sat.core.domain.repository.RadioProfileMetadata(item.getString("name"),item.getString("uuid"),item.optString("description"))}
+    }.getOrDefault(emptyMap())
+    override fun setRadioProfileMetadata(values:Map<String,com.rtbishop.look4sat.core.domain.repository.RadioProfileMetadata>) {
+        val json=JSONObject();values.forEach {(key,item)->json.put(key,JSONObject().put("name",item.satelliteName).put("uuid",item.transponderUuid).put("description",item.description))}
+        preferences.edit {putString("l4sProfileMetadata",json.toString())}
+    }
+    override fun getRadioProfileAliases():Map<String,String> = runCatching {
+        val json=JSONObject(preferences.getString("l4sProfileAliases","{}") ?: "{}")
+        json.keys().asSequence().associateWith {json.getString(it)}
+    }.getOrDefault(emptyMap())
+    override fun setRadioProfileAliases(values:Map<String,String>) {
+        val json=JSONObject();values.forEach {(key,value)->json.put(key,value)}
+        preferences.edit {putString("l4sProfileAliases",json.toString())}
+    }
+
     private val _radioControlSettings = MutableStateFlow(getRadioControlSettings())
     override val radioControlSettings: StateFlow<RadioControlSettings> = _radioControlSettings
 

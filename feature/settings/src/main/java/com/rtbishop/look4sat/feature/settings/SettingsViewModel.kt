@@ -113,6 +113,7 @@ class SettingsViewModel(
 
     init {
         radioTrackingService?.let { service ->
+            viewModelScope.launch { service.profileManagerState.collect {value -> _uiState.update {it.copy(radioProfiles=value)}} }
             viewModelScope.launch { service.state.collect {value -> _uiState.update {it.copy(radioTrackingState=value)}} }
         }
         viewModelScope.launch {controlDiagnostics.events.collect {value->_uiState.update {it.copy(controlDiagnosticCount=value.size)}}}
@@ -207,6 +208,16 @@ class SettingsViewModel(
 
     fun onAction(action: SettingsAction) {
         when (action) {
+            SettingsAction.RefreshRadioProfiles -> viewModelScope.launch {radioTrackingService?.refreshRadioProfiles()}
+            is SettingsAction.DeleteRadioProfile -> viewModelScope.launch {radioTrackingService?.requestDeleteRadioProfile(action.slot)}
+            is SettingsAction.ImportRadioProfiles -> viewModelScope.launch {radioTrackingService?.prepareRadioProfileImport(action.json)}
+            is SettingsAction.RestoreRadioProfiles -> viewModelScope.launch {radioTrackingService?.stageRadioProfileImport(action.overwrite)}
+            SettingsAction.CancelRadioProfileOperation -> viewModelScope.launch {radioTrackingService?.cancelRadioProfileOperation()}
+            SettingsAction.ExportRadioProfiles -> viewModelScope.launch {
+                val json=radioTrackingService?.exportRadioProfiles();_uiState.update {it.copy(radioProfilesExport=json)}
+            }
+            SettingsAction.ConsumeRadioProfilesExport -> _uiState.update {it.copy(radioProfilesExport=null)}
+            is SettingsAction.SetRadioProfileAlias -> radioTrackingService?.setRadioProfileAlias(action.key,action.alias)
             SettingsAction.ExportControlDiagnostics -> {
                 _uiState.update { it.copy(controlDiagnosticsExportText = controlDiagnostics.exportText()) }
             }

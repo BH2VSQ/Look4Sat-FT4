@@ -3,8 +3,6 @@ package com.ve3nea.morse_expert;
 
 import android.content.Context;
 import android.os.Build;
-import android.text.Editable;
-import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -25,7 +23,7 @@ import j1.C1646n;
  * onCreate(Activity, ConstraintLayout) for Compose AndroidView integration. Ads (d1.*),
  * billing (I2.a), premium/rate menu removed per user. h3.b.r (recursive findViewById),
  * K1.a.M (immersive status bar), B.i (permissions) replaced with equivalent standard APIs.
- * H2.b 与 Pascal 解码核心保持不变；H2.a 改为接收应用级共享音频，避免创建第二个 AudioRecord。
+ * Decoder logic (H2.a audio, H2.b core, pas engine) untouched.
  */
 public class MainActivity {
 
@@ -48,22 +46,6 @@ public class MainActivity {
 
     /** Injected Activity context (replaces the original this Activity capabilities) */
     public android.app.Activity mActivity;
-    private java.util.function.Consumer<String> decodedTextListener;
-    private final TextWatcher decodedTextWatcher = new TextWatcher() {
-        @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
-        @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-            if (decodedTextListener != null) decodedTextListener.accept(s.toString());
-        }
-        @Override public void afterTextChanged(Editable s) { }
-    };
-
-    public void setDecodedTextListener(java.util.function.Consumer<String> listener) {
-        decodedTextListener = listener;
-    }
-
-    public void restoreDecodedText(String text) {
-        if (f11035D != null) ((DecodedTextView) f11035D.f11888g).setText(text, TextView.BufferType.EDITABLE);
-    }
 
     public void onCreate(android.app.Activity activity, ConstraintLayout constraintLayout) {
         onCreate(activity, constraintLayout, true);
@@ -96,7 +78,6 @@ public class MainActivity {
                         WaterfallSurfaceView waterfallSurfaceView = (WaterfallSurfaceView) findViewRecursive(inflate, R.id.waterfallView);
                         if (waterfallSurfaceView != null) {
                             this.f11035D = new C1646n(constraintLayout, decodedTextView, scaleView, textView, linearLayout, waterfallSurfaceView);
-                            decodedTextView.addTextChangedListener(decodedTextWatcher);
                             ((WaterfallSurfaceView) this.f11035D.f11892k).setOnTouchListener(this.f11040J);
                             // Originally: permission check then v(); permission flow handled by the Compose page
                             // Originally: ad banner mounting (removed)
@@ -143,7 +124,7 @@ public class MainActivity {
         }
     }
 
-    /** 初始化原始 Morse Expert 解码核心；音频由 SharedAudioHub 从外部送入。 */
+    /** Original v(): audio capture + decoder core init (logic unchanged) */
     public void v() {
         this.f11036E = new a();
         b bVar = new b(mActivity.getApplicationContext());
@@ -171,6 +152,11 @@ public class MainActivity {
         }
         a aVar = this.f11036E;
         if (aVar != null) {
+            android.media.AudioRecord audioRecord = aVar.f596g;
+            audioRecord.startRecording();
+            if (audioRecord.getState() != 1) {
+                android.util.Log.e("AudioRecord", "cannot start");
+            }
             aVar.f598i.set(true);
         }
         ((WaterfallSurfaceView) this.f11035D.f11892k).onResume();
@@ -182,19 +168,26 @@ public class MainActivity {
         a aVar = this.f11036E;
         if (aVar != null) {
             aVar.f598i.set(false);
-            aVar.b();
+            android.media.AudioRecord audioRecord = aVar.f596g;
+            audioRecord.stop();
+            if (audioRecord.getState() != 1) {
+                android.util.Log.e("AudioRecord", "cannot stop");
+            }
         }
         ((WaterfallSurfaceView) this.f11035D.f11892k).onPause();
     }
 
     /** Original onDestroy: release audio/decoder (billing cleanup removed) */
     public void onDestroy() {
-        decodedTextListener = null;
-        if (f11035D != null) ((DecodedTextView) f11035D.f11888g).removeTextChangedListener(decodedTextWatcher);
         a aVar = this.f11036E;
         if (aVar != null) {
             aVar.f598i.set(false);
-            aVar.b();
+            try {
+                aVar.f596g.stop();
+                aVar.f596g.release();
+            } catch (Exception ignored) {
+            }
+            aVar.f597h.shutdownNow();
         }
         this.f11036E = null;
         this.f11037F = null;
@@ -228,20 +221,12 @@ public class MainActivity {
             return true; // double-back: exit
         }
         this.f11038G = System.currentTimeMillis();
-        Toast.makeText(mActivity, R.string.tap_back_again_to_close, Toast.LENGTH_SHORT).show();
+        Toast.makeText(mActivity, R.string.tap_back_again_to_close, 0).show();
         return false;
     }
 
     /** Start decoding after permission granted (original onRequestPermissionsResult success) */
     public void onPermissionGranted() {
         v();
-    }
-
-    /** 接收已经重采样为 8 kHz 的 Float PCM。 */
-    public void feedAudioSamples(float[] samples) {
-        a audioInput = this.f11036E;
-        if (audioInput != null) {
-            audioInput.a(samples);
-        }
     }
 }

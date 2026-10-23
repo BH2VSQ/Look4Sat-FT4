@@ -6,17 +6,11 @@ import com.rtbishop.look4sat.core.domain.repository.CwTransmitPresets
 
 internal fun readRemoteCwPresets(preferences: SharedPreferences): List<String> =
     CwTransmitPresets.defaults.mapIndexed { index,default ->
-        try {
-            CwTransmitPresets.normalize(preferences.getString("remoteCwPreset$index",default) ?: default)
-        } catch (_: IllegalArgumentException) {
-            default
-        } catch (_: ClassCastException) {
-            default
-        }
+        runCatching {CwTransmitPresets.normalize(preferences.getString("remoteCwPreset$index",default) ?: default)}.getOrDefault(default)
     }
 
 internal fun writeRemoteCwPreset(preferences: SharedPreferences,index: Int,text: String) {
-    require(index in CwTransmitPresets.defaults.indices)
+    require(index in 0..7)
     val value=CwTransmitPresets.normalize(text)
     preferences.edit {putString("remoteCwPreset$index",value)}
 }

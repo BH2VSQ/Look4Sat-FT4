@@ -31,8 +31,6 @@ androidComponents {
 
 dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.2.1")
-    testImplementation(libs.test.junit4)
-    testImplementation(libs.test.coroutines)
 }
 
 // 照搬的 Java 源码含中文注释, 强制 UTF-8 编译(compileOptions 在部分 AGP 版本不生效)

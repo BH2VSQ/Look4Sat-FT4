@@ -143,7 +143,7 @@ class TcpRadioTransport(
     }
 }
 
-/** USB CAT transport for CDC-ACM, CP210x, FTDI, CH34x and PL2303 adapters. */
+/** USB CAT transport for CDC-ACM, CP210x, FTDI, and CH34x adapters. */
 class UsbSerialRadioTransport(
     context: Context,
     deviceSelector: String,
@@ -195,7 +195,7 @@ class UsbSerialRadioTransport(
             }
             val interfaces = if (port.driver == UsbSerialDriverKind.CH34X) {
                 // Composite CH34x devices can expose a USB-audio function next to CAT.
-                // Claim only non-audio interfaces so FT4 can keep using that audio path.
+                // Leave audio interfaces available to the operating system.
                 (0 until device.interfaceCount).map(device::getInterface).filterNot {
                     it.interfaceClass == UsbConstants.USB_CLASS_AUDIO
                 }
@@ -219,11 +219,6 @@ class UsbSerialRadioTransport(
                 UsbSerialDriverKind.CP210X -> configureCp210x(opened, device, port, serialLine)
                 UsbSerialDriverKind.FTDI -> configureFtdi(opened, device, port, serialLine)
                 UsbSerialDriverKind.CH34X -> configureCh34x(opened, baudRate, serialLine)
-                UsbSerialDriverKind.PROLIFIC -> configureProlificSerial(
-                    device.productId, device.deviceClass, descriptors, baudRate, stopBits
-                ) { type, request, value, index, data ->
-                    opened.controlTransfer(type, request, value, index, data, data?.size ?: 0, IO_TIMEOUT_MILLIS)
-                }
             }
             if (!configured) {
                 claimed.asReversed().forEach { opened.releaseInterface(it) }
@@ -562,8 +557,7 @@ internal enum class UsbSerialDriverKind(val displayName: String) {
     CDC_ACM("CDC-ACM"),
     CP210X("CP210x"),
     FTDI("FTDI"),
-    CH34X("CH34x"),
-    PROLIFIC("PL2303")
+    CH34X("CH34x")
 }
 
 internal data class UsbSerialLineConfiguration(
@@ -632,7 +626,6 @@ internal fun usbSerialDriverForVendor(vendorId: Int): UsbSerialDriverKind? = whe
     USB_VENDOR_SILICON_LABS -> UsbSerialDriverKind.CP210X
     USB_VENDOR_FTDI -> UsbSerialDriverKind.FTDI
     USB_VENDOR_QINHENG, USB_VENDOR_CH34X_ALT -> UsbSerialDriverKind.CH34X
-    0x067B -> UsbSerialDriverKind.PROLIFIC
     else -> null
 }
 
@@ -651,8 +644,6 @@ private fun findUsbSerialPorts(
     }
     if (cdcPorts.isNotEmpty()) return cdcPorts
     val driver = usbSerialDriverForVendor(device.vendorId) ?: return emptyList()
-    if (driver == UsbSerialDriverKind.PROLIFIC &&
-        !com.rtbishop.look4sat.core.domain.control.isProlificSerialAdapter(device.vendorId, device.productId)) return emptyList()
     if (driver == UsbSerialDriverKind.CH34X) {
         val data = interfaces.lastOrNull(::hasBulkSerialEndpoints) ?: return emptyList()
         return listOf(UsbSerialPortCandidate(driver, data, data, portIndex = 0))

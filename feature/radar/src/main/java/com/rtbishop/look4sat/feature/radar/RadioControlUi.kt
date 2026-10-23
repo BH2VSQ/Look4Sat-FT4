@@ -12,6 +12,12 @@ import java.util.Locale
 
 internal enum class ReferenceTarget { RX, TX }
 
+internal fun requiredRadioPermission(transport: String, sdk: Int = android.os.Build.VERSION.SDK_INT): String? = when {
+    transport == com.rtbishop.look4sat.core.domain.model.RadioControlSettings.TRANSPORT_BLUETOOTH && sdk >= 31 -> android.Manifest.permission.BLUETOOTH_CONNECT
+    transport == com.rtbishop.look4sat.core.domain.model.RadioControlSettings.TRANSPORT_TCP && sdk >= 37 -> android.Manifest.permission.ACCESS_LOCAL_NETWORK
+    else -> null
+}
+
 internal fun referenceFrequencyText(hz: Long): String = BigDecimal.valueOf(hz, 6).toPlainString()
 
 internal fun compactReferenceFrequencyText(hz: Long): String =

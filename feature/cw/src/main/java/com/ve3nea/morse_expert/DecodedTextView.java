@@ -73,10 +73,6 @@ public class DecodedTextView extends TextView {
             CharSequence text = getText();
             Layout layout = getLayout();
             int lineCount = getLineCount();
-            if (layout == null || lineCount == 0) {
-                append(spannableStringBuilder);
-                return;
-            }
             int length = text.length();
             int lineHeight = getLineHeight();
             int scrollY = getScrollY();
@@ -110,7 +106,7 @@ public class DecodedTextView extends TextView {
         boolean isEmpty = TextUtils.isEmpty(decodedText);
         Context context = this.f11031m;
         if (isEmpty) {
-            Toast.makeText(context, "No text to save", Toast.LENGTH_SHORT).show();
+            Toast.makeText(context, "No text to save", 0).show();
             return;
         }
         try {
@@ -121,20 +117,20 @@ public class DecodedTextView extends TextView {
                 printWriter.println(decodedText);
                 printWriter.close();
                 MediaScannerConnection.scanFile(context, new String[]{absolutePath}, new String[]{"text/plain"}, null);
-                Toast.makeText(context, "Text saved to " + absolutePath, Toast.LENGTH_LONG).show();
+                Toast.makeText(context, "Text saved to " + absolutePath, 1).show();
             } catch (Throwable th) {
                 printWriter.close();
                 throw th;
             }
         } catch (Exception e4) {
             Log.e("File Save", "Failed", e4);
-            Toast.makeText(context, "Unable to save: " + e4.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(context, "Unable to save: " + e4.getMessage(), 1).show();
         }
     }
 
     public final void s() {
         Intent intent = new Intent("android.intent.action.SEND");
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setFlags(268435456);
         intent.putExtra("android.intent.extra.TEXT", getDecodedText());
         intent.setType("text/plain");
         this.f11031m.startActivity(Intent.createChooser(intent, "Share Decoded Text"));

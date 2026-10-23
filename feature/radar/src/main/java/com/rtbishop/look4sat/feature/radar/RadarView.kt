@@ -17,8 +17,6 @@
  */
 package com.rtbishop.look4sat.feature.radar
 
-import com.rtbishop.look4sat.core.presentation.R
-
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -56,17 +54,16 @@ import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rtbishop.look4sat.core.domain.predict.CelestialComputer
 import com.rtbishop.look4sat.core.domain.predict.OrbitalPos
 import com.rtbishop.look4sat.core.domain.predict.PI_2
 import com.rtbishop.look4sat.core.domain.utility.toRadians
+import com.rtbishop.look4sat.core.presentation.R
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.math.sqrt
 
 private const val CIRCLES = 3
 private const val STROKE_WIDTH = 6f
@@ -85,7 +82,6 @@ fun RadarViewCompose(
     modifier: Modifier = Modifier,
     sunPosition: CelestialComputer.SunPosition? = null,
     moonPosition: CelestialComputer.MoonPosition? = null,
-    compactPassPreview: Boolean = false,
 ) {
     val aimColor = MaterialTheme.colorScheme.error
     val primaryColor = MaterialTheme.colorScheme.primary
@@ -145,15 +141,10 @@ fun RadarViewCompose(
         }
         rotate(if (shouldUseCompass) -azimElev.first else 0f) {
             if (shouldShowSweep) cachedSweepBrush?.let { drawSweep(center, sweepDegrees, radius, it) }
-            val radarStrokeWidth = if (compactPassPreview) 1.0.dp.toPx() else STROKE_WIDTH
-            drawRadar(radius, radarColor, radarStrokeWidth)
-            if (!compactPassPreview) drawElevationLabels(radius, primaryColor, measurer)
+            drawRadar(radius, radarColor)
+            drawElevationLabels(radius, primaryColor, measurer)
             translate(center.x, center.y) {
-                if (compactPassPreview) {
-                    drawPassPreviewTrack(items, radius, primaryColor)
-                } else {
-                    drawTrack(trackPath, trackEffect, aimColor, primaryColor)
-                }
+                drawTrack(trackPath, trackEffect, aimColor, primaryColor)
                 // Station-B overlay: full dashed track + directional arrows + live position dot
                 // (same display mode as the local station: track line/arrow + pulsing dot)
                 if (trackB != null && trackB.isNotEmpty() && !trackBPath.isEmpty) {
@@ -190,13 +181,13 @@ fun RadarViewCompose(
     }
 }
 
-private fun DrawScope.drawRadar(radius: Float, color: Color, strokeWidth: Float = STROKE_WIDTH) {
+private fun DrawScope.drawRadar(radius: Float, color: Color) {
     val step = radius / CIRCLES
     for (i in 0 until CIRCLES) {
-        drawCircle(color, radius - step * i, style = Stroke(strokeWidth))
+        drawCircle(color, radius - step * i, style = Stroke(STROKE_WIDTH))
     }
-    drawLine(color, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), strokeWidth)
-    drawLine(color, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), strokeWidth)
+    drawLine(color, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), STROKE_WIDTH)
+    drawLine(color, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), STROKE_WIDTH)
 }
 
 private fun DrawScope.drawElevationLabels(radius: Float, color: Color, measurer: TextMeasurer) {
@@ -214,54 +205,6 @@ private fun DrawScope.drawTrack(path: Path, effect: PathEffect, color: Color, ef
     drawPath(path, effectColor, style = Stroke(pathEffect = effect))
 }
 
-/** Compact list preview: thin path with AOS (green) and LOS (red) endpoint dots, no arrows. */
-private fun DrawScope.drawPassPreviewTrack(
-    positions: List<OrbitalPos>,
-    radius: Float,
-    trackColor: Color,
-) {
-    if (positions.isEmpty()) return
-
-    // Keep the actual track identical to the full radar geometry. Only inset the
-    // endpoint dots a short distance along the first/last track segments so they
-    // remain visible when AOS or LOS is close to the radar edge.
-    val path = createTrackPath(positions, radius)
-    if (!path.isEmpty) {
-        drawPath(path, trackColor, style = Stroke(width = 0.9.dp.toPx()))
-    }
-
-    val first = positions.first()
-    val last = positions.last()
-    val startPoint = sph2Cart(first.azimuth, first.elevation, radius.toDouble())
-    val endPoint = sph2Cart(last.azimuth, last.elevation, radius.toDouble())
-    val nextPoint = positions.getOrNull(1)?.let {
-        sph2Cart(it.azimuth, it.elevation, radius.toDouble())
-    } ?: startPoint
-    val previousPoint = positions.getOrNull(positions.lastIndex - 1)?.let {
-        sph2Cart(it.azimuth, it.elevation, radius.toDouble())
-    } ?: endPoint
-    val endpointInset = 4.0.dp.toPx()
-    val start = insetAlongTrack(startPoint, nextPoint, endpointInset)
-    val end = insetAlongTrack(endPoint, previousPoint, endpointInset)
-    val endpointRadius = 1.5.dp.toPx()
-    drawCircle(Color(0xFF2E7D32), endpointRadius, start)
-    drawCircle(Color(0xFFD32F2F), endpointRadius, end)
-}
-
-/** Move a marker from an endpoint toward its adjacent sample without changing the track. */
-private fun insetAlongTrack(endpoint: Offset, toward: Offset, distance: Float): Offset {
-    val dx = toward.x - endpoint.x
-    val dy = toward.y - endpoint.y
-    val segmentLength = sqrt(dx * dx + dy * dy)
-    if (segmentLength <= 0.001f) return endpoint
-
-    val inset = distance.coerceAtMost(segmentLength * 0.5f)
-    return Offset(
-        x = endpoint.x + dx / segmentLength * inset,
-        y = endpoint.y + dy / segmentLength * inset
-    )
-}
-
 private fun DrawScope.drawPosition(item: OrbitalPos, radius: Float, posRadius: Float, color: Color) {
     val pos = sph2Cart(item.azimuth, item.elevation, radius.toDouble())
     drawCircle(color, 16f, pos)
@@ -269,14 +212,10 @@ private fun DrawScope.drawPosition(item: OrbitalPos, radius: Float, posRadius: F
 }
 
 private fun DrawScope.drawAim(azim: Float, elev: Float, radius: Float, color: Color) {
+    val size = 36f
     val azimRad = azim.toDouble().toRadians()
     val elevRad = elev.toDouble().toRadians().coerceAtMost(0.0)
     val pos = sph2Cart(azimRad, -elevRad, radius.toDouble())
-    drawAimMarker(pos, color)
-}
-
-private fun DrawScope.drawAimMarker(pos: Offset, color: Color) {
-    val size = 36f
     drawLine(color, Offset(pos.x - size, pos.y), Offset(pos.x + size, pos.y), STROKE_WIDTH)
     drawLine(color, Offset(pos.x, pos.y - size), Offset(pos.x, pos.y + size), STROKE_WIDTH)
     drawCircle(color, size / 2, pos, style = Stroke(STROKE_WIDTH))
@@ -314,10 +253,6 @@ private fun azimuthDeltaRad(deltaRad: Double): Double {
 }
 
 private fun createTrackEffect(trackPath: Path): PathEffect {
-    // Pass previews can render before their samples load, and deep-space passes have no
-    // local azimuth/elevation track. Avoid constructing a stamped effect with zero spacing.
-    if (trackPath.isEmpty) return PathEffect.cornerPathEffect(0f)
-
     val shapeRadius = 24f
     val angle = 120.0.toRadians()
     val shape = Path().apply {

@@ -35,7 +35,6 @@ data class RadioPanelState(
 
 data class RadioControlSubState(
     val catEnabled: Boolean = false,
-    val catTransport: String = RadioControlSettings.TRANSPORT_BLUETOOTH,
     val isL4sModel: Boolean = false,
     val cwPresets: List<String> = com.rtbishop.look4sat.core.domain.repository.CwTransmitPresets.defaults,
     val txPanel: RadioPanelState = RadioPanelState("TX (Uplink)"),
@@ -57,8 +56,7 @@ data class RadioControlSubState(
     val referenceDirty:Boolean=false,
     val serviceEditingLocked:Boolean=false
 ) {
-    val catControlsActive get() = catEnabled && catTransport != RadioControlSettings.TRANSPORT_VOX
-    val remoteControlsVisible get() = catControlsActive && remoteRadio?.connected == true &&
+    val remoteControlsVisible get() = catEnabled && remoteRadio?.connected == true &&
         remoteRadio.capabilities?.let { it.voicePtt || it.cwText || it.nativeSettings || remoteRadio.isN76 } == true
     val voicePttVisible get() = remoteControlsVisible && remoteRadio?.capabilities?.voicePtt == true
     val stopRemoteTxVisible get() = remoteControlsVisible &&
@@ -91,7 +89,6 @@ data class RadarState(
     val radioControl: RadioControlSubState = RadioControlSubState(),
     val sstv: SstvSubState = SstvSubState(),
     val cw: CwSubState = CwSubState(),
-    val cwConsole: CwConsoleState = CwConsoleState(),
     val mutualSamples: List<Pair<Long, Pair<Double, Double>>> = emptyList(),
     val mutualStartTime: Long = 0L,
     val mutualEndTime: Long = 0L,
@@ -128,9 +125,7 @@ data class CwSubState(
     val decodedText: String = "",
     val cwToneFreq: Float = 700f,
     val isExpanded: Boolean = false,
-    val signalStrength: Float = 0f,
-    val resetGeneration: Int = 0,
-    val error: String? = null
+    val signalStrength: Float = 0f
 )
 
 sealed interface RadarAction {
@@ -146,12 +141,6 @@ sealed interface RadarAction {
     data object DisconnectRadios : RadarAction
     data class VoicePtt(val pressed: Boolean) : RadarAction
     data class SendCw(val text: String, val wpm: Int) : RadarAction
-    data object OpenCwConsole : RadarAction
-    data object CloseCwConsole : RadarAction
-    data object LeaveCwSession : RadarAction
-    data class SetCwConsoleDraft(val draft: CwConsoleDraft) : RadarAction
-    data class CwDecodedTextChanged(val text: String) : RadarAction
-    data class CwDecoderFailed(val message: String) : RadarAction
     data class SaveCwPreset(val index: Int, val text: String) : RadarAction
     data class SetNativeCwOptions(val options: com.rtbishop.look4sat.core.domain.repository.NativeCwOptions) : RadarAction
     data object SyncHandsetCwPresets : RadarAction

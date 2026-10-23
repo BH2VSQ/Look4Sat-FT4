@@ -9,8 +9,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,9 +25,7 @@ import kotlin.math.roundToInt
 
 @Composable
 internal fun NativeCwOptionsDialog(options: NativeCwOptions, enabled: Boolean,
-    onDismiss: () -> Unit, onApply: (NativeCwOptions) -> Unit,
-    macroStatus: com.rtbishop.look4sat.core.domain.repository.HandsetMacroStatus? = null,
-    onSync: (() -> Unit)? = null, onCancelSync: () -> Unit = {}, syncError: String? = null) {
+    onDismiss: () -> Unit, onApply: (NativeCwOptions) -> Unit) {
     var draft by remember { mutableStateOf(options) }
     SharedDialog(title=stringResource(R.string.rc_cw_options),onDismissRequest=onDismiss,onCancel=onDismiss,
         onAccept={if(enabled && draft.valid())onApply(draft)}) { padding ->
@@ -44,17 +40,6 @@ internal fun NativeCwOptionsDialog(options: NativeCwOptions, enabled: Boolean,
             CwOptionSlider(stringResource(R.string.rc_cw_spacing,if(draft.spacing==0)stringResource(R.string.rc_cw_spacing_off) else "${draft.spacing} WPM"),
                 if(draft.spacing==0)4 else draft.spacing,4..44,enabled=enabled) {draft=draft.copy(spacing=if(it==4)0 else it)}
             Text(stringResource(R.string.rc_cw_save_on_radio))
-            onSync?.let { sync ->
-                OutlinedButton(onClick = sync, enabled = enabled && macroStatus?.busy != true,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.rc_cw_sync)) }
-            }
-            macroStatus?.let { status ->
-                if (status.busy) {
-                    Text(stringResource(if (status.waitingForConfirmation) R.string.rc_cw_sync_confirm else R.string.rc_cw_sync_busy))
-                    OutlinedButton(onClick = onCancelSync) { Text(stringResource(android.R.string.cancel)) }
-                } else if (status.phase == 8) Text(stringResource(R.string.rc_cw_sync_done))
-            }
-            syncError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }
 }
