@@ -100,6 +100,9 @@ import com.rtbishop.look4sat.core.presentation.LocalSpacing
 import com.rtbishop.look4sat.core.presentation.MainTheme
 import com.rtbishop.look4sat.core.presentation.R
 import com.rtbishop.look4sat.core.presentation.SharedDialog
+import com.rtbishop.look4sat.core.presentation.SheetDialogTitle
+import com.rtbishop.look4sat.core.presentation.sheetDialogContainerColor
+import com.rtbishop.look4sat.core.presentation.sheetDialogShape
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -376,7 +379,7 @@ fun LoTWDialog(
     progress: com.rtbishop.look4sat.core.domain.repository.LoTWProgress?,
     message: String?,
     dismiss: () -> Unit,
-    /** Called on cancel/back while a sync is running: aborts the job. */
+    /** Called only after the user confirms cancellation of an active sync. */
     onCancelSync: () -> Unit,
     onSave: (com.rtbishop.look4sat.core.domain.model.LoTWSettings) -> Unit,
     onSyncFull: (com.rtbishop.look4sat.core.domain.model.LoTWSettings) -> Unit,
@@ -384,12 +387,18 @@ fun LoTWDialog(
 ) {
     val call = rememberSaveable { mutableStateOf(initialSettings.callsign) }
     val pass = rememberSaveable { mutableStateOf(initialSettings.password) }
+    var showCancelSyncConfirm by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isSyncing) {
+        if (!isSyncing) showCancelSyncConfirm = false
+    }
     SharedDialog(
         title = stringResource(R.string.prefs_lotw_title),
-        // While syncing, cancel/back aborts the download instead of merely
-        // hiding the dialog — a full sync started by mistake must be stoppable.
-        onDismissRequest = { if (isSyncing) onCancelSync() else dismiss() },
-        onCancel = { if (isSyncing) onCancelSync() else dismiss() },
+        // Dismissing the sheet (outside tap or system Back) only hides the UI;
+        // the ViewModel-owned sync continues until the user confirms cancellation.
+        onDismissRequest = dismiss,
+        onCancel = {
+            if (isSyncing) showCancelSyncConfirm = true else dismiss()
+        },
         // The two sync buttons below are the primary actions: saving
         // credentials and fetching confirmed grids happen in one step.
         onAccept = null
@@ -485,6 +494,26 @@ fun LoTWDialog(
             )
         }
         Spacer(modifier = Modifier.height(0.dp))
+    }
+    if (showCancelSyncConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCancelSyncConfirm = false },
+            shape = sheetDialogShape(),
+            containerColor = sheetDialogContainerColor(),
+            title = { SheetDialogTitle(stringResource(R.string.lotw_sync_cancel_title)) },
+            text = { Text(stringResource(R.string.lotw_sync_cancel_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCancelSyncConfirm = false
+                    if (isSyncing) onCancelSync()
+                }) { Text(stringResource(R.string.btn_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelSyncConfirm = false }) {
+                    Text(stringResource(R.string.btn_cancel))
+                }
+            }
+        )
     }
 }
 
