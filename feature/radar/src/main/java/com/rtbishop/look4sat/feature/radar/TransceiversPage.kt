@@ -475,6 +475,29 @@ private fun ExpandedRadioControl(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+        if (radioControl.catEnabled) {
+            // Connection LEDs in collapsed rows can be ambiguous when one
+            // VFO/endpoint is intentionally disabled. Expose both physical
+            // links and the tracking interlock separately in the CAT page.
+            val tx = stringResource(
+                if (radioControl.txPanel.isConnected) R.string.rc_cat_link_online
+                else R.string.rc_cat_link_offline
+            )
+            val rx = stringResource(
+                if (radioControl.rxPanel.isConnected) R.string.rc_cat_link_online
+                else R.string.rc_cat_link_offline
+            )
+            val control = stringResource(
+                if (radioControl.isReady) R.string.rc_cat_tracking_ready
+                else R.string.rc_cat_tracking_paused
+            )
+            Text(
+                text = stringResource(R.string.rc_cat_link_diagnostics, rx, tx, control),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         ReferenceFrequencyControls(radioControl, onAction)
         TxToneControl(radio, radioControl, onAction)
         if (!radioControl.catEnabled) {
