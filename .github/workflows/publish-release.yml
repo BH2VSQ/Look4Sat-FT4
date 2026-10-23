@@ -11,7 +11,7 @@ name: Build Look4Sat APK
 # Test builds and official releases share the same versionCode sequence. Test APKs add ".test.<run_number>"
 # to versionName; official release tags and versionName still use the version catalog.
 # Changes to the version catalog happen only in the runner's checkout, NOT in Git.
-# Local Gradle builds keep using the catalog unchanged. Runs are manual only.
+# Local Gradle builds keep using the catalog unchanged. Most runs are manual; only the specific release commit has a guarded push trigger.
 
 on:
   # One-shot v16.2 release automation; only the specific release commit runs on push.
@@ -38,7 +38,7 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'release: v4.4.8-ba7opf.16.2') }}
+    if: "${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'release: v4.4.8-ba7opf.16.2') }}"
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -206,7 +206,7 @@ jobs:
           CODE: ${{ steps.version.outputs.code }}
           TAG: ${{ steps.version.outputs.tag }}
           ASSET: ${{ steps.version.outputs.asset }}
-          NOTES_IN: ${{ github.event_name == 'push' && 'v16.2: Added per-satellite transponder favorites with persistent star selection, priority sorting and favorite-first initial selection. Fixed LoTW PKCS12 certificate loading for empty-password files, with regression tests.' || inputs.notes }}
+          NOTES_IN: "${{ github.event_name == 'push' && 'v16.2: Added per-satellite transponder favorites with persistent star selection, priority sorting and favorite-first initial selection. Fixed LoTW PKCS12 certificate loading for empty-password files, with regression tests.' || inputs.notes }}"
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
