@@ -54,6 +54,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalBottomSheetProperties
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -66,6 +67,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -407,12 +409,15 @@ fun SharedDialog(
     dismissOnClickOutside: Boolean = true,
     /** Whether system back dismisses this dialog. */
     dismissOnBackPress: Boolean = true,
+    /** Whether a downward drag may dismiss this sheet. */
+    dismissOnSwipe: Boolean = true,
     content: @Composable (padding: Dp) -> Unit
 ) {
     DialogShell(
         onDismissRequest = onDismissRequest,
         dismissOnClickOutside = dismissOnClickOutside,
-        dismissOnBackPress = dismissOnBackPress
+        dismissOnBackPress = dismissOnBackPress,
+        dismissOnSwipe = dismissOnSwipe
     ) { padding ->
         // Measured width of the optional second leading button. A spacer of the same width goes
         // after the title so the two sides of the header stay balanced: without it the title
@@ -470,10 +475,19 @@ private fun DialogShell(
     onDismissRequest: () -> Unit,
     dismissOnClickOutside: Boolean = true,
     dismissOnBackPress: Boolean = true,
+    dismissOnSwipe: Boolean = true,
     content: @Composable (padding: Dp) -> Unit
 ) {
     val padding = LocalSpacing.current.large
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // Keep the latest policy in the state callback. Without this, a state remembered while idle
+    // could continue to allow a drag to Hidden after an operation starts.
+    val allowSwipeDismiss by rememberUpdatedState(dismissOnSwipe)
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { targetValue ->
+            targetValue != SheetValue.Hidden || allowSwipeDismiss
+        }
+    )
     val stopSheetFling = remember {
         object : NestedScrollConnection {
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {

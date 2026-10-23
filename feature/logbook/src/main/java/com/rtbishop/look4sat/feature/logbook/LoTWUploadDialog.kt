@@ -1,5 +1,9 @@
 package com.rtbishop.look4sat.feature.logbook
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,10 +62,69 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 
+private data class PendingBackgroundSync(
+    val provider: LogbookSyncProvider,
+    val mode: String,
+    val callsign: String = "",
+    val password: String = ""
+)
+
 @Composable
 internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var pendingBackgroundSync by remember { mutableStateOf<PendingBackgroundSync?>(null) }
+
+    fun startBackgroundSync(request: PendingBackgroundSync) {
+        try {
+            LogbookBackgroundSyncController.start(
+                context = context,
+                provider = request.provider,
+                mode = request.mode,
+                callsign = request.callsign,
+                password = request.password
+            )
+            Toast.makeText(context, R.string.logbook_sync_started, Toast.LENGTH_LONG).show()
+            onAction(LogbookAction.DismissLoTWAfterBackgroundStart)
+        } catch (_: Exception) {
+            Toast.makeText(context, R.string.logbook_sync_start_failed, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val request = pendingBackgroundSync
+        pendingBackgroundSync = null
+        if (request == null) return@rememberLauncherForActivityResult
+        if (granted) {
+            startBackgroundSync(request)
+        } else {
+            Toast.makeText(
+                context,
+                R.string.logbook_sync_notification_permission_required,
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    fun requestBackgroundSync(
+        provider: LogbookSyncProvider,
+        mode: String,
+        callsign: String = "",
+        password: String = ""
+    ) {
+        val request = PendingBackgroundSync(provider, mode, callsign, password)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingBackgroundSync = request
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            startBackgroundSync(request)
+        }
+    }
+
     var certificateBytes by remember { mutableStateOf<ByteArray?>(null) }
     var password by remember { mutableStateOf("") }
     var accountCallsign by rememberSaveable { mutableStateOf(state.lotwSettings.callsign) }
@@ -136,6 +199,12 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
     val audit = state.lotwAudit
     val pendingCount = audit?.pending ?: 0
     val unavailable = stringResource(R.string.logbook_value_unavailable)
+    // Handle Back from the parent composition, rather than relying on the sheet's content tree.
+    // While an operation is active, consume it and keep both the sheet and its ViewModel alive.
+    BackHandler(enabled = true) {
+        if (!busy) onAction(LogbookAction.DismissLoTW)
+    }
+
     SharedDialog(
         title = stringResource(R.string.logbook_sync),
         // Never let Back bubble to the navigation host while this drawer is open.
@@ -144,12 +213,9 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
         dismissOnClickOutside = !busy,
         // Back is handled manually below. If the sheet is allowed to own it, some
         // Compose/Navigation combinations deliver the event to the underlying page.
-        dismissOnBackPress = false
+        dismissOnBackPress = false,
+        dismissOnSwipe = !busy
     ) { padding ->
-            BackHandler(enabled = true) {
-                if (!busy) onAction(LogbookAction.DismissLoTW)
-                // While a request is active, consume Back without dismissing or cancelling it.
-            }
             val scheme = MaterialTheme.colorScheme
             val lock = state.logbookSourceLock
             val lotwBlocked = lock != null && lock != LogbookSyncProvider.LOTW
@@ -201,14 +267,11 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
                     onPasswordChange = { accountPassword = it },
                     busy = busy,
                     onSync = { mode ->
-                        onAction(
-                            LogbookAction.SyncLoTW(
-                                com.rtbishop.look4sat.core.domain.model.LoTWSettings(
-                                    accountCallsign,
-                                    accountPassword
-                                ),
-                                mode
-                            )
+                        requestBackgroundSync(
+                            provider = LogbookSyncProvider.LOTW,
+                            mode = mode.name,
+                            callsign = accountCallsign,
+                            password = accountPassword
                         )
                     }
                 )
@@ -360,11 +423,11 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
                         onSelectStation = { onAction(LogbookAction.SelectWavelogStation(it)) },
                         onFullSync = {
                             onAction(LogbookAction.SaveWavelogSettings(state.wavelogSettings.copy(url = wavelogUrl.trim(), apiKey = wavelogApiKey.trim())))
-                            onAction(LogbookAction.SyncWavelog(WavelogSyncMode.Full))
+                            requestBackgroundSync(LogbookSyncProvider.WAVELOG, WavelogSyncMode.Full.name)
                         },
                         onIncrementalSync = {
                             onAction(LogbookAction.SaveWavelogSettings(state.wavelogSettings.copy(url = wavelogUrl.trim(), apiKey = wavelogApiKey.trim())))
-                            onAction(LogbookAction.SyncWavelog(WavelogSyncMode.Incremental))
+                            requestBackgroundSync(LogbookSyncProvider.WAVELOG, WavelogSyncMode.Incremental.name)
                         },
                         onClear = { showWavelogClearConfirm = true },
                         busy = busy

@@ -85,4 +85,23 @@
     <string name="logbook_sync_source_conflict_title">无法切换同步来源</string>
     <string name="logbook_sync_source_conflict_wavelog">Lotw日志与Wavelog日志不可共存，请先清空日志本再拉取Wavelog</string>
     <string name="logbook_sync_source_conflict_lotw">Lotw日志与Wavelog日志不可共存，请先清空日志本再拉取Lotw</string>
+    <string name="logbook_sync_started">日志同步已开始，你可以切换到其他应用继续使用手机。</string>
+    <string name="logbook_sync_start_failed">无法启动后台日志同步。</string>
+    <string name="logbook_sync_notification_permission_required">请允许通知权限，以便查看后台同步进度。同步尚未开始。</string>
+    <string name="logbook_sync_notification_channel">日志同步</string>
+    <string name="logbook_sync_notification_title">日志同步</string>
+    <string name="logbook_sync_notification_preparing">正在准备日志同步…</string>
+    <string name="logbook_sync_notification_connecting">正在连接 LoTW…</string>
+    <string name="logbook_sync_notification_downloading">正在下载 LoTW 确认记录…</string>
+    <string name="logbook_sync_notification_saving">正在保存同步后的日志记录…</string>
+    <string name="logbook_sync_notification_wavelog">正在与 Wavelog 同步记录…</string>
+    <string name="logbook_sync_notification_done">日志同步已完成</string>
+    <string name="logbook_sync_notification_failed">同步失败</string>
+    <string name="logbook_sync_notification_qso_progress">本次同步 %1$d 条 QSO · 预计剩余 %2$s</string>
+    <string name="logbook_sync_notification_qso_estimate">本次同步 %1$d 条 QSO · 正在估算剩余时间</string>
+    <string name="logbook_sync_notification_qso_saving">本次同步 %1$d 条 QSO · 正在保存记录</string>
+    <string name="logbook_sync_notification_connecting_detail">正在连接 LoTW · 正在获取 QSO 数量</string>
+    <string name="logbook_sync_notification_wavelog_progress">正在与 Wavelog 同步记录 · 正在估算 QSO 数量和剩余时间</string>
+    <string name="logbook_sync_notification_remaining_seconds">%1$d 秒</string>
+    <string name="logbook_sync_notification_remaining_minutes">%1$d 分 %2$02d 秒</string>
 </resources>
