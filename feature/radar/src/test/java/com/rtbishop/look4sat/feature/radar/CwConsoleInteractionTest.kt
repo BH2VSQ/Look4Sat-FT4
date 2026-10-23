@@ -39,7 +39,8 @@ class CwConsoleInteractionTest {
             call(method.name)
         } as T
 
-    private fun openConsole(dark: Boolean = true, fontScale: Float = 1f) {
+    private fun openConsole(dark: Boolean = true, fontScale: Float = 1f,
+        presets:List<String> = CwTransmitPresets.defaults) {
         val qso = stub<IQsoRepository> { if (it == "getRecords") MutableStateFlow<List<QsoRecord>>(emptyList()) else null }
         val lotw = stub<ILoTWUploadRepository> { if (it == "satelliteCatalog") emptyList<String>() else null }
         val upload = stub<IWavelogUploadRepository> { null }
@@ -53,9 +54,9 @@ class CwConsoleInteractionTest {
         }
         val vm = LogViewModel(qso, lotw, upload, settings).also { viewModel = it }
         val state = mutableStateOf(RadarState(cwConsole = CwConsoleState(draft = CwConsoleDraft(myCallsign = "BA7OPF")),
-            radioControl = RadioControlSubState(
+            radioControl = RadioControlSubState(cwPresets=presets,
             remoteRadio = RemoteRadioState(capabilities = RemoteRadioCapabilities(10,92,10,45,1500,
-                18000000,1300000000,15,9,true,true,true,true,false,false,cwOptions = true),
+                18000000,1300000000,15,9,true,true,true,true,false,false,cwOptions = true,handsetMacros = true),
                 nativeCwOptions = NativeCwOptions(), connected = true, transmitStateKnown = true))))
         compose.setContent {
             MainTheme(isDarkTheme = dark) {
@@ -95,6 +96,21 @@ class CwConsoleInteractionTest {
         val options = compose.onNodeWithText("CW settings").fetchSemanticsNode().boundsInRoot
         assertEquals(send.height, stop.height, 0.5f)
         assertEquals(send.height, options.height, 0.5f)
+    }
+
+    @Test fun syncPlainPresetsFromCwSettingsDispatchesWithoutSendingCw() {
+        openConsole()
+        compose.onNodeWithText("CW settings").performClick()
+        compose.onNodeWithText("Sync F1–F4").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf(RadarAction.SyncHandsetCwPresets),actions) }
+    }
+
+    @Test fun syncWithTemplateShowsErrorWithoutDispatchingOrCrashing() {
+        openConsole(presets=listOf("{CALL}","DE","K","RR"))
+        compose.onNodeWithText("CW settings").performClick()
+        compose.onNodeWithText("Sync F1–F4").performScrollTo().performClick()
+        compose.onAllNodesWithText("F1 contains variables; handset sync requires plain text").onLast().assertExists()
+        compose.runOnIdle { assertTrue(actions.isEmpty()) }
     }
 
     @Test fun callsignVariablesUseSharedLogInputWhenPresetIsSelected() {

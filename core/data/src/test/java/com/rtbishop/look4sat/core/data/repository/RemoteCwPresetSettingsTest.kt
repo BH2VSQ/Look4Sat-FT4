@@ -7,6 +7,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RemoteCwPresetSettingsTest {
+    @Test fun seriousInitializationFailuresAreNotReplacedWithDefaultPresets() {
+        val prefs=Proxy.newProxyInstance(javaClass.classLoader,arrayOf(SharedPreferences::class.java)) { _,_,_ ->
+            throw NoClassDefFoundError("template initialization failed")
+        } as SharedPreferences
+        assertThrows(NoClassDefFoundError::class.java) {readRemoteCwPresets(prefs)}
+    }
+    @Test fun legacyWrongPreferenceTypeStillFallsBackSafely() {
+        val prefs=Proxy.newProxyInstance(javaClass.classLoader,arrayOf(SharedPreferences::class.java)) { _,_,_ ->
+            throw ClassCastException("legacy non-string preference")
+        } as SharedPreferences
+        assertEquals(CwTransmitPresets.defaults,readRemoteCwPresets(prefs))
+    }
     @Test fun templatesPersistWithoutExpansionOrChangingExistingKeys() {
         val values = mutableMapOf("remoteCwPreset1" to "CQ DE BA7OPF")
         writeRemoteCwPreset(preferences(values), 0, "{call} de {mycall} ur {rst} {grid}")

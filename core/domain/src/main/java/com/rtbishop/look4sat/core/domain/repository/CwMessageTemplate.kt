@@ -13,7 +13,7 @@ class CwTemplateException(val variable: String, val missing: Boolean) :
     IllegalArgumentException(if (missing) "Missing $variable" else "Unknown CW variable {$variable}")
 
 object CwMessageTemplate {
-    private val token = Regex("\\{([^{}]*)}")
+    private val token = Regex("\\{([^{}]*)\\}")
     val variables = listOf("CALL", "MYCALL", "RST", "GRID")
 
     fun normalize(text: String): String {

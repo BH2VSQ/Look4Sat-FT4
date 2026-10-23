@@ -45,6 +45,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Check CW templates with native ICU
+        shell: pwsh
+        run: python tools/check-cw-template-icu.py
+
       - name: Install pinned Android native tools
         shell: pwsh
         run: |
