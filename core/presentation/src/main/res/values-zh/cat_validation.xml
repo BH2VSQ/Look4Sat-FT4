@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rc_config_error_title">电台配置错误</string>
+    <string name="rc_config_error_hint">可以返回修改，或忽略并保存。无效数值会使用安全默认值或限制值；保存不会连接电台。</string>
+    <string name="rc_config_ignore_save">忽略并保存</string>
+    <string name="rc_config_modify">修改</string>
+    <string name="rc_config_device_required">请至少选择一个电台设备。</string>
+    <string name="rc_config_bluetooth_address">蓝牙设备地址格式错误。</string>
+    <string name="rc_config_duplicate_device">TX 与 RX 选择了同一设备，请选择单机模式或不同设备。</string>
+    <string name="rc_config_doppler_step">多普勒步进须为 10–10000 Hz，且为 10 的倍数。</string>
+    <string name="rc_config_correction_step">修正步进须为 10–1000 Hz，且为 10 的倍数。</string>
+    <string name="rc_config_timing">稳定等待须为 0–10000 毫秒，线性死区 1–10000 Hz，FM 死区 10–100000 Hz，共享总线间隔 0–2000 毫秒。</string>
+    <string name="rc_manual_half_duplex">请在电台上预设收发模式；软件不自动开启异频或卫星模式。</string>
+</resources>

@@ -130,7 +130,7 @@ data class RadioControlSettings(
     val txRadioName: String,
     val rxRadioName: String,
     val baudRate: Int,
-    /** Use one Icom radio with VFO-A/B split or supported satellite MAIN/SUB control. */
+    /** One radio: automatic split where supported, otherwise a manually preset half-duplex radio. */
     val splitMode: Boolean = false,
     val catTransport: String = TRANSPORT_BLUETOOTH,
     /** Dedicated satellite MAIN/SUB when supported; ordinary VFO-A/B split otherwise. */
@@ -167,13 +167,15 @@ data class RadioControlSettings(
         const val TRANSPORT_BLUETOOTH = "BLUETOOTH"
         const val TRANSPORT_USB = "USB"
         const val TRANSPORT_TCP = "TCP"
+        /** Audio-driven operation without CAT frequency or PTT commands. */
+        const val TRANSPORT_VOX = "VOX"
         const val TCP_PROTOCOL_RAW_CAT = "RAW_CAT"
         const val TCP_PROTOCOL_HAMLIB = "HAMLIB_RIGCTLD"
         const val DUPLEX_MODE_SPLIT = "SPLIT"
         const val DUPLEX_MODE_SATELLITE = "SATELLITE"
 
         val SUPPORTED_RADIOS = RadioModelCatalog.supportedModels
-        val SUPPORTED_TRANSPORTS = listOf(TRANSPORT_BLUETOOTH, TRANSPORT_USB, TRANSPORT_TCP)
+        val SUPPORTED_TRANSPORTS = listOf(TRANSPORT_BLUETOOTH, TRANSPORT_USB, TRANSPORT_TCP, TRANSPORT_VOX)
         val SUPPORTED_TCP_PROTOCOLS = listOf(TCP_PROTOCOL_RAW_CAT, TCP_PROTOCOL_HAMLIB)
 
     }
