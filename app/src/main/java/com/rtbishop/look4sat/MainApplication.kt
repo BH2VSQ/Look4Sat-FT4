@@ -20,6 +20,12 @@ package com.rtbishop.look4sat
 import android.app.Activity
 import android.app.Application
 import android.app.Application.ActivityLifecycleCallbacks
+import android.content.Intent
+import androidx.core.content.ContextCompat
+import com.rtbishop.look4sat.core.domain.model.LoTWSettings
+import com.rtbishop.look4sat.core.domain.repository.ILoTWForegroundSyncLauncher
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundStatus
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundSyncStatus
 import android.os.Bundle
 import com.rtbishop.look4sat.core.data.injection.MainContainer
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
@@ -37,11 +43,38 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-class MainApplication : Application(), IContainerProvider {
+class MainApplication : Application(), IContainerProvider, ILoTWForegroundSyncLauncher {
 
     private lateinit var container: IMainContainer
 
     override fun getMainContainer(): IMainContainer = container
+
+    override fun startManualLoTWSync(account: LoTWSettings, mode: LoTWSyncMode): Boolean {
+        if (!account.isConfigured || LoTWForegroundSyncStatus.state.value.running) return false
+        // Save the just-entered credentials in the existing encrypted settings
+        // store. Never put a password or callsign into a service Intent.
+        container.settingsRepo.updateLoTWSettings(account)
+        LoTWForegroundSyncStatus.publish(LoTWForegroundStatus(running = true, mode = mode,
+            message = "Preparing LoTW synchronization"))
+        return runCatching {
+            ContextCompat.startForegroundService(this, Intent(this, LoTWForegroundSyncService::class.java).apply {
+                action = LoTWForegroundSyncService.ACTION_MANUAL
+                putExtra(LoTWForegroundSyncService.EXTRA_MODE, mode.name)
+            })
+            true
+        }.getOrElse { e ->
+            android.util.Log.w("LoTWForegroundSync", "Unable to start foreground service", e)
+            LoTWForegroundSyncStatus.publish(
+                LoTWForegroundStatus(message = "Unable to start background LoTW synchronization"))
+            false
+        }
+    }
+
+    override fun cancelManualLoTWSync() {
+        startService(Intent(this, LoTWForegroundSyncService::class.java).apply {
+            action = LoTWForegroundSyncService.ACTION_CANCEL
+        })
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -49,8 +82,8 @@ class MainApplication : Application(), IContainerProvider {
         clearAmSatCacheOnAppBackground()
         // trigger automatic update every 48 hours
         container.appScope.launch { checkAutoUpdate() }
-        // automatic LoTW grid sync on every app start (gated, see checkLoTWAutoSync)
-        container.appScope.launch { checkLoTWAutoSync() }
+        // LoTW foreground data-sync starts from the first visible Activity,
+        // not Application.onCreate, to respect Android 12+ FGS launch limits.
         // repair logbooks split by the old name/band identity mismatch, independent of
         // whether a sync is due (cheap read + in-memory match on every start)
         container.appScope.launch { runCatching { container.qsoRepository.consolidateConfirmations() } }
@@ -65,6 +98,7 @@ class MainApplication : Application(), IContainerProvider {
             override fun onActivityStarted(activity: Activity) {
                 if (startedActivityCount == 0) {
                     container.appScope.launch { container.amSatRepo.prefetchStatus() }
+                    container.appScope.launch { checkLoTWAutoSync() }
                 }
                 startedActivityCount += 1
             }
@@ -105,36 +139,22 @@ class MainApplication : Application(), IContainerProvider {
      */
     private suspend fun checkLoTWAutoSync(timeNow: Long = System.currentTimeMillis()) {
         val settingsRepo = container.settingsRepo
-        // One-of-two rule: while Wavelog is configured the app uploads/syncs through
-        // Wavelog only — the automatic LoTW sync stays off.
         if (settingsRepo.wavelogUploadSettings.value.isReady) return
-        val lotwSettings = settingsRepo.lotwSettings.value
+        val account = settingsRepo.lotwSettings.value
         if (!shouldAutoSyncLoTW(
-                isConfigured = lotwSettings.isConfigured,
+                isConfigured = account.isConfigured,
                 autoLotwSyncEnabled = settingsRepo.otherSettings.value.stateOfAutoLotwSync,
                 lastSyncDate = settingsRepo.getLastLotwSyncDate(),
                 today = lotwSyncToday(timeNow)
-            )
-        ) return
-        val callsign = lotwSettings.callsign.trim().uppercase()
-        val mode = resolveLoTWSyncMode(settingsRepo.getLastLotwSyncCallsign(), callsign, requested = null)
-        val since = if (mode == LoTWSyncMode.Incremental) lotwIncrementalSince(settingsRepo) else ""
-        println("Started periodic LoTW grid sync (${mode.name.lowercase()})")
-        val result = container.lotwRepo.fetchConfirmedGridQsos(callsign, lotwSettings.password, since)
-        if (result is LoTWResult.Success) {
-            // Full synchronization never deletes the old download before a
-            // successful fetch; database replacement is atomic and provider-scoped.
-            val confirmed = result.qsos.values.flatten().map { it.toConfirmedRecord(callsign) }
-            try {
-                container.qsoRepository.mergeLoTW(confirmed, callsign, mode == LoTWSyncMode.Full)
-            } catch (error: Exception) {
-                println("Periodic LoTW logbook sync failed; old records retained: $error")
-                return
-            }
-            val count = applyLoTWGridResult(settingsRepo, result, mode, callsign, timeNow)
-            println("Periodic LoTW grid sync finished: $count worked grids")
-        } else {
-            println("Periodic LoTW grid sync skipped (${result::class.simpleName})")
-        }
+            )) return
+        // The service repeats the eligibility check inside its own job to
+        // avoid a duplicate request after Activity navigation/recreation.
+        if (LoTWForegroundSyncStatus.state.value.running) return
+        runCatching {
+            ContextCompat.startForegroundService(this, Intent(this, LoTWForegroundSyncService::class.java).apply {
+                action = LoTWForegroundSyncService.ACTION_AUTO
+            })
+        }.onFailure { android.util.Log.w("LoTWForegroundSync", "Automatic sync could not start", it) }
     }
+
 }

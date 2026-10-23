@@ -80,6 +80,8 @@ import com.rtbishop.look4sat.core.domain.predict.GeoPos
 import com.rtbishop.look4sat.core.domain.repository.CompassAccuracy
 import com.rtbishop.look4sat.core.domain.repository.IContainerProvider
 import com.rtbishop.look4sat.core.domain.repository.LoTWSyncMode
+import com.rtbishop.look4sat.core.domain.repository.ILoTWForegroundSyncLauncher
+import com.rtbishop.look4sat.core.domain.repository.LoTWForegroundSyncStatus
 import com.rtbishop.look4sat.core.domain.repository.WavelogSyncMode
 import com.rtbishop.look4sat.core.presentation.CardButton
 import com.rtbishop.look4sat.core.presentation.SharedDialog
@@ -127,6 +129,29 @@ private fun SettingsScreen(
     onFixStationGrid: (List<String>) -> Unit = {},
     onClearStationGridPrefill: () -> Unit = {}
 ) {
+    val foregroundStatus by LoTWForegroundSyncStatus.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val syncLauncher = context.applicationContext as? ILoTWForegroundSyncLauncher
+    // Android 13+ requires notification permission for the progress item to
+    // appear in the status bar. A denial must not cancel the data-sync job;
+    // Android still exposes the foreground service via its task manager.
+    val pendingLoTWStart = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        pendingLoTWStart.value?.invoke()
+        pendingLoTWStart.value = null
+    }
+    fun startWithNotificationConsent(block: () -> Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingLoTWStart.value = block
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else block()
+    }
+
     var showUpdateChecker by rememberSaveable { mutableStateOf(false) }
     var showMapSettings by rememberSaveable { mutableStateOf(false) }
     var showProjectWiki by rememberSaveable { mutableStateOf(false) }
@@ -302,15 +327,31 @@ private fun SettingsScreen(
         LoTWDialog(
             initialSettings = uiState.lotwSettings,
             workedGridsCount = uiState.workedGridsCount,
-            isSyncing = uiState.lotwSyncing,
-            syncMode = uiState.lotwSyncMode,
-            progress = uiState.lotwProgress,
-            message = lotwErrorMessage,
+            isSyncing = uiState.lotwSyncing || foregroundStatus.running,
+            syncMode = foregroundStatus.mode ?: uiState.lotwSyncMode,
+            progress = foregroundStatus.progress ?: uiState.lotwProgress,
+            message = foregroundStatus.message ?: lotwErrorMessage,
             dismiss = { dialogs.lotw = false },
-            onCancelSync = { onAction(SettingsAction.CancelLoTWSync); dialogs.lotw = false },
+            onCancelSync = {
+                if (foregroundStatus.running) syncLauncher?.cancelManualLoTWSync()
+                else onAction(SettingsAction.CancelLoTWSync)
+                dialogs.lotw = false
+            },
             onSave = { onAction(SettingsAction.UpdateLoTW(it)) },
-            onSyncFull = { onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Full)) },
-            onSyncIncremental = { onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Incremental)) }
+            onSyncFull = {
+                if (syncLauncher != null) {
+                    if (!foregroundStatus.running) startWithNotificationConsent {
+                        syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Full)
+                    }
+                } else onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Full))
+            },
+            onSyncIncremental = {
+                if (syncLauncher != null) {
+                    if (!foregroundStatus.running) startWithNotificationConsent {
+                        syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Incremental)
+                    }
+                } else onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Incremental))
+            }
         )
     }
     if (dialogs.logbook) {
