@@ -124,7 +124,8 @@ private data class PassScheduleCalculationKey(
     val selectedSatelliteIds: Set<Int>,
     val trackedSatelliteIds: Set<Int>,
     val minimumElevation: Float,
-    val satellitesFingerprint: Int
+    val satellitesFingerprint: Int,
+    val stationPosition: GeoPos
 )
 
 private object PassSchedulePassCache {
@@ -473,13 +474,17 @@ fun PassScheduleDestination(
         satellites,
         currentlyTrackedIds,
         config.satelliteIds,
-        config.minimumElevation
+        config.minimumElevation,
+        stationPosition.latitude,
+        stationPosition.longitude,
+        stationPosition.altitude
     ) {
         PassScheduleCalculationKey(
             selectedSatelliteIds = config.satelliteIds,
             trackedSatelliteIds = currentlyTrackedIds.toSet(),
             minimumElevation = config.minimumElevation,
-            satellitesFingerprint = satellites.hashCode()
+            satellitesFingerprint = satellites.hashCode(),
+            stationPosition = GeoPos(stationPosition.latitude, stationPosition.longitude, stationPosition.altitude)
         )
     }
     // Restore previously calculated rows immediately when returning from pass details.
@@ -499,7 +504,7 @@ fun PassScheduleDestination(
     // Completed passes drop off the list the moment LOS passes. The schedule is only
     // recalculated on user changes, so filter against the ticking clock instead of
     // recomputing predictions every second.
-    val visiblePasses by remember {
+    val visiblePasses by remember(passCalculationKey) {
         derivedStateOf { passes.filter { it.losTime > currentTime } }
     }
     val scheduleDays = remember(visiblePasses, isUtc, stationPosition) {
@@ -548,7 +553,7 @@ fun PassScheduleDestination(
         } else {
             isCalculating = true
             try {
-                if (config.satelliteIds.isEmpty()) {
+                val calculated = if (config.satelliteIds.isEmpty()) {
                     emptyList()
                 } else {
                     container.satelliteRepo.getSchedulePasses(
@@ -558,12 +563,13 @@ fun PassScheduleDestination(
                         minElevation = config.minimumElevation.toDouble()
                     )
                 }
+                PassSchedulePassCache.put(passCalculationKey, calculated)
+                calculated
             } finally {
                 isCalculating = false
             }
         }
         passes = calculatedPasses
-        PassSchedulePassCache.put(passCalculationKey, calculatedPasses)
         PassScheduleStore.saveConfig(context, config)
         // Refresh alarms when reminders change, reusing cached predictions when possible.
         PassScheduleNotificationScheduler.replacePasses(context, config, calculatedPasses)
