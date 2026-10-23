@@ -65,6 +65,22 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioTrackingServiceTest {
+    @Test fun openingProfilesPublishesTheLiveControllerSnapshotBeforeReading()=runTest {
+        val remote=MutableStateFlow(RemoteRadioState(connected=true,session=41,capabilities=
+            RemoteRadioCapabilities(10,92,10,45,1500,18000000,1300000000,15,9,
+                true,true,true,true,false,false,transactionalProfileStore=true)))
+        val tx=FakeRadioController(remote=remote)
+        val fixture=Fixture(backgroundScope,tx,FakeRadioController(),
+            radioModel=RadioControlSettings.MODEL_QUANSHENG_UVK1)
+        fixture.service.connectRadios()
+        // This stub has no profile storage response; the link must still stay online.
+        assertFalse(fixture.service.refreshRadioProfiles())
+        assertEquals(41L,fixture.service.state.value.remoteRadio?.session)
+        assertTrue(fixture.service.state.value.remoteRadio?.connected==true)
+        assertTrue(fixture.service.state.value.txConnected)
+        assertTrue(fixture.service.profileManagerState.value.error?.contains("profile status")==true)
+        fixture.close()
+    }
     @Test fun n76UsesAtomicNativeTrackingAndDoesNotApplyTheL4s250HzQuantizer() = runTest {
         val remote = remoteFixtureState().also { flow ->
             flow.value = flow.value.copy(capabilities = flow.value.capabilities!!.copy(

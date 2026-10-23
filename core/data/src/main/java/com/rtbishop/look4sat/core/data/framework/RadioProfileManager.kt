@@ -38,7 +38,7 @@ internal class RadioProfileManager(
         }
     }
     private fun radio():IRadioController {
-        val radio=checkNotNull(controller()?.takeIf {it.isConnected}) {"Connect the radio before managing profiles"}
+        val radio=checkNotNull(controller()?.takeIf {it.isConnected && it.remoteState?.value?.connected==true}) {"Connect the radio before managing profiles"}
         check(radio.remoteState?.value?.capabilities?.transactionalProfileStore==true) {"The connected radio does not support profile management"}
         return radio
     }
@@ -54,6 +54,10 @@ internal class RadioProfileManager(
             val initial=status(radio);check(!initial.busy){"Wait for the current profile operation"}
             val records=mutableListOf<StoredRadioProfile>()
             for(slot in 0..55) {
+                check(controller()===radio && radio.isConnected && radio.remoteState?.value?.connected==true) {
+                    "Radio disconnected; operation cancelled"
+                }
+                check(session==radio.remoteState?.value?.session) {"Radio session changed; refresh profiles again"}
                 val data=checkNotNull(radio.profileStoreCommand(byteArrayOf(1,slot.toByte()))){"Profile read failed; retry"}
                 check(data.size==88 && data[23].toInt()==slot){"Malformed profile record"}
                 RadioProfileRecordCodec.decode(slot,data.copyOfRange(24,88))?.let {records+=resolve(it)}

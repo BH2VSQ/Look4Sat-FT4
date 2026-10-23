@@ -15,6 +15,42 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RadioProfileManagerTest {
+    @Test fun attachedTransportWithoutLiveSessionCannotReadProfiles()=runTest {
+        val fixture=Fixture()
+        fixture.radio.remote.value=fixture.radio.remote.value.copy(connected=false)
+        assertFalse(fixture.manager.refresh())
+        assertEquals(0,fixture.radio.reads)
+        assertEquals("Connect the radio before managing profiles",fixture.manager.state.value.error)
+    }
+    @Test fun stalePresentationStateDoesNotBlockReadingTheLiveController()=runTest {
+        val fixture=Fixture();fixture.tracking=RadioTrackingState()
+        assertTrue(fixture.manager.refresh())
+        assertEquals(56,fixture.radio.reads)
+        assertEquals(1,fixture.manager.state.value.profiles.size)
+        assertEquals(0,fixture.radio.mutations)
+    }
+    @Test fun disconnectedReadKeepsPreviousListAndCanBeRetriedAfterReconnect()=runTest {
+        val fixture=Fixture();assertTrue(fixture.manager.refresh())
+        val previous=fixture.manager.state.value.profiles
+        fixture.radio.reads=0
+        fixture.radio.afterRead={slot->if(slot==2)fixture.radio.remote.value=fixture.radio.remote.value.copy(connected=false)}
+        assertFalse(fixture.manager.refresh())
+        assertEquals(3,fixture.radio.reads)
+        assertEquals(previous,fixture.manager.state.value.profiles)
+        assertEquals("Radio disconnected; operation cancelled",fixture.manager.state.value.error)
+        fixture.radio.afterRead={}
+        fixture.radio.remote.value=fixture.radio.remote.value.copy(connected=true,session=2)
+        assertTrue(fixture.manager.refresh())
+        assertNull(fixture.manager.state.value.error)
+    }
+    @Test fun changedSessionCannotMixRecordsFromTwoConnections()=runTest {
+        val fixture=Fixture()
+        fixture.radio.afterRead={slot->if(slot==2)fixture.radio.remote.value=fixture.radio.remote.value.copy(session=2)}
+        assertFalse(fixture.manager.refresh())
+        assertEquals(3,fixture.radio.reads)
+        assertTrue(fixture.manager.state.value.profiles.isEmpty())
+        assertEquals("Radio session changed; refresh profiles again",fixture.manager.state.value.error)
+    }
     @Test fun extendedCwBackupRequiresNewFirmwareBeforeAnyMutation()=runTest {
         val fixture=Fixture()
         val raw=RadioProfileRecordCodec.bytes(record().rawHex)
@@ -118,6 +154,8 @@ class RadioProfileManagerTest {
         private var staged=records.map {it.copyOf()}.toMutableList()
         var phase=0;var kind=0;var transaction=0L;var generation=1L;var next=0
         var mutations=0;var cancelCount=0;private var deleting=-1
+        var reads=0
+        var afterRead:(Int)->Unit={}
         val remote=MutableStateFlow(RemoteRadioState(connected=true,session=1,nativeProfileKey=record().key,capabilities=
             RemoteRadioCapabilities(10,92,10,45,1500,18000000,1300000000,15,9,true,true,true,true,false,false,
                 nativeSettings=true,satelliteProfiles=true,transactionalProfileStore=true)))
@@ -138,7 +176,7 @@ class RadioProfileManagerTest {
             output[4]=if(phase in 1..8)1 else 0;output[5]=records.count {row->row.any {it!=(-1).toByte()}}.toByte();output[6]=56
             L4sProtocol.put32(output,8,generation);L4sProtocol.put32(output,12,transaction)
             output[16]=next.toByte();L4sProtocol.put16(output,17,10);output[19]=kind.toByte()
-            if(data[0].toInt()==1){val slot=data[1].toInt();output[23]=slot.toByte();records[slot].copyInto(output,24)}
+            if(data[0].toInt()==1){val slot=data[1].toInt();output[23]=slot.toByte();records[slot].copyInto(output,24);reads++;afterRead(slot)}
             return output
         }
         fun confirm(){if(kind==2)records[deleting]=ByteArray(64){-1} else staged.forEachIndexed {i,row->records[i]=row};generation++;phase=9}

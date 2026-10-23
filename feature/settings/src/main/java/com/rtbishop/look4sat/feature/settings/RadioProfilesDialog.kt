@@ -53,6 +53,9 @@ internal fun RadioProfilesDialog(manager:RadioProfileManagerState,radio:RadioTra
     val disconnected=radio.remoteRadio?.connected!=true
     val unsupported=disconnected || radio.remoteRadio?.capabilities?.transactionalProfileStore!=true
     val busy=manager.loading || manager.status?.busy==true
+    LaunchedEffect(disconnected,radio.remoteRadio?.session,radio.remoteRadio?.capabilities?.transactionalProfileStore) {
+        if(!unsupported)action(SettingsAction.RefreshRadioProfiles)
+    }
     SharedDialog(title=stringResource(R.string.rc_l4s_profiles),onDismissRequest=onDismiss,onCancel=onDismiss) {padding->
         Column(modifier=Modifier.fillMaxWidth().heightIn(max=(androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp*0.65f).dp)
             .verticalScroll(rememberScrollState()).padding(padding),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -94,7 +97,7 @@ internal fun RadioProfilesDialog(manager:RadioProfileManagerState,radio:RadioTra
                     Text(stringResource(R.string.rc_l4s_send_for_confirmation))
                 }
             }
-            (ioError ?: (manager.error ?: manager.message).takeUnless {unsupported})?.let {Text(it,color=if(ioError!=null||manager.error!=null)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)}
+            (ioError ?: manager.error ?: manager.message.takeUnless {unsupported})?.let {Text(it,color=if(ioError!=null||manager.error!=null)MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)}
             Text(stringResource(R.string.rc_l4s_export_saved_only),style=MaterialTheme.typography.bodySmall)
         }
     }

@@ -105,6 +105,8 @@ class SettingsViewModel(
     private val defaultDataSettings = DataSettings(false, 0, 0, 0L)
     /** In-flight LoTW sync job, cancelled by CancelLoTWSync. */
     private var lotwSyncJob: kotlinx.coroutines.Job? = null
+    private var profileRefreshJob: kotlinx.coroutines.Job? = null
+    private var profileRefreshPending = false
     private var rawCompassHeading = sensorsRepo.sensorData.value.first
     private val _uiState = MutableStateFlow(
         SettingsState(
@@ -119,6 +121,8 @@ class SettingsViewModel(
             audioInputDevices = audioHub.inputDevices.value,
             rcSettings = settingsRepo.rcSettings.value,
             radioControlSettings = settingsRepo.radioControlSettings.value,
+            radioTrackingState = radioTrackingService.state.value,
+            radioProfiles = radioTrackingService.profileManagerState.value,
             rotatorSettings = settingsRepo.rotatorSettings.value,
             rotatorTrackingState = rotatorTrackingService.state.value,
             controlDiagnosticCount = controlDiagnostics.events.value.size,
@@ -366,7 +370,19 @@ class SettingsViewModel(
             is SettingsAction.UpdateRadioControl -> viewModelScope.launch {
                 if(!radioTrackingService.applyRadioControlSettings(action.settings))showToast("Stop transmitting before changing CAT settings")
             }
-            SettingsAction.RefreshRadioProfiles -> viewModelScope.launch {radioTrackingService.refreshRadioProfiles()}
+            SettingsAction.RefreshRadioProfiles -> {
+                _uiState.update { it.copy(radioTrackingState=radioTrackingService.state.value,
+                    radioProfiles=radioTrackingService.profileManagerState.value) }
+                profileRefreshPending=true
+                if(profileRefreshJob?.isActive!=true) profileRefreshJob=viewModelScope.launch {
+                    while(profileRefreshPending) {
+                        profileRefreshPending=false
+                        try { radioTrackingService.refreshRadioProfiles() }
+                        finally { _uiState.update { it.copy(radioTrackingState=radioTrackingService.state.value,
+                            radioProfiles=radioTrackingService.profileManagerState.value) } }
+                    }
+                }
+            }
             is SettingsAction.DeleteRadioProfile -> viewModelScope.launch {radioTrackingService.requestDeleteRadioProfile(action.slot)}
             is SettingsAction.ImportRadioProfiles -> viewModelScope.launch {radioTrackingService.prepareRadioProfileImport(action.json)}
             is SettingsAction.RestoreRadioProfiles -> viewModelScope.launch {radioTrackingService.stageRadioProfileImport(action.overwrite)}

@@ -162,7 +162,23 @@ class RadioTrackingService(
         }
     }
     override val profileManagerState get()=profiles.state
-    override suspend fun refreshRadioProfiles()=profiles.refresh()
+    override suspend fun refreshRadioProfiles():Boolean {
+        connectionMutex.withLock {
+            val radio=txController
+            radio?.remoteState?.value?.let { remote ->
+                val connected=radio.isConnected && remote.connected
+                _state.update { it.copy(remoteRadio=remote.copy(connected=connected),
+                    txConnected=connected,rxConnected=connected,physicalConnectionCount=if(connected)1 else 0) }
+            }
+            diagnose("profiles/refresh/start", "controller=${radio!=null} transport=${radio?.isConnected==true} " +
+                "remote=${radio?.remoteState?.value?.connected==true} store=${radio?.remoteState?.value?.capabilities?.transactionalProfileStore==true}")
+        }
+        val result=profiles.refresh()
+        diagnose("profiles/refresh/result", "success=$result count=${profiles.state.value.profiles.size} " +
+            "error=${profiles.state.value.error.orEmpty()}",
+            if(result) ControlDiagnosticSeverity.INFO else ControlDiagnosticSeverity.ERROR)
+        return result
+    }
     override suspend fun requestDeleteRadioProfile(slot:Int):Boolean {
         val key=profiles.state.value.profiles.find {it.slot==slot}?.key
         val result=profiles.delete(slot)
