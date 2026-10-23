@@ -95,7 +95,7 @@ internal object L4sProtocol {
             u16(data,9).toLong(),data[11].toInt() and 255,data[12].toInt() and 255,data[13].toInt() and 255,
             u16(data,14),u32(data,16),u32(data,20),data[40].toInt() and 255,data[41].toInt() and 255,
             bits and 1!=0,bits and 2!=0,bits and 4!=0,bits and 8!=0,bits and 16!=0,bits and 32!=0,bits and 64!=0,bits and 128!=0,bits and 256!=0,bits and 512!=0,
-            bits and 1024!=0,bits and 2048!=0,bits and 8192!=0
+            bits and 1024!=0,bits and 2048!=0,bits and 8192!=0,if(bits and 16384!=0)4 else 8
         )
         if(caps.frequencyStepHz!=10L || caps.maxCwText !in 1..92 || caps.minimumWpm !in 1..45 ||
             caps.maximumWpm !in caps.minimumWpm..45 || caps.watchdogMillis!=1500 || !caps.atomicPair) return null

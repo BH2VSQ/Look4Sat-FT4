@@ -56,8 +56,6 @@ data class SettingsState(
     val rcSettings: RCSettings,
     val radioControlSettings: RadioControlSettings,
     val radioTrackingState: com.rtbishop.look4sat.core.domain.repository.RadioTrackingState = com.rtbishop.look4sat.core.domain.repository.RadioTrackingState(),
-    val radioProfiles: com.rtbishop.look4sat.core.domain.repository.RadioProfileManagerState = com.rtbishop.look4sat.core.domain.repository.RadioProfileManagerState(),
-    val radioProfilesExport: String? = null,
     val controlDiagnosticCount: Int = 0,
     val controlDiagnosticsExportText: String? = null,
     val dataSourcesSettings: DataSourcesSettings,
@@ -134,14 +132,6 @@ sealed interface LoTWError {
 enum class LoTWUploadError { PASSWORD, INVALID_FILE, EXPIRED, FORMAT, UNKNOWN }
 
 sealed interface SettingsAction {
-    data object RefreshRadioProfiles : SettingsAction
-    data class DeleteRadioProfile(val slot: Int) : SettingsAction
-    data class ImportRadioProfiles(val json: String) : SettingsAction
-    data class RestoreRadioProfiles(val overwrite: Set<String>) : SettingsAction
-    data object CancelRadioProfileOperation : SettingsAction
-    data object ExportRadioProfiles : SettingsAction
-    data object ConsumeRadioProfilesExport : SettingsAction
-    data class SetRadioProfileAlias(val key: String, val alias: String) : SettingsAction
     data object ExportControlDiagnostics : SettingsAction
     data object ClearControlDiagnostics : SettingsAction
     data object ConsumeControlDiagnosticsExport : SettingsAction

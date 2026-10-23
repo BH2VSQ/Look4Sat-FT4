@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="rc_config_error_title">Radio configuration error</string>
+    <string name="rc_config_error_hint">Modify the configuration, or save it anyway. Invalid numeric values use safe defaults or limits; saving does not connect the radio.</string>
+    <string name="rc_config_ignore_save">Ignore and save</string>
+    <string name="rc_config_modify">Modify</string>
+    <string name="rc_config_device_required">Select at least one radio device.</string>
+    <string name="rc_config_bluetooth_address">The Bluetooth device address is invalid.</string>
+    <string name="rc_config_duplicate_device">TX and RX use the same device. Select single-radio mode or separate devices.</string>
+    <string name="rc_config_doppler_step">Doppler step must be 10–10000 Hz, in multiples of 10.</string>
+    <string name="rc_config_correction_step">Correction step must be 10–1000 Hz, in multiples of 10.</string>
+    <string name="rc_config_timing">Settle time: 0–10000 ms; linear deadband: 1–10000 Hz; FM deadband: 10–100000 Hz; bus delay: 0–2000 ms.</string>
+    <string name="rc_manual_half_duplex">Preset the radio’s TX/RX mode on the radio. Software does not enable split or satellite mode.</string>
+</resources>

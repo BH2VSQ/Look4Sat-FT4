@@ -4,6 +4,7 @@ import com.rtbishop.look4sat.core.domain.repository.PttState
 import com.rtbishop.look4sat.core.domain.repository.RadioTransmitOwner
 import com.rtbishop.look4sat.core.domain.repository.RemoteRadioCapabilities
 import com.rtbishop.look4sat.core.domain.repository.RemoteRadioState
+import com.rtbishop.look4sat.core.domain.model.RadioControlSettings
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,7 +16,7 @@ class L4sCwAvailabilityTest {
         assertTrue(legacy.copy(serviceEditingLocked=true).frequencyEditingLocked)
         assertTrue(legacy.copy(pttState=PttState.ARMING).frequencyEditingLocked)
         assertTrue(legacy.copy(pttState=PttState.ON).frequencyEditingLocked)
-        assertTrue(legacy.copy(transmitOwner=RadioTransmitOwner.VOICE).frequencyEditingLocked)
+        assertTrue(legacy.copy(transmitOwner=RadioTransmitOwner.CW).frequencyEditingLocked)
     }
     private val capabilities = RemoteRadioCapabilities(10,92,10,45,1500,18000000,1300000000,15,9,
         true,true,true,true,false,false)
@@ -23,12 +24,14 @@ class L4sCwAvailabilityTest {
         txPanel=RadioPanelState("TX",mode="CW"),
         remoteRadio=RemoteRadioState(connected=true,capabilities=capabilities,txEnabled=true))
 
-    @Test fun disabledCatHidesRemoteControlsEvenWithStaleConnectedState() {
-        val control = ready.copy(catEnabled=false)
-        assertFalse(control.remoteControlsVisible)
-        assertFalse(control.voicePttVisible)
-        assertFalse(control.stopRemoteTxVisible)
-        assertFalse(control.canSendL4sCw())
+    @Test fun disabledCatAndVoxHideRemoteControlsEvenWithStaleConnectedState() {
+        for (control in listOf(ready.copy(catEnabled=false),
+            ready.copy(catTransport=RadioControlSettings.TRANSPORT_VOX))) {
+            assertFalse(control.remoteControlsVisible)
+            assertFalse(control.voicePttVisible)
+            assertFalse(control.stopRemoteTxVisible)
+            assertFalse(control.canSendL4sCw())
+        }
     }
 
     @Test fun modelSelectionAloneDoesNotExposeRemoteTransmitControls() {
