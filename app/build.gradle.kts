@@ -15,6 +15,7 @@ fun releaseCred(name: String): String =
     releaseProps.getProperty(name) ?: System.getenv(name) ?: ""
 
 android {
+    testOptions.unitTests.isIncludeAndroidResources = true
     namespace = libs.versions.packageName.get()
     defaultConfig {
         applicationId = "cn.ba7opf.look4sat"
@@ -38,4 +39,10 @@ android {
             signingConfig = signingConfigs.getByName("release")
         }
     }
+}
+
+dependencies {
+    testImplementation(libs.test.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

@@ -329,7 +329,7 @@ private fun SettingsScreen(
             isSyncing = uiState.lotwSyncing || foregroundStatus.running,
             syncMode = foregroundStatus.mode ?: uiState.lotwSyncMode,
             progress = foregroundStatus.progress ?: uiState.lotwProgress,
-            message = if (foregroundStatus.running) foregroundStatus.message else lotwErrorMessage,
+            message = foregroundStatus.message ?: lotwErrorMessage,
             dismiss = { dialogs.lotw = false },
             onCancelSync = {
                 if (foregroundStatus.running) syncLauncher?.cancelManualLoTWSync()

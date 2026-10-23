@@ -151,7 +151,9 @@ class MainApplication : Application(), IContainerProvider, ILoTWForegroundSyncLa
         // avoid a duplicate request after Activity navigation/recreation.
         if (LoTWForegroundSyncStatus.state.value.running) return
         runCatching {
-            ContextCompat.startForegroundService(this, Intent(this, LoTWForegroundSyncService::class.java))
+            ContextCompat.startForegroundService(this, Intent(this, LoTWForegroundSyncService::class.java).apply {
+                action = LoTWForegroundSyncService.ACTION_AUTO
+            })
         }.onFailure { android.util.Log.w("LoTWForegroundSync", "Automatic sync could not start", it) }
     }
 
