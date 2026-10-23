@@ -74,6 +74,8 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var pendingBackgroundSync by remember { mutableStateOf<PendingBackgroundSync?>(null) }
+    var showBatteryPrompt by remember { mutableStateOf(false) }
+    var batteryUnrestricted by remember { mutableStateOf(BackgroundSyncBatterySettings.unrestricted(context)) }
 
     fun startBackgroundSync(request: PendingBackgroundSync) {
         try {
@@ -91,6 +93,59 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
         }
     }
 
+    val batterySettingsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        batteryUnrestricted = BackgroundSyncBatterySettings.unrestricted(context)
+        val request = pendingBackgroundSync
+        pendingBackgroundSync = null
+        if (request != null) startBackgroundSync(request)
+    }
+    fun openBatterySettings() {
+        val opened = runCatching {
+            batterySettingsLauncher.launch(BackgroundSyncBatterySettings.settingsIntent())
+        }.recoverCatching {
+            batterySettingsLauncher.launch(BackgroundSyncBatterySettings.fallbackIntent(context))
+        }.isSuccess
+        if (!opened) {
+            Toast.makeText(context, R.string.logbook_sync_battery_unavailable, Toast.LENGTH_LONG).show()
+            val request = pendingBackgroundSync
+            pendingBackgroundSync = null
+            if (request != null) startBackgroundSync(request)
+        }
+    }
+    fun startOrExplainBattery(request: PendingBackgroundSync) {
+        if (BackgroundSyncBatterySettings.shouldExplain(context)) {
+            pendingBackgroundSync = request
+            showBatteryPrompt = true
+        } else startBackgroundSync(request)
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        batteryUnrestricted = BackgroundSyncBatterySettings.unrestricted(context)
+    }
+    if (showBatteryPrompt) AlertDialog(
+        onDismissRequest = {
+            showBatteryPrompt = false
+            pendingBackgroundSync = null
+        },
+        title = { Text(stringResource(R.string.logbook_sync_battery_title)) },
+        text = { Text(stringResource(R.string.logbook_sync_battery_explanation)) },
+        confirmButton = {
+            TextButton(onClick = {
+                showBatteryPrompt = false
+                BackgroundSyncBatterySettings.acknowledge(context)
+                openBatterySettings()
+            }) { Text(stringResource(R.string.logbook_sync_battery_settings)) }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                showBatteryPrompt = false
+                BackgroundSyncBatterySettings.acknowledge(context)
+                val request = pendingBackgroundSync
+                pendingBackgroundSync = null
+                if (request != null) startBackgroundSync(request)
+            }) { Text(stringResource(R.string.logbook_sync_battery_continue)) }
+        }
+    )
+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -98,7 +153,7 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
         pendingBackgroundSync = null
         if (request == null) return@rememberLauncherForActivityResult
         if (granted) {
-            startBackgroundSync(request)
+            startOrExplainBattery(request)
         } else {
             Toast.makeText(
                 context,
@@ -121,7 +176,7 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
             pendingBackgroundSync = request
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            startBackgroundSync(request)
+            startOrExplainBattery(request)
         }
     }
 
@@ -216,6 +271,16 @@ internal fun LoTWUploadDialog(state: LogbookState, onAction: (LogbookAction) -> 
         dismissOnBackPress = false,
         dismissOnSwipe = !busy
     ) { padding ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = padding), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    stringResource(if (batteryUnrestricted) R.string.logbook_sync_battery_allowed
+                        else R.string.logbook_sync_battery_limited),
+                    modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall
+                )
+                TextButton(onClick = { openBatterySettings() }, enabled = !busy) {
+                    Text(stringResource(R.string.logbook_sync_battery_settings))
+                }
+            }
             val scheme = MaterialTheme.colorScheme
             val lock = state.logbookSourceLock
             val lotwBlocked = lock != null && lock != LogbookSyncProvider.LOTW

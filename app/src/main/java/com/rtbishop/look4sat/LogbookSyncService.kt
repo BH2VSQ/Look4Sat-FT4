@@ -21,7 +21,6 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import com.rtbishop.look4sat.core.domain.logbook.AdifImportResult
 import com.rtbishop.look4sat.core.domain.model.LogbookSyncProvider
 import com.rtbishop.look4sat.core.domain.repository.LoTWPhase
 import com.rtbishop.look4sat.core.domain.repository.LoTWProgress
@@ -55,8 +54,7 @@ class LogbookSyncService : Service() {
         val provider: LogbookSyncProvider,
         val mode: String,
         val callsign: String,
-        val password: String,
-        val startId: Int
+        val password: String
     )
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -73,8 +71,11 @@ class LogbookSyncService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != LogbookBackgroundSyncController.ACTION_START) return START_NOT_STICKY
-        if (syncJob?.isActive == true) return START_NOT_STICKY
+        if (intent?.action != LogbookBackgroundSyncController.ACTION_START) {
+            if (currentRequest == null) stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        if (currentRequest != null) return START_NOT_STICKY
 
         val provider = runCatching {
             LogbookSyncProvider.valueOf(intent.getStringExtra(LogbookBackgroundSyncController.EXTRA_PROVIDER).orEmpty())
@@ -87,8 +88,7 @@ class LogbookSyncService : Service() {
             provider = provider,
             mode = mode,
             callsign = intent.getStringExtra(LogbookBackgroundSyncController.EXTRA_CALLSIGN).orEmpty(),
-            password = intent.getStringExtra(LogbookBackgroundSyncController.EXTRA_PASSWORD).orEmpty(),
-            startId = startId
+            password = intent.getStringExtra(LogbookBackgroundSyncController.EXTRA_PASSWORD).orEmpty()
         )
         currentRequest = request
         lastNotificationAt = 0L
@@ -128,20 +128,7 @@ class LogbookSyncService : Service() {
                     else getString(LogbookR.string.logbook_sync_notification_failed)
                 )
             }
-            LogbookBackgroundSyncController.publish(finalStatus)
-            showNotification(finalStatus, force = true)
-            mainHandler.post {
-                // Detach the foreground notification instead of removing it when the
-                // long-running service exits, then re-post the final state with the
-                // same ID so the user can open or dismiss it later.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    stopForeground(STOP_FOREGROUND_DETACH)
-                } else {
-                    stopForeground(false)
-                }
-                runCatching { NotificationManagerCompat.from(this@LogbookSyncService).notify(NOTIFICATION_ID, buildNotification(finalStatus)) }
-                stopSelf(startId)
-            }
+            mainHandler.post { finish(request, finalStatus) }
         }
         return START_NOT_STICKY
     }
@@ -185,7 +172,7 @@ class LogbookSyncService : Service() {
                     it.copy(progress = null, stageMessage = getString(LogbookR.string.logbook_sync_notification_saving))
                 }
                 showNotification(LogbookBackgroundSyncController.status.value, force = true)
-                val merge = container.qsoRepository.mergeLoTW(result.records)
+                val merge = container.qsoRepository.mergeLoTW(result.records, callsign, mode == LoTWSyncMode.Full)
                 val grids = applyLoTWGridResult(settingsRepo, result, mode, callsign)
                 settingsRepo.updateLogbookSourceLock(LogbookSyncProvider.LOTW)
                 val summary = com.rtbishop.look4sat.feature.logbook.LoTWDownloadSummary(
@@ -256,8 +243,10 @@ class LogbookSyncService : Service() {
         }
         showNotification(LogbookBackgroundSyncController.status.value, force = true)
 
-        val merge = if (fetch.records.isEmpty()) AdifImportResult(0, 0, 0)
-            else container.qsoRepository.mergeWavelog(fetch.records)
+        val merge = container.qsoRepository.mergeWavelog(
+            fetch.records, settings.url,
+            actualMode == WavelogSyncMode.Full && fetch.failedStations.isEmpty()
+        )
         val cursors = settingsRepo.getWavelogSyncCursors() + fetch.cursors
         applyWavelogSyncResult(
             settingsRepo = settingsRepo,
@@ -282,7 +271,8 @@ class LogbookSyncService : Service() {
             progress = null,
             stageMessage = null,
             message = message,
-            succeeded = true
+            succeeded = fetch.failedStations.isEmpty(),
+            workedGridsCount = settingsRepo.getWorkedGrids().size
         )
     }
 
@@ -446,8 +436,33 @@ class LogbookSyncService : Service() {
     }
 
     override fun onDestroy() {
+        val request = currentRequest
+        currentRequest = null
         serviceScope.cancel()
+        if (request != null) {
+            val finalStatus = failedStatus(request, getString(LogbookR.string.logbook_sync_interrupted))
+            LogbookBackgroundSyncController.publish(finalStatus)
+            showNotification(finalStatus, force = true)
+        }
         super.onDestroy()
+    }
+
+    private fun finish(request: Request, finalStatus: LogbookBackgroundSyncStatus) {
+        if (currentRequest !== request) return
+        currentRequest = null
+        syncJob = null
+        LogbookBackgroundSyncController.publish(finalStatus)
+        stopForeground(STOP_FOREGROUND_DETACH)
+        showNotification(finalStatus, force = true)
+        stopSelf()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        val request = currentRequest
+        syncJob?.cancel()
+        if (request != null) {
+            finish(request, failedStatus(request, getString(LogbookR.string.logbook_sync_interrupted)))
+        } else stopSelf()
     }
 
     companion object {

@@ -94,7 +94,9 @@ data class QsoRecord(
     /** Complete own-station locators from MY_GRIDSQUARE/MY_VUCC_GRIDS. */
     val myFullGrids: List<String> = emptyList(),
     /** IOTA reference for the user's own station location (ADIF MY_IOTA). */
-    val myIota: String = ""
+    val myIota: String = "",
+    /** Creator of a downloaded row. Blank means local, shared, or unknown legacy origin. */
+    val syncOrigin: String = ""
 )
 
 /** Complete counterpart grid label, including legacy records with no primary grid. */

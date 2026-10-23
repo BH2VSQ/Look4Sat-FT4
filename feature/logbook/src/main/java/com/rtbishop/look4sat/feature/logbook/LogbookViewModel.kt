@@ -666,7 +666,8 @@ class LogbookViewModel(
                     mutableState.update { it.copy(wavelogSyncing = false, wavelogMessage = "Wavelog sync failed — check URL, API key and network") }
                     return@launch
                 }
-                val merge = if (fetch.records.isEmpty()) AdifImportResult(0, 0, 0) else repository.mergeWavelog(fetch.records)
+                val merge = repository.mergeWavelog(fetch.records,settings.url,
+                    actualMode==WavelogSyncMode.Full && fetch.failedStations.isEmpty())
                 val cursors = settingsRepo.getWavelogSyncCursors() + fetch.cursors
                 applyWavelogSyncResult(
                     settingsRepo = settingsRepo,
@@ -747,7 +748,7 @@ class LogbookViewModel(
                     since
                 ) { progress -> mutableState.update { it.copy(lotwProgress = progress) } }) {
                     is LoTWResult.Success -> {
-                        val logbook = repository.mergeLoTW(result.records)
+                        val logbook = repository.mergeLoTW(result.records,callsign,mode==LoTWSyncMode.Full)
                         val grids = applyLoTWGridResult(settingsRepo, result, mode, callsign)
                         lockLogbookSource(LogbookSyncProvider.LOTW)
                         mutableState.update {

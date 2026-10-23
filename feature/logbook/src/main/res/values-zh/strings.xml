@@ -104,4 +104,12 @@
     <string name="logbook_sync_notification_wavelog_progress">正在与 Wavelog 同步记录 · 正在估算 QSO 数量和剩余时间</string>
     <string name="logbook_sync_notification_remaining_seconds">%1$d 秒</string>
     <string name="logbook_sync_notification_remaining_minutes">%1$d 分 %2$02d 秒</string>
+    <string name="logbook_sync_battery_title">允许后台同步</string>
+    <string name="logbook_sync_battery_explanation">可在系统电池设置中允许 Look4Sat 后台运行，减少同步中断。现在前往设置？</string>
+    <string name="logbook_sync_battery_settings">电池设置</string>
+    <string name="logbook_sync_battery_continue">直接同步</string>
+    <string name="logbook_sync_battery_allowed">后台运行：已允许</string>
+    <string name="logbook_sync_battery_limited">后台运行：受电池优化限制</string>
+    <string name="logbook_sync_battery_unavailable">无法打开电池设置，仍可继续同步。</string>
+    <string name="logbook_sync_interrupted">同步已中断，请重试完成下载。</string>
 </resources>

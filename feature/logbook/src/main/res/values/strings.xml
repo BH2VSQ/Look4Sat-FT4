@@ -109,4 +109,12 @@
     <string name="logbook_sync_notification_wavelog_progress">Syncing with Wavelog · estimating QSO count and time remaining</string>
     <string name="logbook_sync_notification_remaining_seconds">%1$d sec</string>
     <string name="logbook_sync_notification_remaining_minutes">%1$d min %2$02d sec</string>
+    <string name="logbook_sync_battery_title">Allow background sync</string>
+    <string name="logbook_sync_battery_explanation">You can allow Look4Sat in system battery settings to reduce interruptions. Open settings now?</string>
+    <string name="logbook_sync_battery_settings">Battery settings</string>
+    <string name="logbook_sync_battery_continue">Sync anyway</string>
+    <string name="logbook_sync_battery_allowed">Background operation: allowed</string>
+    <string name="logbook_sync_battery_limited">Background operation: battery optimized</string>
+    <string name="logbook_sync_battery_unavailable">Unable to open battery settings. Sync can continue.</string>
+    <string name="logbook_sync_interrupted">Sync interrupted. Retry to complete the download.</string>
 </resources>

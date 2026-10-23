@@ -38,6 +38,7 @@ import com.rtbishop.look4sat.core.data.database.QSO_MIGRATION_3_4
 import com.rtbishop.look4sat.core.data.database.QSO_MIGRATION_4_5
 import com.rtbishop.look4sat.core.data.database.QSO_MIGRATION_5_6
 import com.rtbishop.look4sat.core.data.database.QSO_MIGRATION_6_7
+import com.rtbishop.look4sat.core.data.database.QSO_MIGRATION_7_8
 import com.rtbishop.look4sat.core.data.lotw.LoTWUploadRepository
 import com.rtbishop.look4sat.core.data.framework.BluetoothReporter
 import com.rtbishop.look4sat.core.data.framework.AndroidRadioTransportFactory
@@ -130,7 +131,8 @@ class MainContainer(private val context: Context) : IMainContainer {
                 QSO_MIGRATION_3_4,
                 QSO_MIGRATION_4_5,
                 QSO_MIGRATION_5_6,
-                QSO_MIGRATION_6_7
+                QSO_MIGRATION_6_7,
+                QSO_MIGRATION_7_8
             )
             .build()
         QsoRepository(database.qsoDao(), Dispatchers.IO)

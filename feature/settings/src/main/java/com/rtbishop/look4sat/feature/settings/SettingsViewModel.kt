@@ -597,11 +597,8 @@ class SettingsViewModel(
                     }
                     return@launch
                 }
-                val merge = if (fetch.records.isEmpty()) {
-                    com.rtbishop.look4sat.core.domain.logbook.AdifImportResult(0, 0, 0)
-                } else {
-                    qsoRepository.mergeWavelog(fetch.records)
-                }
+                val merge = qsoRepository.mergeWavelog(fetch.records,settings.url,
+                    actualMode==WavelogSyncMode.Full && fetch.failedStations.isEmpty())
                 // Stations that failed keep their previous cursor; fetched ones advance.
                 val cursors = settingsRepo.getWavelogSyncCursors() + fetch.cursors
                 applyWavelogSyncResult(
@@ -693,7 +690,7 @@ class SettingsViewModel(
             }
             when (result) {
                 is LoTWResult.Success -> {
-                    qsoRepository.mergeLoTW(result.records)
+                    qsoRepository.mergeLoTW(result.records,callsign,effectiveMode==LoTWSyncMode.Full)
                     // Incremental: merge new grids/QSOs into the stored set (dedup
                     // by call + QSO time); full: the fresh report replaces it all.
                     // Shared with the automatic sync on app start (MainApplication).
@@ -703,7 +700,7 @@ class SettingsViewModel(
                     viewModelScope.launch {
                         val confirmed = result.qsos.values.flatten()
                             .map { it.toConfirmedRecord(callsign) }
-                        qsoRepository.mergeLoTW(confirmed)
+                        qsoRepository.mergeLoTW(confirmed,callsign,false)
                     }
                     _uiState.update { state ->
                         state.copy(

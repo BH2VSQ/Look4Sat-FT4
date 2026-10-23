@@ -135,7 +135,7 @@ class MainApplication : Application(), IContainerProvider {
         println("Started periodic LoTW sync (${mode.name.lowercase()})")
         val result = container.lotwRepo.fetchQsos(callsign, lotwSettings.password, mode, since)
         if (result is LoTWResult.Success) {
-            val logbook = container.qsoRepository.mergeLoTW(result.records)
+            val logbook = container.qsoRepository.mergeLoTW(result.records,callsign,mode==LoTWSyncMode.Full)
             val count = applyLoTWGridResult(settingsRepo, result, mode, callsign, timeNow)
             settingsRepo.updateLogbookSourceLock(LogbookSyncProvider.LOTW)
             println(

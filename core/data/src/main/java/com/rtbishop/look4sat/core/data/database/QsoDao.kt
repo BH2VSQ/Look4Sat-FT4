@@ -42,15 +42,22 @@ interface QsoDao {
         records.forEach { save(it) }
     }
 
+    @Transaction
+    suspend fun applySyncBatch(deleteIds: List<Long>, records: List<QsoEntity>, pruneIds: List<Long> = emptyList()) {
+        deleteIds.distinct().forEach { delete(it) }
+        saveBatch(records)
+        pruneIds.distinct().forEach { delete(it) }
+    }
+
     @Query("DELETE FROM qso_records WHERE id = :id")
     suspend fun delete(id: Long)
 
     @Query("DELETE FROM qso_records")
     suspend fun deleteAll()
 
-    @Query("UPDATE qso_records SET lotwUploaded = 1 WHERE id IN (:ids)")
+    @Query("UPDATE qso_records SET lotwUploaded = 1, syncOrigin = CASE WHEN syncOrigin LIKE 'WAVELOG|%' THEN '' ELSE syncOrigin END WHERE id IN (:ids)")
     suspend fun markUploaded(ids: List<Long>)
 
-    @Query("UPDATE qso_records SET wavelogUploaded = 1, wavelogStation = CASE WHEN :stationId = '' THEN wavelogStation ELSE :stationId END WHERE id IN (:ids)")
+    @Query("UPDATE qso_records SET wavelogUploaded = 1, syncOrigin = CASE WHEN syncOrigin LIKE 'LOTW|%' THEN '' ELSE syncOrigin END, wavelogStation = CASE WHEN :stationId = '' THEN wavelogStation ELSE :stationId END WHERE id IN (:ids)")
     suspend fun markWavelogUploaded(ids: List<Long>, stationId: String)
 }

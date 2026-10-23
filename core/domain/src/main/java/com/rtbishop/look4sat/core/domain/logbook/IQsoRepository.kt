@@ -51,6 +51,10 @@ interface IQsoRepository {
     suspend fun importAdi(content: String): AdifImportResult
     suspend fun mergeConfirmed(records: List<QsoRecord>): AdifImportResult
     suspend fun mergeLoTW(records: List<QsoRecord>): AdifImportResult
+    suspend fun mergeLoTW(records: List<QsoRecord>, sourceKey: String, replaceExisting: Boolean): AdifImportResult {
+        check(!replaceExisting) { "This repository does not support atomic full synchronization" }
+        return mergeLoTW(records)
+    }
 
     /**
      * Merges QSO records pulled from Wavelog by a sync (the download direction):
@@ -59,6 +63,10 @@ interface IQsoRepository {
      * already uploaded so a later upload never sends them straight back.
      */
     suspend fun mergeWavelog(records: List<QsoRecord>): AdifImportResult
+    suspend fun mergeWavelog(records: List<QsoRecord>, sourceKey: String, replaceExisting: Boolean): AdifImportResult {
+        check(!replaceExisting) { "This repository does not support atomic full synchronization" }
+        return mergeWavelog(records)
+    }
 
     /**
      * Folds LoTW confirmations that were imported as their own rows back into the local
