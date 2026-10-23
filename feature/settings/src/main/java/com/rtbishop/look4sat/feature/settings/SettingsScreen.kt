@@ -148,7 +148,27 @@ private fun SettingsScreen(
     }
     val dialogs = rememberDialogVisibility()
     val foregroundStatus by LoTWForegroundSyncStatus.state.collectAsStateWithLifecycle()
-    val syncLauncher = LocalContext.current.applicationContext as? ILoTWForegroundSyncLauncher
+    val context = LocalContext.current
+    val syncLauncher = context.applicationContext as? ILoTWForegroundSyncLauncher
+    // Android 13+ requires notification permission for the progress item to
+    // appear in the status bar. A denial must not cancel the data-sync job;
+    // Android still exposes the foreground service via its task manager.
+    val pendingLoTWStart = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        pendingLoTWStart.value?.invoke()
+        pendingLoTWStart.value = null
+    }
+    fun startWithNotificationConsent(block: () -> Unit) {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            pendingLoTWStart.value = block
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else block()
+    }
     var showRadioProfiles by rememberSaveable {mutableStateOf(false)}
     val diagnosticContext=LocalContext.current
     LaunchedEffect(uiState.controlDiagnosticsExportText) {
@@ -319,12 +339,16 @@ private fun SettingsScreen(
             onSave = { onAction(SettingsAction.UpdateLoTW(it)) },
             onSyncFull = {
                 if (syncLauncher != null) {
-                    if (!foregroundStatus.running) syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Full)
+                    if (!foregroundStatus.running) startWithNotificationConsent {
+                        syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Full)
+                    }
                 } else onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Full))
             },
             onSyncIncremental = {
                 if (syncLauncher != null) {
-                    if (!foregroundStatus.running) syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Incremental)
+                    if (!foregroundStatus.running) startWithNotificationConsent {
+                        syncLauncher.startManualLoTWSync(it, LoTWSyncMode.Incremental)
+                    }
                 } else onAction(SettingsAction.SyncLoTWGrids(it, LoTWSyncMode.Incremental))
             }
         )
