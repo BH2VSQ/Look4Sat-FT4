@@ -261,6 +261,7 @@ sealed interface LogbookAction {
     data object ToggleGrouping : LogbookAction
     data object ShowLoTW : LogbookAction
     data object DismissLoTW : LogbookAction
+    data object DismissLoTWAfterBackgroundStart : LogbookAction
     data class SelectSyncProvider(val provider: LogbookSyncProvider) : LogbookAction
     data object DismissProviderSwitchConflict : LogbookAction
     data class SaveWavelogSettings(val settings: WavelogUploadSettings) : LogbookAction
@@ -370,6 +371,38 @@ class LogbookViewModel(
                 mutableState.update { it.copy(wavelogSettings = settings) }
             }
         }
+        viewModelScope.launch {
+            LogbookBackgroundSyncController.status.collect { background ->
+                val provider = background.provider ?: return@collect
+                if (background.isRunning && provider == LogbookSyncProvider.LOTW) {
+                    auditJob?.cancel()
+                }
+                mutableState.update { current ->
+                    val isLotw = provider == LogbookSyncProvider.LOTW
+                    val isWavelog = provider == LogbookSyncProvider.WAVELOG
+                    current.copy(
+                        lotwSyncing = if (isLotw) background.isRunning else current.lotwSyncing,
+                        lotwSyncMode = if (isLotw) background.lotwMode.takeIf { background.isRunning } else current.lotwSyncMode,
+                        lotwProgress = if (isLotw) background.progress.takeIf { background.isRunning } else current.lotwProgress,
+                        lotwDownloadError = if (isLotw) background.lotwDownloadError else current.lotwDownloadError,
+                        lotwDownloadSummary = when {
+                            isLotw && background.isRunning -> null
+                            isLotw && background.succeeded == true -> background.lotwDownloadSummary ?: current.lotwDownloadSummary
+                            else -> current.lotwDownloadSummary
+                        },
+                        lotwAudit = if (isLotw && background.isRunning) null else current.lotwAudit,
+                        lotwAuditing = if (isLotw && background.isRunning) false else current.lotwAuditing,
+                        wavelogSyncing = if (isWavelog) background.isRunning else current.wavelogSyncing,
+                        wavelogMessage = when {
+                            isWavelog && background.isRunning -> null
+                            isWavelog && background.succeeded != null -> background.message
+                            else -> current.wavelogMessage
+                        },
+                        workedGridsCount = background.workedGridsCount ?: current.workedGridsCount
+                    )
+                }
+            }
+        }
     }
 
     fun onAction(action: LogbookAction) {
@@ -427,6 +460,11 @@ class LogbookViewModel(
                 !mutableState.value.lotwSyncing && !mutableState.value.lotwAuditing &&
                 !mutableState.value.wavelogSyncing && !mutableState.value.wavelogProbeBusy
             ) {
+                lotwUploadRepository.discardPreview()
+                auditJob?.cancel()
+                mutableState.update { it.copy(showLoTW = false, lotwAudit = null, lotwAuditing = false) }
+            }
+            LogbookAction.DismissLoTWAfterBackgroundStart -> {
                 lotwUploadRepository.discardPreview()
                 auditJob?.cancel()
                 mutableState.update { it.copy(showLoTW = false, lotwAudit = null, lotwAuditing = false) }
@@ -771,7 +809,7 @@ class LogbookViewModel(
         auditJob?.cancel()
         val generation = ++auditGeneration
         val current = mutableState.value
-        if (!current.showLoTW || current.lotwCertificate?.passwordSaved != true || current.lotwStation == null) {
+        if (!current.showLoTW || current.lotwSyncing || current.lotwCertificate?.passwordSaved != true || current.lotwStation == null) {
             mutableState.update { it.copy(lotwAudit = null, lotwAuditing = false) }
             return
         }

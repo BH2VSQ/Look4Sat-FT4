@@ -90,4 +90,23 @@
     <string name="logbook_sync_source_conflict_title">Cannot switch sync source</string>
     <string name="logbook_sync_source_conflict_wavelog">LoTW and Wavelog logs cannot coexist. Clear the logbook before downloading from Wavelog.</string>
     <string name="logbook_sync_source_conflict_lotw">LoTW and Wavelog logs cannot coexist. Clear the logbook before downloading from LoTW.</string>
+    <string name="logbook_sync_started">Logbook synchronization has started. You can continue using other apps.</string>
+    <string name="logbook_sync_start_failed">Unable to start background logbook synchronization.</string>
+    <string name="logbook_sync_notification_permission_required">Allow notifications to see sync progress. Synchronization has not started.</string>
+    <string name="logbook_sync_notification_channel">Logbook synchronization</string>
+    <string name="logbook_sync_notification_title">Logbook synchronization</string>
+    <string name="logbook_sync_notification_preparing">Preparing logbook synchronization…</string>
+    <string name="logbook_sync_notification_connecting">Connecting to LoTW…</string>
+    <string name="logbook_sync_notification_downloading">Downloading LoTW confirmations…</string>
+    <string name="logbook_sync_notification_saving">Saving synchronized logbook records…</string>
+    <string name="logbook_sync_notification_wavelog">Synchronizing records with Wavelog…</string>
+    <string name="logbook_sync_notification_done">Logbook sync complete</string>
+    <string name="logbook_sync_notification_failed">Synchronization failed</string>
+    <string name="logbook_sync_notification_qso_progress">Syncing %1$d QSOs · %2$s remaining</string>
+    <string name="logbook_sync_notification_qso_estimate">Syncing %1$d QSOs · estimating remaining time</string>
+    <string name="logbook_sync_notification_qso_saving">Syncing %1$d QSOs · saving records</string>
+    <string name="logbook_sync_notification_connecting_detail">Connecting to LoTW · determining QSO count</string>
+    <string name="logbook_sync_notification_wavelog_progress">Syncing with Wavelog · estimating QSO count and time remaining</string>
+    <string name="logbook_sync_notification_remaining_seconds">%1$d sec</string>
+    <string name="logbook_sync_notification_remaining_minutes">%1$d min %2$02d sec</string>
 </resources>
