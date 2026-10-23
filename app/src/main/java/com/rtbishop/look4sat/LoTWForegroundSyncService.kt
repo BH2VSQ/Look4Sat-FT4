@@ -72,7 +72,10 @@ class LoTWForegroundSyncService : Service() {
                 android.util.Log.e("LoTWForegroundSync", "Synchronization failed", e)
             } finally {
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelfResult(startId)
+                // A second onStartCommand while the first job was active can
+                // increment startId without starting a new job. stopSelfResult
+                // on the original id would leave a stranded Service.
+                stopSelf()
             }
         }
         // Do not restart an interrupted LoTW download without user intent:
