@@ -59,6 +59,7 @@ class QsoRepository(
                     id = 0L,
                     lotwUploaded = false, lotwConfirmed = false, lotwReceived = false,
                     wavelogUploaded = false,
+                    syncOrigin = "",
                     wavelogStation = "",
                     lotwQslDate = "", vuccGrids = emptyList(), theirVuccGrids = emptyList(),
                     dxcc = null, country = "", cqZone = null, region = ""
