@@ -42,6 +42,14 @@ interface QsoDao {
         records.forEach { save(it) }
     }
 
+    /** All deletes and inserts for a completed download commit atomically. */
+    @Transaction
+    suspend fun applySyncBatch(deleteIds: List<Long>, records: List<QsoEntity>, pruneIds: List<Long> = emptyList()) {
+        deleteIds.distinct().forEach { delete(it) }
+        saveBatch(records)
+        pruneIds.distinct().forEach { delete(it) }
+    }
+
     @Query("DELETE FROM qso_records WHERE id = :id")
     suspend fun delete(id: Long)
 
