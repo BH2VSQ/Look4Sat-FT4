@@ -200,7 +200,7 @@ fun RadarDestination(
     navigateToMap: () -> Unit = {},
     onOpenLoTWStation: () -> Unit = {},
     onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> },
-    onStartMatch: (String, (Boolean) -> Unit) -> Unit = { _, complete -> complete(false) }
+    onStartMatch: (String, Int, Long, Long, (Boolean) -> Unit) -> Unit = { _, _, _, _, complete -> complete(false) }
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
@@ -308,7 +308,7 @@ private fun RadarScreen(
     requestMicPermission: () -> Unit,
     onFixGrid: (List<String>) -> Unit,
     onOpenPassMap: (Int, Long, Long) -> Unit,
-    onStartMatch: (String, (Boolean) -> Unit) -> Unit
+    onStartMatch: (String, Int, Long, Long, (Boolean) -> Unit) -> Unit
 ) {
     val upcomingPass = uiState.currentPass ?: getDefaultPass()
     // 日程功能: 把当前过境写入系统日历(原仓库的 addToCalendar, ic_calendar 按钮)
@@ -514,7 +514,13 @@ private fun RadarScreen(
                         } else {
                             matchLoading = true
                             matchError = null
-                            onStartMatch(normalized) { success ->
+                            val pass = uiState.currentPass
+                            if (pass == null || pass.losTime <= pass.aosTime) {
+                                matchLoading = false
+                                matchError = context.getString(R.string.radar_match_no_pass)
+                                return@TextButton
+                            }
+                            onStartMatch(normalized, pass.catNum, pass.aosTime, pass.losTime) { success ->
                                 matchLoading = false
                                 if (success) {
                                     showMatchDialog = false
