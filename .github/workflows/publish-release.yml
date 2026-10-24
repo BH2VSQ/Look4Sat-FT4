@@ -14,7 +14,7 @@ name: Build Look4Sat APK
 # Local Gradle builds keep using the catalog unchanged. Most runs are manual; only the specific release commit has a guarded push trigger.
 
 on:
-  # One-shot v16.4 release automation; only the specific release commit runs on push.
+  # One-shot v17 release automation; only the specific release commit runs on push.
   push:
     branches: [main]
   workflow_dispatch:
@@ -38,7 +38,7 @@ permissions:
 
 jobs:
   build:
-    if: "${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: v4.4.8-ba7opf.16.4')) }}"
+    if: "${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: v4.4.8-ba7opf.17')) }}"
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -206,7 +206,7 @@ jobs:
           CODE: ${{ steps.version.outputs.code }}
           TAG: ${{ steps.version.outputs.tag }}
           ASSET: ${{ steps.version.outputs.asset }}
-          NOTES_IN: "${{ github.event_name == 'push' && 'v16.4: LoTW log sync continues when the sync window is dismissed. Added a determinate sync progress indicator to Settings and a confirmation dialog before cancellation, warning that the next sync must start from the beginning.' || inputs.notes }}"
+          NOTES_IN: "${{ inputs.notes }}"
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -218,6 +218,26 @@ jobs:
           # never the asset name.
           cp app/build/outputs/apk/release/app-release.apk "$ASSET"
           NOTES="$NOTES_IN"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            NOTES="$(cat <<'RELEASE_NOTES'
+## v17 — English
+- LoTW full logbook synchronization now performs provider-scoped atomic updates, preserves local edits, and runs through a foreground service with progress reporting.
+- Added CW console integration using the shared audio pipeline and improved RX/TX CAT connection diagnostics and radio-control support.
+- Radar Match now matches the satellite pass currently shown on the radar instead of choosing the next upcoming mutual pass.
+- Added a map button to the radar Match grid field, opening the existing VUCC grid picker and returning the selected grid to the same Match dialog.
+
+Verification: GitHub Actions unit tests completed successfully; release APK signature, signing certificate, version name and version code verified.
+
+## v17 — 中文
+- LoTW 日志全量同步采用按来源隔离的原子更新，保留本地编辑记录，并通过前台服务持续运行和显示进度。
+- 新增复用音频管线的 CW 控制台集成，改进收发两端 CAT 连接状态诊断和电台控制支持。
+- 雷达页“匹配”现在针对当前雷达显示的卫星过境，不再跳转到最近的其他共同过境。
+- 雷达页匹配网格输入框新增地图按钮，复用 VUCC 网格选择地图，选择后返回原匹配弹窗。
+
+验证：GitHub Actions 单元测试通过；发行版 APK 签名、签名证书、版本名称和版本代码均已校验。
+RELEASE_NOTES
+)"
+          fi
           if [ -z "$NOTES" ]; then
             NOTES="Look4Sat $VERSION (versionCode $CODE). Signed with the fork release key; installs over the previous release."
           fi
