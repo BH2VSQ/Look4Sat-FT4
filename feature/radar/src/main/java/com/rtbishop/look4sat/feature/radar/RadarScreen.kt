@@ -53,6 +53,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +70,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.keepScreenOn
@@ -107,6 +109,9 @@ import com.rtbishop.look4sat.core.presentation.sheetDialogShape
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlin.math.PI
+
+/** Result from the full-screen grid map, including cancellation (grid = null). */
+data class RadarGridPickResult(val grid: String?)
 
 private enum class RadarPage(@StringRes val titleRes: Int) {
     Transceivers(R.string.radar_tab_transceivers),
@@ -200,7 +205,10 @@ fun RadarDestination(
     navigateToMap: () -> Unit = {},
     onOpenLoTWStation: () -> Unit = {},
     onOpenPassMap: (Int, Long, Long) -> Unit = { _, _, _ -> },
-    onStartMatch: (String, (Boolean) -> Unit) -> Unit = { _, complete -> complete(false) }
+    onStartMatch: (String, Int, Long, Long, (Boolean) -> Unit) -> Unit = { _, _, _, _, complete -> complete(false) },
+    onOpenMatchGridPicker: () -> Unit = {},
+    gridPickResult: RadarGridPickResult? = null,
+    onGridPickResultHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
@@ -288,7 +296,10 @@ fun RadarDestination(
             },
             onFixGrid = openLoTWStationForGridFix,
             onOpenPassMap = onOpenPassMap,
-            onStartMatch = onStartMatch
+            onStartMatch = onStartMatch,
+            onOpenMatchGridPicker = onOpenMatchGridPicker,
+            gridPickResult = gridPickResult,
+            onGridPickResultHandled = onGridPickResultHandled
         )
         if (uiState.cwConsole.visible) CwConsole(uiState, logViewModel, viewModel::onAction,
             requestMicPermission = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
@@ -308,7 +319,10 @@ private fun RadarScreen(
     requestMicPermission: () -> Unit,
     onFixGrid: (List<String>) -> Unit,
     onOpenPassMap: (Int, Long, Long) -> Unit,
-    onStartMatch: (String, (Boolean) -> Unit) -> Unit
+    onStartMatch: (String, Int, Long, Long, (Boolean) -> Unit) -> Unit,
+    onOpenMatchGridPicker: () -> Unit,
+    gridPickResult: RadarGridPickResult?,
+    onGridPickResultHandled: () -> Unit
 ) {
     val upcomingPass = uiState.currentPass ?: getDefaultPass()
     // 日程功能: 把当前过境写入系统日历(原仓库的 addToCalendar, ic_calendar 按钮)
@@ -345,15 +359,23 @@ private fun RadarScreen(
             )
         }
     val context = LocalContext.current
-    var showMatchDialog by remember { mutableStateOf(false) }
+    var showMatchDialog by rememberSaveable { mutableStateOf(false) }
     var showToolsMenu by remember { mutableStateOf(false) }
     val closeToolsMenuThen: (() -> Unit) -> Unit = { action ->
         showToolsMenu = false
         action()
     }
-    var matchGrid by remember(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
+    var matchGrid by rememberSaveable(mutualData.stationBGrid) { mutableStateOf(mutualData.stationBGrid) }
     var matchLoading by remember { mutableStateOf(false) }
     var matchError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(gridPickResult) {
+        gridPickResult?.let { result ->
+            result.grid?.let { matchGrid = it }
+            matchError = null
+            showMatchDialog = true
+            onGridPickResultHandled()
+        }
+    }
     // Compose the menu at the top-right list button, rather than opening a
     // full-width bottom sheet. Both toolbar arrangements use the same popup.
     val toolsMenu: @Composable () -> Unit = {
@@ -481,6 +503,20 @@ private fun RadarScreen(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(stringResource(R.string.radar_match_grid_label)) },
                         placeholder = { Text(stringResource(R.string.radar_match_grid_hint)) },
+                        trailingIcon = {
+                            IconButton(
+                                enabled = !matchLoading,
+                                onClick = {
+                                    showMatchDialog = false
+                                    onOpenMatchGridPicker()
+                                }
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_map),
+                                    contentDescription = stringResource(R.string.mutual_pick_grid_on_map)
+                                )
+                            }
+                        },
                         singleLine = true,
                         isError = matchError != null,
                         supportingText = {
@@ -514,7 +550,13 @@ private fun RadarScreen(
                         } else {
                             matchLoading = true
                             matchError = null
-                            onStartMatch(normalized) { success ->
+                            val pass = uiState.currentPass
+                            if (pass == null || pass.losTime <= pass.aosTime) {
+                                matchLoading = false
+                                matchError = context.getString(R.string.radar_match_no_pass)
+                                return@TextButton
+                            }
+                            onStartMatch(normalized, pass.catNum, pass.aosTime, pass.losTime) { success ->
                                 matchLoading = false
                                 if (success) {
                                     showMatchDialog = false

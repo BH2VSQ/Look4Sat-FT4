@@ -82,6 +82,7 @@ import com.rtbishop.look4sat.core.presentation.MatchGridPickerDestination
 import com.rtbishop.look4sat.core.presentation.RadarDestination
 import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
 import com.rtbishop.look4sat.core.presentation.RadarMatchDestination
+import com.rtbishop.look4sat.core.presentation.RadarMatchGridPickerDestination
 import com.rtbishop.look4sat.core.presentation.Screen
 import com.rtbishop.look4sat.core.presentation.hasEnoughHeight
 import com.rtbishop.look4sat.core.presentation.hasEnoughWidth
@@ -93,6 +94,7 @@ import com.rtbishop.look4sat.feature.mutual.MutualScreen
 import com.rtbishop.look4sat.feature.mutual.MutualViewModel
 import com.rtbishop.look4sat.feature.passes.PassesDestination
 import com.rtbishop.look4sat.feature.radar.RadarDestination
+import com.rtbishop.look4sat.feature.radar.RadarGridPickResult
 import com.rtbishop.look4sat.feature.satellites.SatellitesDestination
 import com.rtbishop.look4sat.feature.settings.SettingsDestination
 import com.rtbishop.look4sat.feature.settings.LoTWUploadDestination
@@ -107,11 +109,32 @@ fun NavRoot(deeplink: String? = null) {
         viewModelStoreOwner = context as ViewModelStoreOwner,
         factory = MutualViewModel.factory(container)
     )
+    val mapFilterViewModel: MapFilterViewModel = viewModel(
+        viewModelStoreOwner = context as ViewModelStoreOwner,
+        factory = MapFilterViewModel.factory()
+    )
     val deeplinkResolver = DeeplinkResolver()
     LaunchedEffect(deeplink) {
         deeplink?.let { rootBackStack.add(deeplinkResolver.resolve(it)) }
     }
-    val navigateBack: () -> Unit = { rootBackStack.removeLastOrNull() }
+    var radarGridPickResult by remember { androidx.compose.runtime.mutableStateOf<RadarGridPickResult?>(null) }
+    val finishRadarGridPicker: (String?) -> Unit = { grid ->
+        if (rootBackStack.lastOrNull() is RadarMatchGridPickerDestination) {
+            radarGridPickResult = RadarGridPickResult(grid)
+            rootBackStack.removeLastOrNull()
+        }
+    }
+    val navigateBack: () -> Unit = {
+        if (rootBackStack.lastOrNull() is RadarMatchGridPickerDestination) {
+            finishRadarGridPicker(null)
+        } else {
+            rootBackStack.removeLastOrNull()
+        }
+    }
+    val openRadarGridPicker: () -> Unit = {
+        radarGridPickResult = null
+        rootBackStack.add(RadarMatchGridPickerDestination)
+    }
     // From the dedicated pass map, switch to an existing main tab and clear the
     // radar/map overlays. The inner MainScreen keeps its own independent back stack.
     var requestedMainTab by remember { androidx.compose.runtime.mutableStateOf<Screen?>(null) }
@@ -135,8 +158,8 @@ fun NavRoot(deeplink: String? = null) {
     }
     val navigateToGridFinder: () -> Unit = { rootBackStack.add(GridFinderDestination) }
     val navigateToLoTWStation: () -> Unit = { rootBackStack.add(LoTWUploadDestination) }
-    val startRadarMatch: (String, (Boolean) -> Unit) -> Unit = { grid, onComplete ->
-        mutualViewModel.prepareRadarMatchFromGrid(grid) { selection ->
+    val startRadarMatch: (String, Int, Long, Long, (Boolean) -> Unit) -> Unit = { grid, catNum, aos, los, onComplete ->
+        mutualViewModel.prepareRadarMatchFromGrid(grid, catNum, aos, los) { selection ->
             if (selection == null) {
                 onComplete(false)
             } else {
@@ -193,6 +216,7 @@ fun NavRoot(deeplink: String? = null) {
                         navigateToRadar = navigateToRadar,
                         navigateToGridFinder = navigateToGridFinder,
                         mutualViewModel = mutualViewModel,
+                        mapFilterViewModel = mapFilterViewModel,
                         requestedTab = requestedMainTab,
                         onRequestedTabHandled = { requestedMainTab = null }
                     )
@@ -206,11 +230,14 @@ fun NavRoot(deeplink: String? = null) {
                             navigateUp = navigateBack,
                             onOpenLoTWStation = navigateToLoTWStation,
                             onOpenPassMap = navigateToRadarPassMap,
-                            onStartMatch = startRadarMatch
+                            onStartMatch = startRadarMatch,
+                            onOpenMatchGridPicker = openRadarGridPicker,
+                            gridPickResult = if (rootBackStack.lastOrNull() is RadarDestination) radarGridPickResult else null,
+                            onGridPickResultHandled = { radarGridPickResult = null }
                         )
                     }
                 }
-                entry<RadarMatchDestination> {
+                entry<RadarMatchDestination> { match ->
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
@@ -219,7 +246,23 @@ fun NavRoot(deeplink: String? = null) {
                             navigateUp = navigateBack,
                             onOpenLoTWStation = navigateToLoTWStation,
                             onOpenPassMap = navigateToRadarPassMap,
-                            onStartMatch = startRadarMatch
+                            onStartMatch = startRadarMatch,
+                            onOpenMatchGridPicker = openRadarGridPicker,
+                            gridPickResult = if (rootBackStack.lastOrNull() == match) radarGridPickResult else null,
+                            onGridPickResultHandled = { radarGridPickResult = null }
+                        )
+                    }
+                }
+                entry<RadarMatchGridPickerDestination> {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        MapDestination(
+                            mapFilterViewModel = mapFilterViewModel,
+                            gridPickerMode = true,
+                            onPickGrid = { grid -> finishRadarGridPicker(grid) },
+                            onNavigateBack = { finishRadarGridPicker(null) }
                         )
                     }
                 }
@@ -310,6 +353,7 @@ fun MainScreen(
     navigateToRadar: () -> Unit = {},
     navigateToGridFinder: () -> Unit = {},
     mutualViewModel: MutualViewModel,
+    mapFilterViewModel: MapFilterViewModel,
     requestedTab: Screen? = null,
     onRequestedTabHandled: () -> Unit = {}
 ) {
@@ -335,12 +379,8 @@ fun MainScreen(
     val trackingState by container.radioTrackingService.state.collectAsStateWithLifecycle()
     val otherSettings by container.settingsRepo.otherSettings.collectAsStateWithLifecycle()
     // Activity-scoped MutualViewModel is shared with root-level Radar destinations.
-    // Activity-scoped so the map's award filter survives page switches;
-    // resets to VUCC only on cold start (fresh process).
-    val mapFilterViewModel: MapFilterViewModel = viewModel(
-        viewModelStoreOwner = context as ViewModelStoreOwner,
-        factory = MapFilterViewModel.factory()
-    )
+    // Shared Activity-scoped map filter retains station selection and viewport
+    // across the Match-page and radar Match grid pickers.
 
     // Map grid-QSO dialog "Match" button: pre-fill the match page for that
     // grid and run the query BEFORE navigating, so the page's first frame
