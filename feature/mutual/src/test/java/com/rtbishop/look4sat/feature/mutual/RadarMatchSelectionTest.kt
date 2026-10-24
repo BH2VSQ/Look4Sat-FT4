@@ -27,6 +27,17 @@ class RadarMatchSelectionTest {
     }
 
     @Test
+    fun radarMatchUsesSelectedSatelliteAndOverlappingPass() {
+        val passes = listOf(
+            pass(1_000, 2_000),
+            pass(5_000, 6_000),
+            pass(5_200, 5_800).copy(catNum = 200)
+        )
+        assertEquals(5_000L, mutualPassForRadar(passes, 100, 5_100, 5_900)?.startTime)
+        assertNull(mutualPassForRadar(passes, 100, 2_100, 4_900))
+    }
+
+    @Test
     fun emptyResultHasNoSelection() {
         assertNull(nextUpcomingMutualPass(emptyList(), nowMs = 0L))
     }
