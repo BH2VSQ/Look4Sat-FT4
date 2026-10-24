@@ -220,23 +220,23 @@ jobs:
           NOTES="$NOTES_IN"
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             NOTES="$(cat <<'RELEASE_NOTES'
-## v17 — English
-- LoTW full logbook synchronization now performs provider-scoped atomic updates, preserves local edits, and runs through a foreground service with progress reporting.
-- Added CW console integration using the shared audio pipeline and improved RX/TX CAT connection diagnostics and radio-control support.
-- Radar Match now matches the satellite pass currently shown on the radar instead of choosing the next upcoming mutual pass.
-- Added a map button to the radar Match grid field, opening the existing VUCC grid picker and returning the selected grid to the same Match dialog.
+          ## v17 — English
+          - LoTW full logbook synchronization now performs provider-scoped atomic updates, preserves local edits, and runs through a foreground service with progress reporting.
+          - Added CW console integration using the shared audio pipeline and improved RX/TX CAT connection diagnostics and radio-control support.
+          - Radar Match now matches the satellite pass currently shown on the radar instead of choosing the next upcoming mutual pass.
+          - Added a map button to the radar Match grid field, opening the existing VUCC grid picker and returning the selected grid to the same Match dialog.
 
-Verification: GitHub Actions unit tests completed successfully; release APK signature, signing certificate, version name and version code verified.
+          Verification: GitHub Actions unit tests completed successfully; release APK signature, signing certificate, version name and version code verified.
 
-## v17 — 中文
-- LoTW 日志全量同步采用按来源隔离的原子更新，保留本地编辑记录，并通过前台服务持续运行和显示进度。
-- 新增复用音频管线的 CW 控制台集成，改进收发两端 CAT 连接状态诊断和电台控制支持。
-- 雷达页“匹配”现在针对当前雷达显示的卫星过境，不再跳转到最近的其他共同过境。
-- 雷达页匹配网格输入框新增地图按钮，复用 VUCC 网格选择地图，选择后返回原匹配弹窗。
+          ## v17 — 中文
+          - LoTW 日志全量同步采用按来源隔离的原子更新，保留本地编辑记录，并通过前台服务持续运行和显示进度。
+          - 新增复用音频管线的 CW 控制台集成，改进收发两端 CAT 连接状态诊断和电台控制支持。
+          - 雷达页“匹配”现在针对当前雷达显示的卫星过境，不再跳转到最近的其他共同过境。
+          - 雷达页匹配网格输入框新增地图按钮，复用 VUCC 网格选择地图，选择后返回原匹配弹窗。
 
-验证：GitHub Actions 单元测试通过；发行版 APK 签名、签名证书、版本名称和版本代码均已校验。
-RELEASE_NOTES
-)"
+          验证：GitHub Actions 单元测试通过；发行版 APK 签名、签名证书、版本名称和版本代码均已校验。
+          RELEASE_NOTES
+          )"
           fi
           if [ -z "$NOTES" ]; then
             NOTES="Look4Sat $VERSION (versionCode $CODE). Signed with the fork release key; installs over the previous release."
