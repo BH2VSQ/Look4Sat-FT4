@@ -135,8 +135,8 @@ fun NavRoot(deeplink: String? = null) {
     }
     val navigateToGridFinder: () -> Unit = { rootBackStack.add(GridFinderDestination) }
     val navigateToLoTWStation: () -> Unit = { rootBackStack.add(LoTWUploadDestination) }
-    val startRadarMatch: (String, (Boolean) -> Unit) -> Unit = { grid, onComplete ->
-        mutualViewModel.prepareRadarMatchFromGrid(grid) { selection ->
+    val startRadarMatch: (String, Int, Long, Long, (Boolean) -> Unit) -> Unit = { grid, catNum, aos, los, onComplete ->
+        mutualViewModel.prepareRadarMatchFromGrid(grid, catNum, aos, los) { selection ->
             if (selection == null) {
                 onComplete(false)
             } else {
