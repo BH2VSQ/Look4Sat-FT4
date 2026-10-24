@@ -58,6 +58,13 @@ internal fun nextUpcomingMutualPass(passes: List<MutualPass>, nowMs: Long): Mutu
         .filter { it.endTime > nowMs }
         .minByOrNull { it.startTime }
 
+/** Select the overlap with the radar's specific satellite pass, never another upcoming pass. */
+internal fun mutualPassForRadar(
+    passes: List<MutualPass>, catNum: Int, aos: Long, los: Long
+): MutualPass? = passes.asSequence()
+    .filter { it.catNum == catNum && it.startTime < los && it.endTime > aos }
+    .maxByOrNull { minOf(it.endTime, los) - maxOf(it.startTime, aos) }
+
 /**
  * Applies the optional swipe-to-focus filter while preserving each pass's index
  * in the unfiltered result list (used to keep expanded-card selection stable).
