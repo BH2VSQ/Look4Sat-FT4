@@ -119,8 +119,10 @@ fun NavRoot(deeplink: String? = null) {
     }
     var radarGridPickResult by remember { androidx.compose.runtime.mutableStateOf<RadarGridPickResult?>(null) }
     val finishRadarGridPicker: (String?) -> Unit = { grid ->
-        radarGridPickResult = RadarGridPickResult(grid)
-        rootBackStack.removeLastOrNull()
+        if (rootBackStack.lastOrNull() is RadarMatchGridPickerDestination) {
+            radarGridPickResult = RadarGridPickResult(grid)
+            rootBackStack.removeLastOrNull()
+        }
     }
     val navigateBack: () -> Unit = {
         if (rootBackStack.lastOrNull() is RadarMatchGridPickerDestination) {
