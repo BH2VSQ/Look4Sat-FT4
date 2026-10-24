@@ -8,9 +8,11 @@ import org.junit.Test
 
 class RadioCapabilitiesTest {
 
-    @Test fun bluetoothPickerPreservesLegacyAdaptersWithoutOfferingUnsupportedL4sOrFtx1Transport() {
+    @Test fun bluetoothPickerPreservesLegacyAdaptersAndOffersSupportedL4sWithoutFtx1() {
         assertEquals(listOf(RadioControlSettings.MODEL_YAESU_FT817,RadioControlSettings.MODEL_YAESU_FT857,
-            RadioControlSettings.MODEL_ICOM_IC705,RadioControlSettings.MODEL_ICOM_IC9700,RadioControlSettings.MODEL_VERO_N76),
+            RadioControlSettings.MODEL_ICOM_IC705,RadioControlSettings.MODEL_QUANSHENG_UVK1,
+            RadioControlSettings.MODEL_QUANSHENG_UVK5V3,RadioControlSettings.MODEL_ICOM_IC9700,
+            RadioControlSettings.MODEL_VERO_N76),
             RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_BLUETOOTH))
         assertTrue(RadioControlSettings.MODEL_YAESU_FTX1 in RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_USB))
         assertFalse(RadioControlSettings.MODEL_YAESU_FTX1 in RadioModelCatalog.modelsForTransport(RadioControlSettings.TRANSPORT_TCP))
