@@ -576,9 +576,9 @@
     <string name="rc_cw_spacing">字符间隔：%1$s</string>
     <string name="rc_cw_spacing_off">关闭</string>
     <string name="rc_cw_sync">同步 F1–F4</string>
-    <string name="rc_cw_sync_busy">正在同步 CW 預設…</string>
-    <string name="rc_cw_sync_confirm">請在手台按 MENU 確認</string>
-    <string name="rc_cw_sync_done">F1–F4 已儲存至手台</string>
+    <string name="rc_cw_sync_busy">正在同步 CW 预设…</string>
+    <string name="rc_cw_sync_confirm">请在手台按 MENU 确认</string>
+    <string name="rc_cw_sync_done">F1–F4 已保存到手台</string>
     <string name="rc_cw_volume">音量：%1$d</string>
     <string name="rc_dial_follow">旋钮跟随</string>
     <string name="rc_dial_settle_ms">稳定等待（毫秒）</string>
