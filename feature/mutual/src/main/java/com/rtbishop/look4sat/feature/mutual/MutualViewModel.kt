@@ -239,11 +239,14 @@ class MutualViewModel(
 
     /**
      * Run the existing two-station pass calculation from the radar overflow menu,
-     * then return the earliest mutual pass that is still active or upcoming.
+     * then return the mutual pass overlapping the radar's selected satellite pass.
      * This does not request navigation to the Match tab.
      */
     fun prepareRadarMatchFromGrid(
         grid: String,
+        catNum: Int,
+        aos: Long,
+        los: Long,
         onComplete: (RadarMatchSelection?) -> Unit
     ) {
         val normalized = grid.trim().uppercase()
@@ -265,8 +268,8 @@ class MutualViewModel(
                 filterLinear = state.filterLinear || enableBothFilters
             )
         }
-        queryMutualPasses(onCompleted = { passes ->
-            val selected = nextUpcomingMutualPass(passes, nowMillis())
+        queryMutualPasses(radarPass = Triple(catNum, aos, los), onCompleted = { passes ->
+            val selected = mutualPassForRadar(passes, catNum, aos, los)
             val selection = selected?.let { pass ->
                 RadarMatchSelection(
                     catNum = pass.catNum,
@@ -348,7 +351,8 @@ class MutualViewModel(
      */
     fun queryMutualPasses(
         initialScrollIndex: Int? = null,
-        onCompleted: ((List<MutualPass>) -> Unit)? = null
+        onCompleted: ((List<MutualPass>) -> Unit)? = null,
+        radarPass: Triple<Int, Long, Long>? = null
     ) {
         val state = _uiState.value
 
@@ -411,17 +415,25 @@ class MutualViewModel(
                 if (state.filterFM) addAll(Sources.amSatFmCatnums)
                 if (state.filterLinear) addAll(Sources.amSatLinearCatnums)
             }
-            val filteredSatellites = satellites.filter { it.data.catnum in allowed }
+            val filteredSatellites = satellites.filter { satellite ->
+                if (radarPass != null) satellite.data.catnum == radarPass.first
+                else satellite.data.catnum in allowed
+            }
             // 历史回看: 查询窗口起点 = now - hoursBefore (跟随主页面 Passes 设置),
             // 终点 = now + hoursAhead 不变.
-            val time = now - state.hoursBefore * 60L * 60L * 1000L
+            val time = radarPass?.let { it.second - 30L * 60L * 1000L }
+                ?: (now - state.hoursBefore * 60L * 60L * 1000L)
             val minElevA = state.stationAMinElev
             val minElevB = state.stationBMinElev
-            val hours = state.hoursAhead
+            val hours = radarPass?.let { pass ->
+                ((pass.third + 30L * 60L * 1000L - time + 3_600_000L - 1L) / 3_600_000L)
+                    .coerceAtLeast(1L).toInt()
+            } ?: state.hoursAhead
+            val hoursBefore = if (radarPass != null) 0 else state.hoursBefore
 
             val results = try {
                 withContext(computeDispatcher) {
-                    findMutualPasses(filteredSatellites, posA, posB, minElevA, minElevB, time, hours, state.hoursBefore)
+                    findMutualPasses(filteredSatellites, posA, posB, minElevA, minElevB, time, hours, hoursBefore)
                 }
             } catch (t: Throwable) {
                 // Never leave the query stuck in "calculating" (which would also
