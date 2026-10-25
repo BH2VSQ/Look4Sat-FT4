@@ -43,6 +43,7 @@ class CatSettingsPersistenceTest {
             error("Unexpected satellite access: ${method.name}")
         } as ISatelliteRepo
         return RadioTrackingService(scope, null, satellites, repo,
+            clock = com.rtbishop.look4sat.core.domain.time.SystemDisciplinedClock(),
             controllerFactory = { _, address -> if (address == "TX") tx else rx })
     }
     private fun settings(model: String = RadioControlSettings.MODEL_YAESU_FT817, single: Boolean = false) =

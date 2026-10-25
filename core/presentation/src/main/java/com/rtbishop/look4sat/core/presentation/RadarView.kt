@@ -17,8 +17,6 @@
  */
 package com.rtbishop.look4sat.core.presentation
 
-import com.rtbishop.look4sat.core.presentation.R
-
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
