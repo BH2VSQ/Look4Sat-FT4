@@ -176,7 +176,6 @@ class MainContainer(private val context: Context) : IMainContainer {
                 appScope, controlDiagnostics)
             },
             n76RecordingFactory = { com.rtbishop.look4sat.core.data.framework.AndroidN76Recording(context,
-                com.rtbishop.look4sat.core.data.framework.AndroidN76AudioIo(context, audioHub) { settingsRepo.radioControlSettings.value.n76Options },
                 appScope, controlDiagnostics) { settingsRepo.radioControlSettings.value.n76Options } }
         )
     }
