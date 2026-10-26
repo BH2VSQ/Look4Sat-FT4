@@ -11,6 +11,11 @@ on:
         description: Optional source ref for an explicitly authorized same-version rebuild
         required: false
         type: string
+      publish_play:
+        description: Explicitly publish the bundle to Google Play production
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - v*
@@ -105,11 +110,20 @@ jobs:
           if ($bundles.Count -ne 1) { throw "Expected one release AAB, found $($bundles.Count)" }
           $dist = Join-Path $PWD 'dist'
           New-Item -ItemType Directory -Path $dist -Force | Out-Null
-          $apkName = "Look4Sat-FT4-$env:TAG_NAME-universal-release.apk"
+          $versionTag = $env:TAG_NAME.TrimStart('v')
+          $apkName = "Look4Sat-FT4-v$versionTag-universal-release.apk"
           $releaseApk = Join-Path $dist $apkName
           Copy-Item -LiteralPath $apks[0].FullName -Destination $releaseApk -Force
           "RELEASE_APK=$releaseApk" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
-          "RELEASE_AAB=$($bundles[0].FullName)" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          $releaseAab = Join-Path $dist "Look4Sat-FT4-v$versionTag-release.aab"
+          Copy-Item -LiteralPath $bundles[0].FullName -Destination $releaseAab -Force
+          "RELEASE_AAB=$releaseAab" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          $checksumFile = Join-Path $dist "SHA256SUMS-$versionTag.txt"
+          $checksums = @($releaseApk, $releaseAab) | ForEach-Object {
+            "$((Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $(Split-Path -Leaf $_)"
+          }
+          [IO.File]::WriteAllText($checksumFile, ($checksums -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+          "RELEASE_CHECKSUMS=$checksumFile" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Verify package, signature, and ABI gate
         shell: pwsh
@@ -174,13 +188,13 @@ jobs:
           }
 
       - name: Setup Ruby
-        if: env.PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_play && env.PLAY_SERVICE_ACCOUNT_JSON != ''
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.4'
 
       - name: Deploy bundle to Google Play
-        if: env.PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_play && env.PLAY_SERVICE_ACCOUNT_JSON != ''
         shell: pwsh
         run: |
           gem install fastlane --no-document
@@ -210,14 +224,17 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             $release = gh release view $env:TAG_NAME --json assets | ConvertFrom-Json
             if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect existing release assets' }
-            $apkName = Split-Path -Leaf $env:RELEASE_APK
-            if ($release.assets.name -contains $apkName) {
-              Write-Output "Preserving existing release asset: $apkName"
-            } else {
-              gh release upload $env:TAG_NAME $env:RELEASE_APK
+            foreach ($asset in @($env:RELEASE_APK, $env:RELEASE_AAB, $env:RELEASE_CHECKSUMS)) {
+              $assetName = Split-Path -Leaf $asset
+              if ($release.assets.name -contains $assetName) {
+                Write-Output "Preserving existing release asset: $assetName"
+              } else {
+                gh release upload $env:TAG_NAME $asset
+                if ($LASTEXITCODE -ne 0) { throw "Unable to upload $assetName" }
+              }
             }
           } else {
-            gh release create $env:TAG_NAME $env:RELEASE_APK `
+            gh release create $env:TAG_NAME $env:RELEASE_APK $env:RELEASE_AAB $env:RELEASE_CHECKSUMS `
               --title $env:TAG_NAME --generate-notes --verify-tag
           }
           if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed' }
