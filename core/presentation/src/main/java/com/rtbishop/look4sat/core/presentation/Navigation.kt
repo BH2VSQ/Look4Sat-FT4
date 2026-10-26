@@ -20,6 +20,13 @@ package com.rtbishop.look4sat.core.presentation
 import androidx.navigation3.runtime.NavKey
 import kotlinx.serialization.Serializable
 
+fun <T> MutableList<T>.popCurrentEntry(expectedEntry: T?): Boolean {
+    // Outgoing screens can still receive clicks while their exit animation runs.
+    if (size <= 1 || expectedEntry == null || last() != expectedEntry) return false
+    removeAt(lastIndex)
+    return true
+}
+
 @Serializable
 sealed class Screen(val iconResId: Int, val titleResId: Int) : NavKey {
 

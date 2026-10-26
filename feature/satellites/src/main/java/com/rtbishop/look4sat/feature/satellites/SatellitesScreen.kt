@@ -40,7 +40,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -113,9 +116,13 @@ private fun SatellitesScreen(
         }
     }
 
+    var selectionConfirmed by remember { mutableStateOf(false) }
     val saveAndNavigateUp = {
-        onAction(SatellitesAction.SaveSelection)
-        navigateUp()
+        if (!selectionConfirmed) {
+            selectionConfirmed = true
+            onAction(SatellitesAction.SaveSelection)
+            navigateUp()
+        }
     }
     val primCardCd = stringResource(R.string.btn_accept)
     val clearAllCd = stringResource(R.string.sat_clear_all)

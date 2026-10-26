@@ -86,6 +86,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
@@ -105,6 +106,7 @@ import com.rtbishop.look4sat.core.presentation.RadarPassMapDestination
 import com.rtbishop.look4sat.core.presentation.RadarMatchDestination
 import com.rtbishop.look4sat.core.presentation.RadarMatchGridPickerDestination
 import com.rtbishop.look4sat.core.presentation.Screen
+import com.rtbishop.look4sat.core.presentation.popCurrentEntry
 import com.rtbishop.look4sat.core.presentation.hasEnoughHeight
 import com.rtbishop.look4sat.core.presentation.hasEnoughWidth
 import com.rtbishop.look4sat.feature.ft4.Ft4ShellDestination
@@ -127,6 +129,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun NavRoot(deeplink: String? = null) {
     val rootBackStack = rememberNavBackStack(Screen.Passes)
+    val rootCurrentKey = rootBackStack.lastOrNull()
     val context = LocalContext.current
     val container = (context.applicationContext as IContainerProvider).getMainContainer()
     val mutualViewModel: MutualViewModel = viewModel(
@@ -144,15 +147,15 @@ fun NavRoot(deeplink: String? = null) {
     }
     var radarGridPickResult by remember { mutableStateOf<RadarGridPickResult?>(null) }
     val finishRadarGridPicker: (String?) -> Unit = { grid ->
-        if (rootBackStack.lastOrNull() is RadarMatchGridPickerDestination) {
+        if (rootBackStack.popCurrentEntry(RadarMatchGridPickerDestination)) {
             radarGridPickResult = RadarGridPickResult(grid)
-            rootBackStack.removeLastOrNull()
         }
     }
-    val navigateBack: () -> Unit = {
-        if (rootBackStack.lastOrNull() is RadarMatchGridPickerDestination) finishRadarGridPicker(null)
-        else rootBackStack.removeLastOrNull()
+    val navigateBackFrom: (NavKey?) -> Unit = { entry ->
+        if (entry is RadarMatchGridPickerDestination) finishRadarGridPicker(null)
+        else rootBackStack.popCurrentEntry(entry)
     }
+    val navigateBack: () -> Unit = { navigateBackFrom(rootCurrentKey) }
     val openRadarGridPicker: () -> Unit = {
         radarGridPickResult = null
         rootBackStack.add(RadarMatchGridPickerDestination)
@@ -185,7 +188,9 @@ fun NavRoot(deeplink: String? = null) {
             } else {
                 container.setMutualPassData(selection.mutualPassData)
                 container.satelliteRepo.selectPass(selection.catNum, selection.aosTime)
-                if (rootBackStack.lastOrNull() is RadarMatchDestination) rootBackStack.removeLastOrNull()
+                if (rootBackStack.lastOrNull() is RadarMatchDestination) {
+                    rootBackStack.popCurrentEntry(rootBackStack.lastOrNull())
+                }
                 rootBackStack.add(RadarMatchDestination(
                     stationBGrid = selection.stationBGrid,
                     catNum = selection.catNum,
@@ -239,7 +244,7 @@ fun NavRoot(deeplink: String? = null) {
                         color = MaterialTheme.colorScheme.background
                     ) {
                         RadarDestination(
-                            navigateUp = navigateBack,
+                            navigateUp = { navigateBackFrom(RadarRoute) },
                             navigateToMap = navigateToMap,
                             onOpenLoTWStation = navigateToLoTWStation,
                             onOpenPassMap = navigateToRadarPassMap,
@@ -256,7 +261,7 @@ fun NavRoot(deeplink: String? = null) {
                         color = MaterialTheme.colorScheme.background
                     ) {
                         RadarDestination(
-                            navigateUp = navigateBack,
+                            navigateUp = { navigateBackFrom(match) },
                             navigateToMap = navigateToMap,
                             onOpenLoTWStation = navigateToLoTWStation,
                             onOpenPassMap = navigateToRadarPassMap,
@@ -305,7 +310,7 @@ fun NavRoot(deeplink: String? = null) {
                         color = MaterialTheme.colorScheme.background
                     ) {
                         GridFinderDestination(
-                            navigateUp = navigateBack,
+                            navigateUp = { navigateBackFrom(GridFinderRoute) },
                             onOpenLoTWStation = navigateToLoTWStation
                         )
                     }
@@ -315,7 +320,7 @@ fun NavRoot(deeplink: String? = null) {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        LoTWUploadDestination(navigateUp = navigateBack)
+                        LoTWUploadDestination(navigateUp = { navigateBackFrom(LoTWUploadRoute) })
                     }
                 }
             entry<Screen.Ft4> {
@@ -323,7 +328,7 @@ fun NavRoot(deeplink: String? = null) {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Ft4ShellDestination(navigateUp = navigateBack, navigateToLogbook = navigateToLogbook)
+                    Ft4ShellDestination(navigateUp = { navigateBackFrom(Screen.Ft4) }, navigateToLogbook = navigateToLogbook)
                 }
             }
             entry<LogbookDestination> {
@@ -331,7 +336,7 @@ fun NavRoot(deeplink: String? = null) {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    LogbookScreenDestination(navigateUp = navigateBack, navigateToMap = navigateToMap)
+                    LogbookScreenDestination(navigateUp = { navigateBackFrom(LogbookDestination) }, navigateToMap = navigateToMap)
                 }
             }
         }
@@ -455,11 +460,12 @@ fun MainScreen(
 ) {
     val backStack = rememberNavBackStack(Screen.Passes)
     val currentKey = backStack.lastOrNull()
-    val navigateBack: () -> Unit = {
-        val leavingGridPicker = backStack.lastOrNull() is MatchGridPickerDestination
-        backStack.removeLastOrNull()
-        if (leavingGridPicker) mutualViewModel.requestListScrollRestore()
+    val navigateBackFrom: (NavKey?) -> Unit = { entry ->
+        if (backStack.popCurrentEntry(entry) && entry is MatchGridPickerDestination) {
+            mutualViewModel.requestListScrollRestore()
+        }
     }
+    val navigateBack: () -> Unit = { navigateBackFrom(currentKey) }
     val navigateToScreen: (Screen) -> Unit = { screen ->
         val leavingGridPicker = backStack.lastOrNull() is MatchGridPickerDestination
         while (backStack.size > 1) backStack.removeAt(backStack.size - 1)
@@ -534,7 +540,7 @@ fun MainScreen(
                     entryProvider = entryProvider {
                         entry<Screen.Satellites> {
                             SatellitesDestination(
-                                navigateUp = navigateBack,
+                                navigateUp = { navigateBackFrom(Screen.Satellites) },
                                 navigateToAmSat = { backStack.add(Screen.AMSAT) }
                             )
                         }
@@ -564,7 +570,7 @@ fun MainScreen(
                         }
                         entry<Screen.GridFinder> {
                             GridFinderDestination(
-                                navigateUp = navigateBack,
+                                navigateUp = { navigateBackFrom(Screen.GridFinder) },
                                 onOpenLoTWStation = navigateToLoTWStation
                             )
                         }
@@ -573,11 +579,13 @@ fun MainScreen(
                                 mapFilterViewModel = mapFilterViewModel,
                                 gridPickerMode = true,
                                 onPickGrid = { grid ->
-                                    if (picker.stationA) mutualViewModel.onStationAGrid(grid)
-                                    else mutualViewModel.onStationBGrid(grid)
-                                    navigateBack()
+                                    if (backStack.lastOrNull() == picker) {
+                                        if (picker.stationA) mutualViewModel.onStationAGrid(grid)
+                                        else mutualViewModel.onStationBGrid(grid)
+                                        navigateBackFrom(picker)
+                                    }
                                 },
-                                onNavigateBack = navigateBack
+                                onNavigateBack = { navigateBackFrom(picker) }
                             )
                         }
                         entry<Screen.Mutual> {
@@ -596,7 +604,7 @@ fun MainScreen(
                         entry<Screen.AMSAT> { SatStatusDestination() }
                         entry<Screen.PassSchedule> {
                             PassScheduleDestination(
-                                navigateUp = navigateBack,
+                                navigateUp = { navigateBackFrom(Screen.PassSchedule) },
                                 navigateToRadar = { catNum, aosTime ->
                                     container.setMutualPassData(MutualPassData())
                                     container.satelliteRepo.selectPass(catNum, aosTime)
@@ -605,7 +613,7 @@ fun MainScreen(
                             )
                         }
                         entry<Screen.Logbook> {
-                            LogbookScreenDestination(navigateUp = navigateBack, navigateToMap = navigateToMap)
+                            LogbookScreenDestination(navigateUp = { navigateBackFrom(Screen.Logbook) }, navigateToMap = navigateToMap)
                         }
                         entry<Screen.Settings> {
                             SettingsDestination()
